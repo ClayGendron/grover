@@ -7,6 +7,8 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
+from unidiff import PatchSet
+from unidiff.constants import LINE_TYPE_ADDED, LINE_TYPE_CONTEXT, LINE_TYPE_NO_NEWLINE
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -57,82 +59,82 @@ class FileVersion(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 
-_DIFF_SEP = "\0"
-"""Separator between diff lines in serialised form.
-
-Content lines may lack trailing newlines (for files that don't end in ``\\n``),
-so we cannot use ``\\n`` as a record separator.  Null bytes cannot appear in
-valid text content, making ``\\0`` a safe sentinel.
-"""
+_NO_NEWLINE_MARKER = "\\ No newline at end of file\n"
 
 
 def compute_diff(old: str, new: str) -> str:
     """Compute a unified diff from *old* to *new*.
 
-    Returns the diff as a null-separated string (empty string if no
-    changes).  Content lines preserve their original endings exactly so
-    that files without trailing newlines round-trip correctly.
+    Returns a standard unified diff string (empty string if no changes).
+    The output is parseable by ``unidiff.PatchSet`` and compatible with
+    standard tools like ``patch``.
     """
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
-    raw = list(difflib.unified_diff(old_lines, new_lines, lineterm=""))
+    raw = list(difflib.unified_diff(old_lines, new_lines, fromfile="a", tofile="b"))
     if not raw:
         return ""
-    return _DIFF_SEP.join(raw)
+    # difflib doesn't emit "\ No newline at end of file" markers, but
+    # unidiff (and GNU patch) require them.  Insert after any content
+    # line that lacks a trailing newline.
+    out: list[str] = []
+    for line in raw:
+        out.append(line)
+        if line and line[0] in ("+", "-", " ") and not line.endswith("\n"):
+            out[-1] = line + "\n"
+            out.append(_NO_NEWLINE_MARKER)
+    return "".join(out)
 
 
 def apply_diff(base: str, diff: str) -> str:
     """Apply a unified diff to *base* and return the resulting text.
 
-    This is a minimal unified-diff applier that handles the ``@@`` hunk
-    headers produced by :func:`compute_diff`.
+    Uses ``unidiff.PatchSet`` for robust parsing of the diff, including
+    correct handling of ``\\ No newline at end of file`` markers.
     """
     if not diff:
         return base
 
-    base_lines = base.splitlines(keepends=True)
-    diff_lines = diff.split(_DIFF_SEP)
-    result_lines: list[str] = []
-    base_idx = 0
-    headers_seen = 0
+    patch = PatchSet(diff)
+    if not patch:
+        return base
 
-    for line in diff_lines:
-        # Skip the two file headers (--- and +++) which always come first.
-        # We count them rather than pattern-matching to avoid collisions
-        # with removal lines like "---some-yaml-delimiter".
-        if headers_seen < 2:
-            headers_seen += 1
-            continue
+    patched_file = patch[0]
+    source_lines = base.splitlines(keepends=True)
+    result_lines = list(source_lines)
 
-        # Hunk header — jump to the right position in base
-        if line.startswith("@@"):
-            # Parse "@@ -start,count +start,count @@"
-            parts = line.split()
-            old_range = parts[1]  # e.g. "-1,5"
-            old_start = int(old_range.split(",")[0].lstrip("-"))
-            # Copy unchanged lines before this hunk
-            target = old_start - 1  # 0-indexed
-            while base_idx < target:
-                result_lines.append(base_lines[base_idx])
-                base_idx += 1
-            continue
+    for hunk in reversed(patched_file):
+        new_lines: list[str] = []
+        prev_line_type: str | None = None
 
-        if line.startswith("-"):
-            # Line removed from base — skip it
-            base_idx += 1
-        elif line.startswith("+"):
-            # Line added — preserves original ending (no \n = no newline)
-            result_lines.append(line[1:])
-        elif line.startswith(" "):
-            # Context line — copy from base
-            result_lines.append(base_lines[base_idx])
-            base_idx += 1
-        # else: skip (e.g. "\ No newline at end of file")
+        for line in hunk:
+            if line.line_type == LINE_TYPE_NO_NEWLINE:
+                # The marker means the preceding line had no trailing newline.
+                # Strip the \n we appended only if that line is part of the
+                # target (context or added).
+                if (
+                    prev_line_type in (LINE_TYPE_CONTEXT, LINE_TYPE_ADDED)
+                    and new_lines
+                    and new_lines[-1].endswith("\n")
+                ):
+                    new_lines[-1] = new_lines[-1][:-1]
+                prev_line_type = line.line_type
+                continue
 
-    # Append any remaining base lines after the last hunk
-    while base_idx < len(base_lines):
-        result_lines.append(base_lines[base_idx])
-        base_idx += 1
+            if line.line_type in (LINE_TYPE_CONTEXT, LINE_TYPE_ADDED):
+                new_lines.append(line.value)
+
+            prev_line_type = line.line_type
+
+        start_idx = hunk.source_start - 1
+        end_idx = start_idx + hunk.source_length
+
+        # New file: source_start=0, source_length=0
+        if hunk.source_start == 0 and hunk.source_length == 0:
+            start_idx = 0
+            end_idx = 0
+
+        result_lines[start_idx:end_idx] = new_lines
 
     return "".join(result_lines)
 
