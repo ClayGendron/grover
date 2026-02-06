@@ -1,3 +1,9 @@
+# Claude Code
+.claude/
+
+# JetBrains
+.idea/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
