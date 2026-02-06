@@ -128,6 +128,7 @@ class UnifiedFileSystem:
     async def read(
         self, path: str, offset: int = 0, limit: int = 2000
     ) -> ReadResult:
+        """Read file content with pagination."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         result = await mount.backend.read(rel_path, offset, limit)
@@ -135,6 +136,7 @@ class UnifiedFileSystem:
         return result
 
     async def list_dir(self, path: str = "/") -> ListResult:
+        """List directory entries."""
         path = normalize_path(path)
 
         if path == "/":
@@ -171,6 +173,7 @@ class UnifiedFileSystem:
         )
 
     async def exists(self, path: str) -> bool:
+        """Check whether a path exists in any mount."""
         path = normalize_path(path)
 
         if path == "/":
@@ -187,6 +190,7 @@ class UnifiedFileSystem:
         return await mount.backend.exists(rel_path)
 
     async def get_info(self, path: str) -> FileInfo | None:
+        """Get file metadata, or ``None`` if not found."""
         path = normalize_path(path)
 
         if self._registry.has_mount(path):
@@ -230,6 +234,7 @@ class UnifiedFileSystem:
     async def write(
         self, path: str, content: str, created_by: str = "agent"
     ) -> WriteResult:
+        """Write content to a file."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -253,6 +258,7 @@ class UnifiedFileSystem:
         replace_all: bool = False,
         created_by: str = "agent",
     ) -> EditResult:
+        """Apply a string replacement to a file."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -271,6 +277,7 @@ class UnifiedFileSystem:
         return result
 
     async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+        """Delete a file or directory."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -287,6 +294,7 @@ class UnifiedFileSystem:
         return result
 
     async def mkdir(self, path: str, parents: bool = True) -> MkdirResult:
+        """Create a directory."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -302,6 +310,7 @@ class UnifiedFileSystem:
         return result
 
     async def move(self, src: str, dest: str) -> MoveResult:
+        """Move a file within or across mounts."""
         src = normalize_path(src)
         dest = normalize_path(dest)
 
@@ -363,6 +372,7 @@ class UnifiedFileSystem:
         )
 
     async def copy(self, src: str, dest: str) -> WriteResult:
+        """Copy a file within or across mounts."""
         src = normalize_path(src)
         dest = normalize_path(dest)
 
@@ -410,6 +420,7 @@ class UnifiedFileSystem:
     # =========================================================================
 
     async def list_versions(self, path: str) -> list[VersionInfo]:
+        """List version history for a VFS file."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         if mount.mount_type != "vfs":
@@ -417,6 +428,7 @@ class UnifiedFileSystem:
         return await mount.backend.list_versions(rel_path)
 
     async def restore_version(self, path: str, version: int) -> RestoreResult:
+        """Restore a file to a specific version."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         if mount.mount_type != "vfs":
@@ -438,6 +450,7 @@ class UnifiedFileSystem:
         return result
 
     async def get_version_content(self, path: str, version: int) -> str | None:
+        """Get content of a specific file version."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         if mount.mount_type != "vfs":
@@ -445,6 +458,7 @@ class UnifiedFileSystem:
         return await mount.backend.get_version_content(rel_path, version)
 
     async def list_trash(self) -> ListResult:
+        """List all items in trash across VFS mounts."""
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
             if mount.mount_type != "vfs":
@@ -464,6 +478,7 @@ class UnifiedFileSystem:
         )
 
     async def restore_from_trash(self, path: str) -> RestoreResult:
+        """Restore a file from trash."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -485,6 +500,7 @@ class UnifiedFileSystem:
         return result
 
     async def empty_trash(self) -> DeleteResult:
+        """Permanently delete all trashed files."""
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():

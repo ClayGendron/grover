@@ -186,6 +186,7 @@ class SearchIndex:
         return meta["content_hash"]
 
     def __len__(self) -> int:
+        """Return the number of indexed entries."""
         return len(self._key_to_meta)
 
     # ------------------------------------------------------------------

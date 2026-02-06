@@ -52,6 +52,7 @@ class Graph:
         del self._idx_to_path[idx]
 
     def has_node(self, path: str) -> bool:
+        """Return whether *path* is in the graph."""
         return path in self._path_to_idx
 
     def get_node(self, path: str) -> dict[str, Any]:
@@ -60,6 +61,7 @@ class Graph:
         return dict(self._graph[idx])
 
     def nodes(self) -> list[str]:
+        """Return all node paths."""
         return list(self._path_to_idx.keys())
 
     # ------------------------------------------------------------------
@@ -138,6 +140,7 @@ class Graph:
         return dict(self._graph.get_edge_data_by_index(edge_idx))
 
     def edges(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return all edges as ``(source, target, data)`` triples."""
         result: list[tuple[str, str, dict[str, Any]]] = []
         for src_idx, tgt_idx, data in self._graph.weighted_edge_list():
             src = self._idx_to_path.get(src_idx, "")
@@ -247,13 +250,16 @@ class Graph:
 
     @property
     def node_count(self) -> int:
+        """Number of nodes in the graph."""
         return self._graph.num_nodes()
 
     @property
     def edge_count(self) -> int:
+        """Number of edges in the graph."""
         return self._graph.num_edges()
 
     def is_dag(self) -> bool:
+        """Return whether the graph is a directed acyclic graph."""
         return rustworkx.is_directed_acyclic_graph(self._graph)
 
     def __repr__(self) -> str:
