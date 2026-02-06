@@ -57,30 +57,28 @@ class FileVersion(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 
+_DIFF_SEP = "\0"
+"""Separator between diff lines in serialised form.
+
+Content lines may lack trailing newlines (for files that don't end in ``\\n``),
+so we cannot use ``\\n`` as a record separator.  Null bytes cannot appear in
+valid text content, making ``\\0`` a safe sentinel.
+"""
+
+
 def compute_diff(old: str, new: str) -> str:
     """Compute a unified diff from *old* to *new*.
 
-    Returns the diff as a string (empty string if no changes).
-    Each output line is newline-terminated so the result can be
-    reliably re-split with :pymethod:`str.splitlines`.
+    Returns the diff as a null-separated string (empty string if no
+    changes).  Content lines preserve their original endings exactly so
+    that files without trailing newlines round-trip correctly.
     """
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
-    # n=3 is the default context; lineterm="" avoids an extra \n on lines
-    # that already carry one from keepends=True — but header lines (---,
-    # +++, @@) will *not* end in \n.  We normalise below.
     raw = list(difflib.unified_diff(old_lines, new_lines, lineterm=""))
     if not raw:
         return ""
-    # Ensure every line ends with exactly one \n so that
-    # "".join(result).splitlines(keepends=True) round-trips cleanly.
-    out: list[str] = []
-    for line in raw:
-        if line.endswith("\n"):
-            out.append(line)
-        else:
-            out.append(line + "\n")
-    return "".join(out)
+    return _DIFF_SEP.join(raw)
 
 
 def apply_diff(base: str, diff: str) -> str:
@@ -93,23 +91,23 @@ def apply_diff(base: str, diff: str) -> str:
         return base
 
     base_lines = base.splitlines(keepends=True)
-    diff_lines = diff.splitlines(keepends=True)
+    diff_lines = diff.split(_DIFF_SEP)
     result_lines: list[str] = []
     base_idx = 0
+    headers_seen = 0
 
     for line in diff_lines:
-        # Strip the trailing newline that *we* added for storage so we
-        # can inspect the diff-control character cleanly.
-        stripped = line.rstrip("\n")
-
-        # Skip file headers
-        if stripped.startswith("---") or stripped.startswith("+++"):
+        # Skip the two file headers (--- and +++) which always come first.
+        # We count them rather than pattern-matching to avoid collisions
+        # with removal lines like "---some-yaml-delimiter".
+        if headers_seen < 2:
+            headers_seen += 1
             continue
 
         # Hunk header — jump to the right position in base
-        if stripped.startswith("@@"):
+        if line.startswith("@@"):
             # Parse "@@ -start,count +start,count @@"
-            parts = stripped.split()
+            parts = line.split()
             old_range = parts[1]  # e.g. "-1,5"
             old_start = int(old_range.split(",")[0].lstrip("-"))
             # Copy unchanged lines before this hunk
@@ -119,13 +117,13 @@ def apply_diff(base: str, diff: str) -> str:
                 base_idx += 1
             continue
 
-        if stripped.startswith("-"):
+        if line.startswith("-"):
             # Line removed from base — skip it
             base_idx += 1
-        elif stripped.startswith("+"):
-            # Line added — content is everything after the "+"
-            result_lines.append(stripped[1:] + "\n")
-        elif stripped.startswith(" "):
+        elif line.startswith("+"):
+            # Line added — preserves original ending (no \n = no newline)
+            result_lines.append(line[1:])
+        elif line.startswith(" "):
             # Context line — copy from base
             result_lines.append(base_lines[base_idx])
             base_idx += 1
@@ -149,8 +147,8 @@ def reconstruct_version(snapshots_and_diffs: list[tuple[bool, str]]) -> str:
     if not snapshots_and_diffs:
         return ""
 
-    is_snap, content = snapshots_and_diffs[0]
-    if not is_snap:
+    first_is_snap, content = snapshots_and_diffs[0]
+    if not first_is_snap:
         msg = "First entry must be a snapshot"
         raise ValueError(msg)
 

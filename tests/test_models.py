@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlmodel import Session, select
 
 from grover.models import (
@@ -13,7 +14,6 @@ from grover.models import (
     compute_diff,
     reconstruct_version,
 )
-
 
 # ---------------------------------------------------------------------------
 # Table creation & basic CRUD
@@ -78,6 +78,14 @@ class TestDefaultFactories:
         assert emb.id
         assert emb.model_name == ""
 
+    def test_grover_edge_metadata_json_default(self, session: Session):
+        edge = GroverEdge(source_path="/a.py", target_path="/b.py", type="imports")
+        session.add(edge)
+        session.commit()
+        session.refresh(edge)
+
+        assert edge.metadata_json == "{}"
+
     def test_query_round_trip(self, session: Session):
         """Insert and query back a GroverFile."""
         f = GroverFile(path="/test.py", name="test.py", parent_path="/")
@@ -111,6 +119,17 @@ class TestComputeDiff:
         diff = compute_diff("a\nb\n", "a\n")
         assert "-b\n" in diff
 
+    def test_empty_to_content(self):
+        diff = compute_diff("", "hello\n")
+        assert "+hello\n" in diff
+
+    def test_content_to_empty(self):
+        diff = compute_diff("hello\n", "")
+        assert "-hello\n" in diff
+
+    def test_empty_to_empty(self):
+        assert compute_diff("", "") == ""
+
 
 class TestApplyDiff:
     def test_empty_diff_returns_base(self):
@@ -136,10 +155,43 @@ class TestApplyDiff:
 
     def test_round_trip_multiple_hunks(self):
         old = "".join(f"line{i}\n" for i in range(20))
-        new_lines = list(f"line{i}\n" for i in range(20))
+        new_lines = [f"line{i}\n" for i in range(20)]
         new_lines[2] = "changed2\n"
         new_lines[15] = "changed15\n"
         new = "".join(new_lines)
+        diff = compute_diff(old, new)
+        assert apply_diff(old, diff) == new
+
+    def test_round_trip_no_trailing_newline(self):
+        """Files without trailing newlines must round-trip exactly."""
+        old = "line1\nline2"
+        new = "line1\nchanged"
+        diff = compute_diff(old, new)
+        assert apply_diff(old, diff) == new
+
+    def test_round_trip_add_trailing_newline(self):
+        """Adding a trailing newline must be preserved."""
+        old = "hello"
+        new = "hello\n"
+        diff = compute_diff(old, new)
+        assert apply_diff(old, diff) == new
+
+    def test_round_trip_remove_trailing_newline(self):
+        """Removing a trailing newline must be preserved."""
+        old = "hello\n"
+        new = "hello"
+        diff = compute_diff(old, new)
+        assert apply_diff(old, diff) == new
+
+    def test_round_trip_empty_to_content(self):
+        old = ""
+        new = "hello\n"
+        diff = compute_diff(old, new)
+        assert apply_diff(old, diff) == new
+
+    def test_round_trip_content_to_empty(self):
+        old = "hello\n"
+        new = ""
         diff = compute_diff(old, new)
         assert apply_diff(old, diff) == new
 
@@ -163,10 +215,26 @@ class TestReconstructVersion:
         assert result == v2
 
     def test_first_must_be_snapshot(self):
-        import pytest
-
         with pytest.raises(ValueError, match="snapshot"):
             reconstruct_version([(False, "diff")])
+
+    def test_mid_chain_snapshot(self):
+        """A snapshot mid-chain replaces everything accumulated so far."""
+        v0 = "original\n"
+        v1 = "modified\n"
+        v2 = "fresh snapshot\n"
+        v3 = "fresh snapshot\nextra line\n"
+
+        d1 = compute_diff(v0, v1)
+        d3 = compute_diff(v2, v3)
+
+        result = reconstruct_version([
+            (True, v0),
+            (False, d1),
+            (True, v2),   # mid-chain snapshot resets
+            (False, d3),
+        ])
+        assert result == v3
 
     def test_multi_version_round_trip(self):
         """Write -> edit 5 times -> reconstruct each intermediate version."""

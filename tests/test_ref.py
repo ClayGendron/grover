@@ -156,6 +156,16 @@ class TestNormalizePath:
     def test_whitespace_stripped(self):
         assert normalize_path("  /foo.txt  ") == "/foo.txt"
 
+    def test_dotdot_beyond_root(self):
+        """Traversal beyond root clamps to root (posixpath behavior)."""
+        assert normalize_path("/a/../../b") == "/b"
+
+    def test_deeply_nested_dotdot_beyond_root(self):
+        assert normalize_path("/../../etc/passwd") == "/etc/passwd"
+
+    def test_whitespace_only(self):
+        assert normalize_path("   ") == "/"
+
 
 class TestSplitPath:
     def test_nested_file(self):
