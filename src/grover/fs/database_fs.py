@@ -29,11 +29,10 @@ class DatabaseFileSystem(BaseFileSystem):
 
     def __init__(
         self,
-        user_id: str,
         session_factory: Callable[..., AsyncSession],
         dialect: str = "sqlite",
     ) -> None:
-        super().__init__(user_id, dialect=dialect)
+        super().__init__(dialect=dialect)
         self.session_factory = session_factory
         self._session: AsyncSession | None = None
         self._session_cm: object = None
@@ -83,7 +82,6 @@ class DatabaseFileSystem(BaseFileSystem):
         session = await self._get_session()
         result = await session.execute(
             select(GroverFile.content).where(
-                GroverFile.user_id == self.user_id,
                 GroverFile.path == path,
                 GroverFile.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
             )
@@ -96,7 +94,6 @@ class DatabaseFileSystem(BaseFileSystem):
         session = await self._get_session()
         result = await session.execute(
             select(GroverFile).where(
-                GroverFile.user_id == self.user_id,
                 GroverFile.path == path,
             )
         )

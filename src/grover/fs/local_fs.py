@@ -39,11 +39,10 @@ class LocalFileSystem(BaseFileSystem):
 
     def __init__(
         self,
-        user_id: str = "local",
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
     ) -> None:
-        super().__init__(user_id, dialect="sqlite")
+        super().__init__(dialect="sqlite")
 
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd() / "workspace"
         self.data_dir = Path(data_dir) if data_dir else self.workspace_dir / ".grover"

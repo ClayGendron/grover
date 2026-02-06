@@ -62,8 +62,7 @@ class BaseFileSystem(ABC):
     - _content_exists(path): Check if content exists in storage
     """
 
-    def __init__(self, user_id: str, dialect: str = "sqlite") -> None:
-        self.user_id = user_id
+    def __init__(self, dialect: str = "sqlite") -> None:
         self.dialect = dialect
 
     # =========================================================================
@@ -98,10 +97,9 @@ class BaseFileSystem(ABC):
         path: str,
         include_deleted: bool = False,
     ) -> GroverFile | None:
-        """Get file record by path for current user."""
+        """Get file record by path."""
         path = normalize_path(path)
         query = select(GroverFile).where(
-            GroverFile.user_id == self.user_id,
             GroverFile.path == path,
         )
         if not include_deleted:
@@ -157,7 +155,6 @@ class BaseFileSystem(ABC):
                 self.dialect,
                 values={
                     "id": str(uuid.uuid4()),
-                    "user_id": self.user_id,
                     "path": dir_path,
                     "name": dir_name,
                     "is_directory": True,
@@ -345,7 +342,6 @@ class BaseFileSystem(ABC):
                 await self._ensure_parent_dirs(session, path)
 
                 new_file = GroverFile(
-                    user_id=self.user_id,
                     path=path,
                     name=name,
                     content_hash=content_hash,
@@ -466,7 +462,6 @@ class BaseFileSystem(ABC):
                 if file.is_directory:
                     result = await session.execute(
                         select(GroverFile).where(
-                            GroverFile.user_id == self.user_id,
                             GroverFile.path.startswith(path + "/"),
                         )
                     )
@@ -545,7 +540,6 @@ class BaseFileSystem(ABC):
                     self.dialect,
                     values={
                         "id": str(uuid.uuid4()),
-                        "user_id": self.user_id,
                         "path": dir_path,
                         "name": name,
                         "is_directory": True,
@@ -591,7 +585,6 @@ class BaseFileSystem(ABC):
 
             result = await session.execute(
                 select(GroverFile).where(
-                    GroverFile.user_id == self.user_id,
                     GroverFile.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                 )
             )
@@ -663,7 +656,6 @@ class BaseFileSystem(ABC):
             if src_file.is_directory:
                 result = await session.execute(
                     select(GroverFile).where(
-                        GroverFile.user_id == self.user_id,
                         GroverFile.path.startswith(src + "/"),
                     )
                 )
@@ -857,7 +849,6 @@ class BaseFileSystem(ABC):
         try:
             result = await session.execute(
                 select(GroverFile).where(
-                    GroverFile.user_id == self.user_id,
                     GroverFile.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
             )
@@ -893,7 +884,6 @@ class BaseFileSystem(ABC):
         try:
             result = await session.execute(
                 select(GroverFile).where(
-                    GroverFile.user_id == self.user_id,
                     GroverFile.original_path == path,
                     GroverFile.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
@@ -924,7 +914,6 @@ class BaseFileSystem(ABC):
         try:
             result = await session.execute(
                 select(GroverFile).where(
-                    GroverFile.user_id == self.user_id,
                     GroverFile.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
             )

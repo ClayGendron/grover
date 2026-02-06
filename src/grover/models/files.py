@@ -39,7 +39,6 @@ class GroverFile(SQLModel, table=True):
     line_start: int | None = Field(default=None)
     line_end: int | None = Field(default=None)
     current_version: int = Field(default=1)
-    user_id: str = Field(default="default", index=True)
     original_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

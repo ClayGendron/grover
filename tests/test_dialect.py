@@ -52,7 +52,7 @@ class TestUpsertFile:
                     "path": "/hello.txt",
                     "name": "hello.txt",
                     "is_directory": False,
-                    "user_id": "default",
+
                     "current_version": 1,
                 },
                 conflict_keys=["path"],
@@ -85,7 +85,7 @@ class TestUpsertFile:
                     "path": "/hello.txt",
                     "name": "hello.txt",
                     "is_directory": False,
-                    "user_id": "default",
+
                     "current_version": 1,
                 },
                 conflict_keys=["path"],
@@ -102,7 +102,7 @@ class TestUpsertFile:
                     "path": "/hello.txt",
                     "name": "hello_updated.txt",
                     "is_directory": False,
-                    "user_id": "default",
+
                     "current_version": 2,
                 },
                 conflict_keys=["path"],

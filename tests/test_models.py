@@ -51,7 +51,6 @@ class TestDefaultFactories:
         assert f.is_directory is False
         assert f.content is None
         assert f.content_hash is None
-        assert f.user_id == "default"
         assert f.original_path is None
 
     def test_file_version_defaults(self, session: Session):
@@ -145,7 +144,6 @@ class TestDefaultFactories:
             parent_path="/",
             content="# Hello",
             content_hash="abc123",
-            user_id="user1",
         )
         session.add(f)
         session.commit()
@@ -153,7 +151,6 @@ class TestDefaultFactories:
 
         assert f.content == "# Hello"
         assert f.content_hash == "abc123"
-        assert f.user_id == "user1"
 
 
 # ---------------------------------------------------------------------------
