@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Test fixture repos (cloned for integration tests)
+tests/fixtures/repos/
