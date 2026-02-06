@@ -45,9 +45,14 @@ class TestDefaultFactories:
         assert f.id  # UUID string
         assert f.path == "/hello.txt"
         assert f.current_version == 1
-        assert f.deleted is False
+        assert f.deleted_at is None
         assert f.created_at is not None
         assert f.mime_type == "text/plain"
+        assert f.is_directory is False
+        assert f.content is None
+        assert f.content_hash is None
+        assert f.user_id == "default"
+        assert f.original_path is None
 
     def test_file_version_defaults(self, session: Session):
         fv = FileVersion(file_id="abc", version=1, is_snapshot=True, content="hello")
@@ -58,6 +63,30 @@ class TestDefaultFactories:
         assert fv.id
         assert fv.file_id == "abc"
         assert fv.is_snapshot is True
+        assert fv.content_hash == ""
+        assert fv.size_bytes == 0
+        assert fv.created_by is None
+        assert fv.change_summary is None
+
+    def test_file_version_with_new_fields(self, session: Session):
+        fv = FileVersion(
+            file_id="abc",
+            version=2,
+            is_snapshot=False,
+            content="diff content",
+            content_hash="sha256hash",
+            size_bytes=42,
+            created_by="agent",
+            change_summary="Added a function",
+        )
+        session.add(fv)
+        session.commit()
+        session.refresh(fv)
+
+        assert fv.content_hash == "sha256hash"
+        assert fv.size_bytes == 42
+        assert fv.created_by == "agent"
+        assert fv.change_summary == "Added a function"
 
     def test_grover_edge_defaults(self, session: Session):
         edge = GroverEdge(source_path="/a.py", target_path="/b.py", type="imports")
@@ -95,6 +124,36 @@ class TestDefaultFactories:
         result = session.exec(select(GroverFile).where(GroverFile.path == "/test.py")).first()
         assert result is not None
         assert result.path == "/test.py"
+
+    def test_grover_file_directory(self, session: Session):
+        d = GroverFile(
+            path="/src",
+            name="src",
+            parent_path="/",
+            is_directory=True,
+        )
+        session.add(d)
+        session.commit()
+        session.refresh(d)
+
+        assert d.is_directory is True
+
+    def test_grover_file_with_content(self, session: Session):
+        f = GroverFile(
+            path="/readme.md",
+            name="readme.md",
+            parent_path="/",
+            content="# Hello",
+            content_hash="abc123",
+            user_id="user1",
+        )
+        session.add(f)
+        session.commit()
+        session.refresh(f)
+
+        assert f.content == "# Hello"
+        assert f.content_hash == "abc123"
+        assert f.user_id == "user1"
 
 
 # ---------------------------------------------------------------------------

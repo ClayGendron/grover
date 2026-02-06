@@ -28,17 +28,22 @@ class GroverFile(SQLModel, table=True):
     __tablename__ = "grover_files"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    path: str = Field(index=True)
+    path: str = Field(index=True, unique=True)
     parent_path: str = Field(default="")
     name: str = Field(default="")
+    is_directory: bool = Field(default=False)
     mime_type: str = Field(default="text/plain")
+    content: str | None = Field(default=None)
+    content_hash: str | None = Field(default=None)
     size_bytes: int = Field(default=0)
     line_start: int | None = Field(default=None)
     line_end: int | None = Field(default=None)
     current_version: int = Field(default=1)
+    user_id: str = Field(default="default", index=True)
+    original_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    deleted: bool = Field(default=False)
+    deleted_at: datetime | None = Field(default=None)
 
 
 class FileVersion(SQLModel, table=True):
@@ -51,6 +56,10 @@ class FileVersion(SQLModel, table=True):
     version: int = Field(default=1)
     is_snapshot: bool = Field(default=False)
     content: str = Field(default="")
+    content_hash: str = Field(default="")
+    size_bytes: int = Field(default=0)
+    created_by: str | None = Field(default=None)
+    change_summary: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
