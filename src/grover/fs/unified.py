@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from grover.events import EventBus, EventType, FileEvent
+
 from .permissions import Permission
 from .types import (
     DeleteResult,
@@ -31,9 +33,16 @@ class UnifiedFileSystem:
     and handles cross-mount copy/move.
     """
 
-    def __init__(self, registry: MountRegistry) -> None:
+    def __init__(
+        self, registry: MountRegistry, event_bus: EventBus | None = None
+    ) -> None:
         self._registry = registry
+        self._event_bus = event_bus
         self._entered_backends: list[Any] = []
+
+    async def _emit(self, event: FileEvent) -> None:
+        if self._event_bus is not None:
+            await self._event_bus.emit(event)
 
     # =========================================================================
     # Context Manager
@@ -230,6 +239,10 @@ class UnifiedFileSystem:
         mount, rel_path = self._registry.resolve(path)
         result = await mount.backend.write(rel_path, content, created_by)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        if result.success:
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_WRITTEN, path=path, content=content)
+            )
         return result
 
     async def edit(
@@ -251,6 +264,10 @@ class UnifiedFileSystem:
             rel_path, old_string, new_string, replace_all, created_by
         )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        if result.success:
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_WRITTEN, path=path)
+            )
         return result
 
     async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
@@ -263,6 +280,10 @@ class UnifiedFileSystem:
         mount, rel_path = self._registry.resolve(path)
         result = await mount.backend.delete(rel_path, permanent)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        if result.success:
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_DELETED, path=path)
+            )
         return result
 
     async def mkdir(self, path: str, parents: bool = True) -> MkdirResult:
@@ -297,6 +318,10 @@ class UnifiedFileSystem:
             result = await src_mount.backend.move(src_rel, dest_rel)
             result.old_path = self._prefix_path(result.old_path, src_mount.mount_path)
             result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
+            if result.success:
+                await self._emit(
+                    FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src)
+                )
             return result
 
         read_result = await src_mount.backend.read(src_rel)
@@ -327,6 +352,9 @@ class UnifiedFileSystem:
                 message=f"Copied but failed to delete source: {delete_result.message}",
             )
 
+        await self._emit(
+            FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src)
+        )
         return MoveResult(
             success=True,
             message=f"Moved {src} -> {dest} (cross-mount)",
@@ -349,6 +377,10 @@ class UnifiedFileSystem:
         if src_mount is dest_mount:
             result = await src_mount.backend.copy(src_rel, dest_rel)
             result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
+            if result.success:
+                await self._emit(
+                    FileEvent(event_type=EventType.FILE_WRITTEN, path=dest)
+                )
             return result
 
         read_result = await src_mount.backend.read(src_rel)
@@ -367,6 +399,10 @@ class UnifiedFileSystem:
 
         result = await dest_mount.backend.write(dest_rel, raw_content)
         result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
+        if result.success:
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_WRITTEN, path=dest)
+            )
         return result
 
     # =========================================================================
@@ -395,6 +431,10 @@ class UnifiedFileSystem:
 
         result = await mount.backend.restore_version(rel_path, version)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        if result.success:
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_RESTORED, path=path)
+            )
         return result
 
     async def get_version_content(self, path: str, version: int) -> str | None:
@@ -438,6 +478,10 @@ class UnifiedFileSystem:
             )
         result = await mount.backend.restore_from_trash(rel_path)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        if result.success:
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_RESTORED, path=path)
+            )
         return result
 
     async def empty_trash(self) -> DeleteResult:
