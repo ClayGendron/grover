@@ -70,22 +70,64 @@ class BaseFileSystem(ABC):
     # =========================================================================
 
     @abstractmethod
-    async def _get_session(self) -> AsyncSession: ...
+    async def _get_session(self) -> AsyncSession:
+        """Return a database session for the current operation.
+
+        LocalFileSystem creates a new session from its async session factory.
+        DatabaseFileSystem returns a session from its injected factory. The
+        caller is responsible for committing via ``_commit`` when done.
+        """
+        ...
 
     @abstractmethod
-    async def _read_content(self, path: str) -> str | None: ...
+    async def _read_content(self, path: str) -> str | None:
+        """Read raw file content from the storage backend.
+
+        ``path`` is already normalized. Return the file text if it exists,
+        or ``None`` if no content is stored at that path. The base class
+        handles all metadata lookups — this method only touches bytes.
+        """
+        ...
 
     @abstractmethod
-    async def _write_content(self, path: str, content: str) -> None: ...
+    async def _write_content(self, path: str, content: str) -> None:
+        """Persist raw file content to the storage backend.
+
+        ``path`` is already normalized. For LocalFileSystem this writes to
+        disk; for DatabaseFileSystem this updates the ``content`` column on
+        the GroverFile row. Parent directories are handled by the base class.
+        """
+        ...
 
     @abstractmethod
-    async def _delete_content(self, path: str) -> None: ...
+    async def _delete_content(self, path: str) -> None:
+        """Remove raw file content from the storage backend.
+
+        Called during permanent deletes and moves. For LocalFileSystem this
+        removes the file from disk. For DatabaseFileSystem this is a no-op
+        because content lives in the GroverFile row that the base class
+        already deletes.
+        """
+        ...
 
     @abstractmethod
-    async def _content_exists(self, path: str) -> bool: ...
+    async def _content_exists(self, path: str) -> bool:
+        """Check whether raw content exists in the storage backend.
+
+        ``path`` is already normalized. This checks actual storage (disk or
+        DB column), not the GroverFile metadata record.
+        """
+        ...
 
     @abstractmethod
-    async def _commit(self, session: AsyncSession) -> None: ...
+    async def _commit(self, session: AsyncSession) -> None:
+        """Commit or flush the given session.
+
+        LocalFileSystem calls ``session.commit()`` since it owns the session
+        lifecycle. DatabaseFileSystem calls ``session.flush()`` to defer the
+        real commit to the outer transaction boundary.
+        """
+        ...
 
     # =========================================================================
     # Shared Helper Methods
@@ -104,6 +146,7 @@ class BaseFileSystem(ABC):
         )
         if not include_deleted:
             query = query.where(GroverFile.deleted_at.is_(None))  # type: ignore[unresolved-attribute]
+
         result = await session.execute(query)
         return result.scalar_one_or_none()
 
@@ -119,7 +162,7 @@ class BaseFileSystem(ABC):
         """Save a version record using diff-based storage.
 
         Stores a full snapshot when version == 1, version % SNAPSHOT_INTERVAL == 0,
-        or when old_content is empty. Otherwise stores a forward diff.
+        or when old_content is empty. Otherwise, stores a forward diff.
         """
         version_num = file.current_version
         is_snap = (version_num % SNAPSHOT_INTERVAL == 0) or (version_num == 1)
@@ -256,6 +299,7 @@ class BaseFileSystem(ABC):
             return ReadResult(success=False, message=f"Cannot read from trash: {path}")
 
         session = await self._get_session()
+
         try:
             file = await self._get_file(session, path)
 
@@ -273,8 +317,9 @@ class BaseFileSystem(ABC):
                 return ReadResult(success=False, message=f"File content not found: {path}")
 
             return self._format_read_output(content, path, offset, limit)
+
         finally:
-            await self._commit(session)
+            pass
 
     # =========================================================================
     # Core Operations: Write
@@ -316,6 +361,12 @@ class BaseFileSystem(ABC):
                 if existing.is_directory:
                     return WriteResult(success=False, message=f"Path is a directory: {path}")
 
+                if not overwrite and not existing.deleted_at:
+                    return WriteResult(
+                        success=False,
+                        message=f"File already exists: {path}",
+                    )
+
                 # Handle soft-deleted files
                 if existing.deleted_at:
                     existing.deleted_at = None
@@ -349,7 +400,6 @@ class BaseFileSystem(ABC):
                     mime_type=guess_mime_type(name),
                 )
                 session.add(new_file)
-                await self._commit(session)
 
                 # Save initial snapshot (version 1)
                 await self._save_version(
@@ -619,7 +669,7 @@ class BaseFileSystem(ABC):
                 path=path,
             )
         finally:
-            await self._commit(session)
+            pass
 
     def _file_to_info(self, f: GroverFile) -> FileInfo:
         """Convert GroverFile to FileInfo."""
@@ -715,24 +765,18 @@ class BaseFileSystem(ABC):
             return True
 
         session = await self._get_session()
-        try:
-            file = await self._get_file(session, path)
-            return file is not None
-        finally:
-            await self._commit(session)
+        file = await self._get_file(session, path)
+        return file is not None
 
     async def get_info(self, path: str) -> FileInfo | None:
         """Get metadata for a file or directory."""
         path = normalize_path(path)
 
         session = await self._get_session()
-        try:
-            file = await self._get_file(session, path)
-            if not file:
-                return None
-            return self._file_to_info(file)
-        finally:
-            await self._commit(session)
+        file = await self._get_file(session, path)
+        if not file:
+            return None
+        return self._file_to_info(file)
 
     # =========================================================================
     # Version Control
@@ -767,7 +811,7 @@ class BaseFileSystem(ABC):
                 for v in versions
             ]
         finally:
-            await self._commit(session)
+            pass
 
     async def restore_version(self, path: str, version: int) -> RestoreResult:
         """Restore file to a previous version."""
@@ -837,7 +881,7 @@ class BaseFileSystem(ABC):
             entries = [(v.is_snapshot, v.content) for v in chain]
             return reconstruct_version(entries)
         finally:
-            await self._commit(session)
+            pass
 
     # =========================================================================
     # Trash Operations
@@ -874,7 +918,7 @@ class BaseFileSystem(ABC):
                 path="/__trash__",
             )
         finally:
-            await self._commit(session)
+            pass
 
     async def restore_from_trash(self, path: str) -> RestoreResult:
         """Restore a file from trash."""

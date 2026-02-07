@@ -1,7 +1,6 @@
 """Filesystem layer — storage backends, mounts, permissions."""
 
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.local_disk import LocalDiskBackend
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
@@ -26,7 +25,6 @@ __all__ = [
     "EditResult",
     "FileInfo",
     "ListResult",
-    "LocalDiskBackend",
     "LocalFileSystem",
     "MkdirResult",
     "MountConfig",

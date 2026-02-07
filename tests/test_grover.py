@@ -331,7 +331,7 @@ class TestGroverPersistence:
 
         # Verify DB has edges
         data_dir = grover._local_fs.data_dir
-        db_path = data_dir / "grover.db"
+        db_path = data_dir / "file_versions.db"
         assert db_path.exists()
 
     def test_save_persists_search(self, grover: Grover, workspace: Path):

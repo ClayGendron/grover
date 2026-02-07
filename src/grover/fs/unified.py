@@ -416,26 +416,19 @@ class UnifiedFileSystem:
         return result
 
     # =========================================================================
-    # VFS-Only Operations
+    # Version & Trash Operations
     # =========================================================================
 
     async def list_versions(self, path: str) -> list[VersionInfo]:
-        """List version history for a VFS file."""
+        """List version history for a file."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        if mount.mount_type != "vfs":
-            return []
         return await mount.backend.list_versions(rel_path)
 
     async def restore_version(self, path: str, version: int) -> RestoreResult:
         """Restore a file to a specific version."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        if mount.mount_type != "vfs":
-            return RestoreResult(
-                success=False,
-                message="Version restore is only supported for VFS mounts.",
-            )
         try:
             self._check_writable(path)
         except PermissionError as e:
@@ -453,16 +446,12 @@ class UnifiedFileSystem:
         """Get content of a specific file version."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        if mount.mount_type != "vfs":
-            return None
         return await mount.backend.get_version_content(rel_path, version)
 
     async def list_trash(self) -> ListResult:
-        """List all items in trash across VFS mounts."""
+        """List all items in trash across all mounts."""
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
-            if mount.mount_type != "vfs":
-                continue
             result = await mount.backend.list_trash()
             if result.success:
                 prefixed_entries = [
@@ -486,11 +475,6 @@ class UnifiedFileSystem:
             return RestoreResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        if mount.mount_type != "vfs":
-            return RestoreResult(
-                success=False,
-                message="Trash restore is only supported for VFS mounts.",
-            )
         result = await mount.backend.restore_from_trash(rel_path)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -504,8 +488,6 @@ class UnifiedFileSystem:
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
-            if mount.mount_type != "vfs":
-                continue
             result = await mount.backend.empty_trash()
             if not result.success:
                 return result

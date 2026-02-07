@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 class StorageBackend(Protocol):
     """Protocol defining the interface for filesystem backends.
 
-    Both LocalDiskBackend and DatabaseFileSystem implement this protocol.
+    Both LocalFileSystem and DatabaseFileSystem implement this protocol.
     Using @runtime_checkable allows isinstance() checks at runtime.
     """
 
@@ -78,7 +78,7 @@ class StorageBackend(Protocol):
     async def copy(self, src: str, dest: str) -> WriteResult: ...
 
     # =========================================================================
-    # VFS-Only Operations
+    # Version & Trash Operations
     # =========================================================================
 
     async def list_versions(self, path: str) -> list[VersionInfo]: ...

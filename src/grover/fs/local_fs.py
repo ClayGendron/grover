@@ -29,23 +29,54 @@ def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> N
         cursor.close()
 
 
+def _workspace_slug(workspace_dir: Path) -> str:
+    """Derive a directory-safe slug from a workspace path.
+
+    Converts to a path relative to the user's home directory, then replaces
+    path separators with underscores.  For paths outside of home, uses the
+    full absolute path minus the leading ``/``.
+
+    Examples::
+
+        ~/Git/Repos/grover  →  Git_Repos_grover
+        /opt/projects/app   →  opt_projects_app
+    """
+    try:
+        relative = workspace_dir.resolve().relative_to(Path.home())
+    except ValueError:
+        relative = Path(str(workspace_dir.resolve()).lstrip("/"))
+    return str(relative).replace("/", "_").strip("_")
+
+
+def _default_data_dir(workspace_dir: Path) -> Path:
+    """Return the global data directory for a given workspace.
+
+    Stored under ``~/.grover/{slug}/`` so project directories stay clean.
+    """
+    return Path.home() / ".grover" / _workspace_slug(workspace_dir)
+
+
 class LocalFileSystem(BaseFileSystem):
     """Local file system with disk storage and SQLite versioning.
 
-    - Files stored on disk at {workspace_dir}/{path}
-    - Metadata and versions in SQLite at {data_dir}/grover.db
+    - Files stored on disk at ``{workspace_dir}/{path}``
+    - Metadata and versions in SQLite at ``~/.grover/{slug}/file_versions.db``
     - IDE, git, and other tools can see/edit files directly
     """
+
+    DEFAULT_MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
 
     def __init__(
         self,
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
+        max_file_size: int = DEFAULT_MAX_FILE_SIZE,
     ) -> None:
         super().__init__(dialect="sqlite")
 
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd() / "workspace"
-        self.data_dir = Path(data_dir) if data_dir else self.workspace_dir / ".grover"
+        self.data_dir = Path(data_dir) if data_dir else _default_data_dir(self.workspace_dir)
+        self.max_file_size = max_file_size
 
         self._engine = None
         self._session_factory = None
@@ -61,7 +92,7 @@ class LocalFileSystem(BaseFileSystem):
             return
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = self.data_dir / "grover.db"
+        db_path = self.data_dir / "file_versions.db"
 
         self._engine = create_async_engine(
             f"sqlite+aiosqlite:///{db_path}",
@@ -125,28 +156,60 @@ class LocalFileSystem(BaseFileSystem):
         await session.commit()
 
     def _resolve_path(self, virtual_path: str) -> Path:
-        """Convert virtual path to actual disk path."""
+        """Convert virtual path to an actual disk path within the workspace.
+
+        Walks each path component to reject symlinks (prevents TOCTOU attacks)
+        and verifies the resolved path stays within ``workspace_dir``.
+
+        Raises:
+            PermissionError: On symlinks or path traversal.
+        """
         virtual_path = normalize_path(virtual_path)
-        relative = virtual_path.lstrip("/")
-        actual = self.workspace_dir / relative
+        rel = virtual_path.lstrip("/")
+        if not rel:
+            return self.workspace_dir
 
-        resolved = actual.resolve()
-        workspace_resolved = self.workspace_dir.resolve()
-        if not str(resolved).startswith(str(workspace_resolved)):
-            raise ValueError(f"Path traversal attempt: {virtual_path}")
+        candidate = self.workspace_dir / rel
 
-        return actual
+        # Walk each component checking for symlinks
+        current = self.workspace_dir
+        for part in Path(rel).parts:
+            current = current / part
+            if current.is_symlink():
+                raise PermissionError(
+                    f"Symlinks not allowed: {virtual_path} contains symlink at "
+                    f"{current.relative_to(self.workspace_dir)}"
+                )
+
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(self.workspace_dir.resolve())
+        except ValueError:
+            raise PermissionError(
+                f"Path traversal detected: {virtual_path} resolves outside workspace"
+            ) from None
+
+        return resolved
+
+    def _to_virtual_path(self, physical_path: Path) -> str:
+        """Convert a physical path back to a virtual path."""
+        rel = physical_path.resolve().relative_to(self.workspace_dir.resolve())
+        vpath = "/" + str(rel).replace("\\", "/")
+        return vpath if vpath != "/." else "/"
 
     async def _read_content(self, path: str) -> str | None:
         try:
             actual_path = self._resolve_path(path)
-        except ValueError:
+        except (PermissionError, ValueError):
             return None
 
         if not actual_path.exists() or actual_path.is_dir():
             return None
 
-        return await asyncio.to_thread(actual_path.read_text, encoding="utf-8")
+        try:
+            return await asyncio.to_thread(actual_path.read_text, encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError, OSError):
+            return None
 
     async def _write_content(self, path: str, content: str) -> None:
         actual_path = self._resolve_path(path)
@@ -175,7 +238,7 @@ class LocalFileSystem(BaseFileSystem):
     async def _delete_content(self, path: str) -> None:
         try:
             actual_path = self._resolve_path(path)
-        except ValueError:
+        except (PermissionError, ValueError):
             return
 
         if actual_path.exists():
@@ -188,7 +251,7 @@ class LocalFileSystem(BaseFileSystem):
         try:
             actual_path = self._resolve_path(path)
             return actual_path.exists()
-        except ValueError:
+        except (PermissionError, ValueError):
             return False
 
     # =========================================================================
@@ -196,7 +259,7 @@ class LocalFileSystem(BaseFileSystem):
     # =========================================================================
 
     async def read(self, path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        """Read file with binary check and similar file suggestions."""
+        """Read file with binary check, size limit, and similar file suggestions."""
         valid, error = validate_path(path)
         if not valid:
             return ReadResult(success=False, message=error)
@@ -205,7 +268,7 @@ class LocalFileSystem(BaseFileSystem):
 
         try:
             actual_path = self._resolve_path(path)
-        except ValueError as e:
+        except PermissionError as e:
             return ReadResult(success=False, message=str(e))
 
         if not actual_path.exists():
@@ -221,6 +284,20 @@ class LocalFileSystem(BaseFileSystem):
 
         if is_binary_file(actual_path):
             return ReadResult(success=False, message=f"Cannot read binary file: {path}")
+
+        try:
+            file_size = actual_path.stat().st_size
+        except OSError as e:
+            return ReadResult(success=False, message=f"Cannot access file: {e}")
+
+        if file_size > self.max_file_size:
+            return ReadResult(
+                success=False,
+                message=(
+                    f"File too large ({file_size:,} bytes, "
+                    f"limit {self.max_file_size:,}): {path}"
+                ),
+            )
 
         return await super().read(path, offset, limit)
 
@@ -248,7 +325,7 @@ class LocalFileSystem(BaseFileSystem):
 
         try:
             actual_path = self._resolve_path(path)
-        except ValueError as e:
+        except PermissionError as e:
             return ListResult(success=False, message=str(e))
 
         if not actual_path.exists():
@@ -295,4 +372,4 @@ class LocalFileSystem(BaseFileSystem):
                 path=path,
             )
         finally:
-            await self._commit(session)
+            pass

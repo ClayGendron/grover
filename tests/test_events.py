@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 from grover.events import EventBus, EventType, FileEvent
-from grover.fs.local_disk import LocalDiskBackend
+from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.unified import UnifiedFileSystem
 
@@ -227,15 +227,15 @@ class TestEventBusEmit:
 
 
 # =========================================================================
-# Integration: LocalDiskBackend + EventBus
+# Integration: LocalFileSystem + EventBus
 # =========================================================================
 
 
 class TestEventBusIntegration:
-    """EventBus wired through UnifiedFileSystem with a local-disk backend."""
+    """EventBus wired through UnifiedFileSystem with a local filesystem backend."""
 
     @pytest.fixture
-    def setup(self, tmp_path: Path) -> tuple[UnifiedFileSystem, EventBus, list[FileEvent]]:
+    async def setup(self, tmp_path: Path) -> tuple[UnifiedFileSystem, EventBus, list[FileEvent]]:
         bus = EventBus()
         collected: list[FileEvent] = []
 
@@ -245,13 +245,18 @@ class TestEventBusIntegration:
         for et in EventType:
             bus.register(et, handler)
 
-        backend = LocalDiskBackend(host_dir=tmp_path)
+        backend = LocalFileSystem(
+            workspace_dir=tmp_path,
+            data_dir=tmp_path / ".grover_test",
+        )
         registry = MountRegistry()
         registry.add_mount(
             MountConfig(mount_path="/local", backend=backend, mount_type="local")
         )
         ufs = UnifiedFileSystem(registry, event_bus=bus)
-        return ufs, bus, collected
+
+        async with ufs:
+            yield ufs, bus, collected
 
     async def test_write_emits_file_written(
         self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
@@ -332,15 +337,19 @@ class TestEventBusIntegration:
         assert len(collected) == 0
 
     async def test_no_event_bus_still_works(self, tmp_path: Path) -> None:
-        backend = LocalDiskBackend(host_dir=tmp_path)
+        backend = LocalFileSystem(
+            workspace_dir=tmp_path,
+            data_dir=tmp_path / ".grover_test2",
+        )
         registry = MountRegistry()
         registry.add_mount(
             MountConfig(mount_path="/local", backend=backend, mount_type="local")
         )
         ufs = UnifiedFileSystem(registry)
 
-        result = await ufs.write("/local/hello.txt", "hello")
-        assert result.success
+        async with ufs:
+            result = await ufs.write("/local/hello.txt", "hello")
+            assert result.success
 
 
 # =========================================================================
