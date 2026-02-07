@@ -214,3 +214,6 @@ __marimo__/
 
 # Test fixture repos (cloned for integration tests)
 tests/fixtures/repos/
+
+# Test Notebooks
+*test.ipynb
