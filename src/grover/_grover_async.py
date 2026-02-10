@@ -17,6 +17,7 @@ from grover.graph.analyzers import AnalyzerRegistry
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
 from grover.search._index import SearchIndex, SearchResult
+from grover.fs.types import ReadResult
 from grover.search.extractors import extract_from_chunks, extract_from_file
 
 if TYPE_CHECKING:
@@ -395,12 +396,9 @@ class GroverAsync:
     # FS Operations
     # ------------------------------------------------------------------
 
-    async def read(self, path: str) -> str | None:
-        """Read file content at *path*, returning raw text or ``None``."""
-        result = await self._ufs.read(path)
-        if not result.success:
-            return None
-        return result.content
+    async def read(self, path: str) -> ReadResult:
+        """Read file content at *path*."""
+        return await self._ufs.read(path)
 
     async def write(self, path: str, content: str) -> bool:
         """Write *content* to *path*. Returns ``True`` on success."""

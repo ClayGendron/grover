@@ -13,7 +13,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .base import FV, BaseFileSystem, F
-from .types import FileInfo, ListResult, MkdirResult, ReadResult
+from .types import DeleteResult, FileInfo, ListResult, MkdirResult, ReadResult
 from .utils import get_similar_files, is_binary_file, normalize_path, validate_path
 
 
@@ -67,7 +67,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             schema=schema,
         )
 
-        self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd() / "workspace"
+        self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd()
         self.data_dir = Path(data_dir) if data_dir else _default_data_dir(self.workspace_dir)
 
         self._engine = None
@@ -299,7 +299,46 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         if await asyncio.to_thread(is_binary_file, actual_path):
             return ReadResult(success=False, message=f"Cannot read binary file: {path}")
 
-        return await super().read(path, offset, limit)
+        if await asyncio.to_thread(actual_path.is_dir):
+            return ReadResult(success=False, message=f"Path is a directory, not a file: {path}")
+
+        content = await self._read_content(path)
+        if content is None:
+            return ReadResult(success=False, message=f"Could not read file: {path}")
+
+        return self._paginate_content(content, path, offset, limit)
+
+    # =========================================================================
+    # Override delete to back up content to DB before removing from disk
+    # =========================================================================
+
+    async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+        """Delete file, backing up content to the database first.
+
+        For files that exist on disk but have no DB record, a record and
+        version snapshot are created before soft-deleting, so the content
+        is always recoverable from the database.
+        """
+        norm = normalize_path(path)
+
+        # Read content from disk before anything else
+        content = await self._read_content(norm)
+
+        # Ensure a DB record exists so super().delete() can soft-delete it
+        if content is not None:
+            session = await self._get_session()
+            file = await self._get_file(session, norm)
+            if file is None:
+                # Disk-only file: create a DB record + version 1 snapshot
+                await super().write(norm, content, created_by="backup")
+
+        result = await super().delete(norm, permanent)
+
+        # Remove from disk regardless of soft/permanent
+        if result.success:
+            await self._delete_content(norm)
+
+        return result
 
     # =========================================================================
     # Override mkdir to create on disk too

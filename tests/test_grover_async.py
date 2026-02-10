@@ -69,17 +69,19 @@ def workspace2(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def grover(workspace: Path) -> GroverAsync:
-    g = GroverAsync(embedding_provider=FakeProvider())
-    await g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
+    data = tmp_path / "grover_data"
+    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    await g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
 
 @pytest.fixture
-async def grover_no_search(workspace: Path) -> GroverAsync:
-    g = GroverAsync()
-    await g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
+    data = tmp_path / "grover_data"
+    g = GroverAsync(data_dir=str(data))
+    await g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -97,16 +99,18 @@ class TestGroverAsyncLifecycle:
         assert g._in_transaction is False
 
     @pytest.mark.asyncio
-    async def test_mount_creates_meta_fs(self, workspace: Path):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace))
+    async def test_mount_creates_meta_fs(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         assert g._meta_fs is not None
         await g.close()
 
     @pytest.mark.asyncio
-    async def test_unmount(self, workspace: Path):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace))
+    async def test_unmount(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         await g.write("/app/test.txt", "hello")
         assert await g.exists("/app/test.txt")
         await g.unmount("/app")
@@ -115,17 +119,19 @@ class TestGroverAsyncLifecycle:
         await g.close()
 
     @pytest.mark.asyncio
-    async def test_unmount_grover_raises(self, workspace: Path):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace))
+    async def test_unmount_grover_raises(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         with pytest.raises(ValueError, match="Cannot unmount /.grover"):
             await g.unmount("/.grover")
         await g.close()
 
     @pytest.mark.asyncio
-    async def test_close_idempotent(self, workspace: Path):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace))
+    async def test_close_idempotent(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         await g.close()
         await g.close()  # Should not raise
 
@@ -139,20 +145,23 @@ class TestGroverAsyncDirectAccess:
     @pytest.mark.asyncio
     async def test_write_and_read(self, grover: GroverAsync):
         assert await grover.write("/project/hello.txt", "hello world")
-        content = await grover.read("/project/hello.txt")
-        assert content == "hello world"
+        result = await grover.read("/project/hello.txt")
+        assert result.success
+        assert result.content == "hello world"
 
     @pytest.mark.asyncio
     async def test_edit(self, grover: GroverAsync):
         await grover.write("/project/doc.txt", "old text here")
         assert await grover.edit("/project/doc.txt", "old", "new")
-        assert await grover.read("/project/doc.txt") == "new text here"
+        result = await grover.read("/project/doc.txt")
+        assert result.content == "new text here"
 
     @pytest.mark.asyncio
     async def test_delete(self, grover: GroverAsync):
         await grover.write("/project/tmp.txt", "temporary")
         assert await grover.delete("/project/tmp.txt")
-        assert await grover.read("/project/tmp.txt") is None
+        result = await grover.read("/project/tmp.txt")
+        assert not result.success
 
     @pytest.mark.asyncio
     async def test_list_dir(self, grover: GroverAsync):
@@ -183,8 +192,8 @@ class TestGroverAsyncTransaction:
             await grover.write("/project/b.txt", "b")
 
         # Both should exist after context exit
-        assert await grover.read("/project/a.txt") == "a"
-        assert await grover.read("/project/b.txt") == "b"
+        assert (await grover.read("/project/a.txt")).content == "a"
+        assert (await grover.read("/project/b.txt")).content == "b"
 
     @pytest.mark.asyncio
     async def test_operations_after_transaction(self, grover: GroverAsync):
@@ -193,15 +202,16 @@ class TestGroverAsyncTransaction:
 
         # Should work after transaction ends
         await grover.write("/project/after_tx.txt", "after transaction")
-        assert await grover.read("/project/after_tx.txt") == "after transaction"
+        assert (await grover.read("/project/after_tx.txt")).content == "after transaction"
 
     @pytest.mark.asyncio
-    async def test_transaction_sets_backend_flag(self, workspace: Path):
+    async def test_transaction_sets_backend_flag(self, workspace: Path, tmp_path: Path):
         """``async with g:`` sets ``in_transaction`` on backends."""
         from grover.fs.database_fs import DatabaseFileSystem
 
-        g = GroverAsync(embedding_provider=FakeProvider())
-        local = LocalFileSystem(workspace_dir=workspace)
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        local = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
         await g.mount("/app", local)
 
         assert local.in_transaction is False
@@ -234,7 +244,7 @@ class TestGroverAsyncTransaction:
         )
 
         db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
-        g = GroverAsync()
+        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
         await g.mount("/app", db)
 
         # Write inside a transaction that raises — should be rolled back
@@ -260,7 +270,7 @@ class TestGroverAsyncTransaction:
         """Files written inside ``async with g:`` are readable before commit."""
         async with grover:
             await grover.write("/project/visible.txt", "hello")
-            assert await grover.read("/project/visible.txt") == "hello"
+            assert (await grover.read("/project/visible.txt")).content == "hello"
             assert await grover.exists("/project/visible.txt")
 
     @pytest.mark.asyncio
@@ -298,7 +308,7 @@ class TestGroverAsyncTransaction:
         db_a = DatabaseFileSystem(session_factory=factory_a, dialect="sqlite")
         db_b = DatabaseFileSystem(session_factory=factory_b, dialect="sqlite")
 
-        g = GroverAsync()
+        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
         await g.mount("/a", db_a)
         await g.mount("/b", db_b)
 
@@ -308,8 +318,8 @@ class TestGroverAsyncTransaction:
                 await g.write("/a/file.txt", "content a")
                 await g.write("/b/file.txt", "content b")
                 # Both readable during txn
-                assert await g.read("/a/file.txt") == "content a"
-                assert await g.read("/b/file.txt") == "content b"
+                assert (await g.read("/a/file.txt")).content == "content a"
+                assert (await g.read("/b/file.txt")).content == "content b"
                 raise RuntimeError("cross-mount boom")
 
         # Both should be rolled back
@@ -341,16 +351,17 @@ class TestGroverAsyncTransaction:
 
 class TestGroverAsyncMultiMount:
     @pytest.mark.asyncio
-    async def test_two_mounts(self, workspace: Path, workspace2: Path):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace))
-        await g.mount("/data", LocalFileSystem(workspace_dir=workspace2))
+    async def test_two_mounts(self, workspace: Path, workspace2: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app"))
+        await g.mount("/data", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data"))
 
         await g.write("/app/code.txt", "code content")
         await g.write("/data/doc.txt", "doc content")
 
-        assert await g.read("/app/code.txt") == "code content"
-        assert await g.read("/data/doc.txt") == "doc content"
+        assert (await g.read("/app/code.txt")).content == "code content"
+        assert (await g.read("/data/doc.txt")).content == "doc content"
 
         # List root should show both mounts (but not .grover)
         entries = await g.list_dir("/")
@@ -362,10 +373,11 @@ class TestGroverAsyncMultiMount:
         await g.close()
 
     @pytest.mark.asyncio
-    async def test_isolation_between_mounts(self, workspace: Path, workspace2: Path):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/a", LocalFileSystem(workspace_dir=workspace))
-        await g.mount("/b", LocalFileSystem(workspace_dir=workspace2))
+    async def test_isolation_between_mounts(self, workspace: Path, workspace2: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/a", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a"))
+        await g.mount("/b", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b"))
 
         await g.write("/a/file.txt", "in mount a")
         assert await g.exists("/a/file.txt")
@@ -452,11 +464,12 @@ class TestGroverAsyncIndex:
 
     @pytest.mark.asyncio
     async def test_index_specific_mount(
-        self, workspace: Path, workspace2: Path
+        self, workspace: Path, workspace2: Path, tmp_path: Path,
     ):
-        g = GroverAsync(embedding_provider=FakeProvider())
-        await g.mount("/a", LocalFileSystem(workspace_dir=workspace))
-        await g.mount("/b", LocalFileSystem(workspace_dir=workspace2))
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/a", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a"))
+        await g.mount("/b", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b"))
 
         (workspace / "a.py").write_text('def a():\n    pass\n')
         (workspace2 / "b.py").write_text('def b():\n    pass\n')
@@ -482,7 +495,7 @@ class TestGroverAsyncPersistence:
         g1 = GroverAsync(
             data_dir=str(data_dir), embedding_provider=FakeProvider()
         )
-        await g1.mount("/project", LocalFileSystem(workspace_dir=workspace))
+        await g1.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
         await g1.write("/project/keep.py", 'def keep():\n    pass\n')
         await g1.save()
         await g1.close()
@@ -490,7 +503,7 @@ class TestGroverAsyncPersistence:
         g2 = GroverAsync(
             data_dir=str(data_dir), embedding_provider=FakeProvider()
         )
-        await g2.mount("/project", LocalFileSystem(workspace_dir=workspace))
+        await g2.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
         assert g2.graph.has_node("/project/keep.py")
         results = await g2.search("keep")
         assert len(results) >= 1

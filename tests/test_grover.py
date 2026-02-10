@@ -63,18 +63,20 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def grover(workspace: Path) -> Iterator[Grover]:
-    g = Grover(embedding_provider=FakeProvider())
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
+    data = tmp_path / "grover_data"
+    g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
+    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
 
 @pytest.fixture
-def grover_no_search(workspace: Path) -> Iterator[Grover]:
+def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     """Grover without search to test graceful degradation."""
-    g = Grover()
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+    data = tmp_path / "grover_data"
+    g = Grover(data_dir=str(data))
+    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -85,9 +87,10 @@ def grover_no_search(workspace: Path) -> Iterator[Grover]:
 
 
 class TestGroverConstruction:
-    def test_mount_first_api(self, workspace: Path):
-        g = Grover(embedding_provider=FakeProvider())
-        g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+    def test_mount_first_api(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
+        g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         try:
             assert g._async._meta_fs is not None
         finally:
@@ -105,9 +108,10 @@ class TestGroverConstruction:
         finally:
             g.close()
 
-    def test_close_idempotent(self, workspace: Path):
-        g = Grover(embedding_provider=FakeProvider())
-        g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+    def test_close_idempotent(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
+        g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         g.close()
         g.close()  # Should not raise
         assert g._closed
@@ -121,18 +125,19 @@ class TestGroverConstruction:
 class TestGroverFilesystem:
     def test_write_and_read(self, grover: Grover):
         assert grover.write("/project/hello.txt", "hello world")
-        content = grover.read("/project/hello.txt")
-        assert content == "hello world"
+        result = grover.read("/project/hello.txt")
+        assert result.success
+        assert result.content == "hello world"
 
     def test_edit(self, grover: Grover):
         grover.write("/project/doc.txt", "old text here")
         assert grover.edit("/project/doc.txt", "old", "new")
-        assert grover.read("/project/doc.txt") == "new text here"
+        assert grover.read("/project/doc.txt").content == "new text here"
 
     def test_delete(self, grover: Grover):
         grover.write("/project/tmp.txt", "temporary")
         assert grover.delete("/project/tmp.txt")
-        assert grover.read("/project/tmp.txt") is None
+        assert not grover.read("/project/tmp.txt").success
 
     def test_list_dir(self, grover: Grover):
         grover.write("/project/a.txt", "a")
@@ -163,14 +168,14 @@ class TestGroverTransaction:
             grover.write("/project/a.txt", "a")
             grover.write("/project/b.txt", "b")
 
-        assert grover.read("/project/a.txt") == "a"
-        assert grover.read("/project/b.txt") == "b"
+        assert grover.read("/project/a.txt").content == "a"
+        assert grover.read("/project/b.txt").content == "b"
 
     def test_reads_visible_during_transaction(self, grover: Grover):
         """Files written inside ``with g:`` are readable before commit."""
         with grover:
             grover.write("/project/visible.txt", "hello")
-            assert grover.read("/project/visible.txt") == "hello"
+            assert grover.read("/project/visible.txt").content == "hello"
             assert grover.exists("/project/visible.txt")
 
     def test_operations_after_transaction(self, grover: Grover):
@@ -179,7 +184,7 @@ class TestGroverTransaction:
             grover.write("/project/in_tx.txt", "in transaction")
 
         grover.write("/project/after_tx.txt", "after transaction")
-        assert grover.read("/project/after_tx.txt") == "after transaction"
+        assert grover.read("/project/after_tx.txt").content == "after transaction"
 
     def test_rollback_on_error(self, tmp_path: Path):
         """Writes inside ``with g:`` are rolled back on exception."""
@@ -207,14 +212,14 @@ class TestGroverTransaction:
         )
 
         db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
-        g = Grover()
+        g = Grover(data_dir=str(tmp_path / "grover_data"))
         g.mount("/app", db)
 
         with pytest.raises(RuntimeError, match="boom"):
             with g:
                 g.write("/app/doomed.txt", "this should vanish")
                 # Readable during the transaction
-                assert g.read("/app/doomed.txt") == "this should vanish"
+                assert g.read("/app/doomed.txt").content == "this should vanish"
                 raise RuntimeError("boom")
 
         # The file should NOT exist after rollback
@@ -407,7 +412,7 @@ class TestGroverPersistence:
         # Verify DB has edges
         data_dir = grover._async._meta_data_dir
         assert data_dir is not None
-        db_path = data_dir / "file_versions.db"
+        db_path = data_dir / "_meta" / "file_versions.db"
         assert db_path.exists()
 
     def test_save_persists_search(self, grover: Grover, workspace: Path):
@@ -428,7 +433,7 @@ class TestGroverPersistence:
             data_dir=str(data_dir),
             embedding_provider=FakeProvider(),
         )
-        g1.mount("/project", LocalFileSystem(workspace_dir=workspace))
+        g1.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
         g1.write("/project/keep.py", 'def keep():\n    pass\n')
         g1.save()
         g1.close()
@@ -438,7 +443,7 @@ class TestGroverPersistence:
             data_dir=str(data_dir),
             embedding_provider=FakeProvider(),
         )
-        g2.mount("/project", LocalFileSystem(workspace_dir=workspace))
+        g2.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
         try:
             assert g2.graph.has_node("/project/keep.py")
             # Search index should also be loaded

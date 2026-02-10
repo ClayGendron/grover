@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from grover._grover_async import GroverAsync
 from grover.fs.permissions import Permission
+from grover.fs.types import ReadResult
 
 if TYPE_CHECKING:
     from grover.fs.unified import UnifiedFileSystem
@@ -125,8 +126,8 @@ class Grover:
     # Filesystem wrappers (sync)
     # ------------------------------------------------------------------
 
-    def read(self, path: str) -> str | None:
-        """Read file content at *path*, returning raw text or ``None``."""
+    def read(self, path: str) -> ReadResult:
+        """Read file content at *path*."""
         return self._run(self._async.read(path))
 
     def write(self, path: str, content: str) -> bool:

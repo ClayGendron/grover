@@ -112,7 +112,7 @@ await g.close()
 |--------|---------|-------------|
 | `mount(path, backend, *, mount_type, permission, label, hidden)` | `None` | Mount a storage backend at a virtual path |
 | `unmount(path)` | `None` | Remove a mount |
-| `read(path)` | `str \| None` | Read file content |
+| `read(path)` | `ReadResult` | Read file content |
 | `write(path, content)` | `bool` | Write file (creates or updates) |
 | `edit(path, old, new)` | `bool` | Find-and-replace within a file |
 | `delete(path)` | `bool` | Soft-delete a file |
