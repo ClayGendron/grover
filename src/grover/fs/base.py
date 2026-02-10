@@ -14,6 +14,7 @@ from sqlmodel import select
 
 from grover.fs.dialect import upsert_file
 from grover.fs.diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
+from grover.fs.exceptions import ConsistencyError
 from grover.models.files import (
     File,
     FileBase,
@@ -325,7 +326,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
             return self._paginate_content(content, path, offset, limit)
 
-        except Exception:
+        except Exception as e:
+            logger.error("Read failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -395,7 +397,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                         session, existing, old_content, content, created_by,
                     )
 
-                # Write content before commit — phantom metadata is worse than orphan content
+                # Save version → write content → commit
                 await self._write_content(path, content)
                 await self._commit(session)
                 created = False
@@ -417,7 +419,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                     session, new_file, "", content, created_by,
                 )
 
-                # Write content before commit
+                # Save version → write content → commit
                 await self._write_content(path, content)
                 await self._commit(session)
 
@@ -431,7 +433,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 created=created,
                 version=version,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Write failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -490,7 +493,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             # Save version after incrementing
             await self._save_version(session, file, content, new_content, created_by)
 
-            # Write content before commit
+            # Save version → write content → commit
             await self._write_content(path, new_content)
             await self._commit(session)
 
@@ -500,7 +503,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 file_path=path,
                 version=file.current_version,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Edit failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -552,7 +556,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 file_path=path,
                 permanent=permanent,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Delete failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -638,7 +643,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 path=path,
                 created_dirs=[],
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Mkdir failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -691,7 +697,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 entries=entries,
                 path=path,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("List dir failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -763,7 +770,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 old_path=src,
                 new_path=dest,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Move failed for %s -> %s: %s", src, dest, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -783,7 +791,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             content = await self._read_content(src)
             if content is None:
                 return WriteResult(success=False, message=f"Source content not found: {src}")
-        except Exception:
+        except Exception as e:
+            logger.error("Copy failed for %s: %s", src, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -791,6 +800,10 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
     async def exists(self, path: str) -> bool:
         """Check if a file or directory exists."""
+        valid, _ = validate_path(path)
+        if not valid:
+            return False
+
         path = normalize_path(path)
         if path == "/":
             return True
@@ -801,6 +814,10 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
     async def get_info(self, path: str) -> FileInfo | None:
         """Get metadata for a file or directory."""
+        valid, _ = validate_path(path)
+        if not valid:
+            return None
+
         path = normalize_path(path)
 
         session = await self._get_session()
@@ -841,7 +858,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 )
                 for v in versions
             ]
-        except Exception:
+        except Exception as e:
+            logger.error("List versions failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -913,8 +931,22 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 return None
 
             entries = [(v.is_snapshot, v.content) for v in chain]
-            return reconstruct_version(entries)
-        except Exception:
+            content = reconstruct_version(entries)
+
+            # Verify SHA256 against the target version's stored hash
+            expected_hash = chain[-1].content_hash
+            actual_hash = hashlib.sha256(content.encode()).hexdigest()
+            if actual_hash != expected_hash:
+                raise ConsistencyError(
+                    f"Version {version} of {path}: content hash mismatch "
+                    f"(expected {expected_hash[:12]}…, got {actual_hash[:12]}…)"
+                )
+
+            return content
+        except Exception as e:
+            logger.error(
+                "Get version content failed for %s v%s: %s", path, version, e, exc_info=True
+            )
             await session.rollback()
             raise
 
@@ -953,7 +985,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 entries=entries,
                 path="/__trash__",
             )
-        except Exception:
+        except Exception as e:
+            logger.error("List trash failed: %s", e, exc_info=True)
             await session.rollback()
             raise
 
@@ -987,7 +1020,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 message=f"Restored from trash: {path}",
                 file_path=path,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Restore from trash failed for %s: %s", path, e, exc_info=True)
             await session.rollback()
             raise
 
@@ -1017,6 +1051,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 permanent=True,
                 total_deleted=count,
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Empty trash failed: %s", e, exc_info=True)
             await session.rollback()
             raise

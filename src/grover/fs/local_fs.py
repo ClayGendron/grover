@@ -95,7 +95,9 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         @event.listens_for(self._engine.sync_engine, "connect")
         def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
             cursor = dbapi_connection.cursor()  # type: ignore[union-attr]
-            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
         async with self._engine.begin() as conn:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Any
 
 from grover.events import EventBus, EventType, FileEvent
@@ -107,8 +108,6 @@ class UnifiedFileSystem(StorageBackend):
         return mount_path + path
 
     def _prefix_file_info(self, info: FileInfo, mount: MountConfig) -> FileInfo:
-        from dataclasses import replace as dc_replace
-
         prefixed_path = self._prefix_path(info.path, mount.mount_path) or info.path
         return dc_replace(
             info,

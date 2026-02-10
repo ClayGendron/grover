@@ -126,6 +126,12 @@ def validate_path(path: str) -> tuple[bool, str]:
     if "\x00" in path:
         return False, "Path contains null bytes"
 
+    # Reject ASCII control characters (0x01-0x1f) except \t, \n, \r
+    for ch in path:
+        code = ord(ch)
+        if 0x01 <= code <= 0x1F and ch not in ("\t", "\n", "\r"):
+            return False, f"Path contains control character: 0x{code:02x}"
+
     if len(path) > 4096:
         return False, "Path too long (max 4096 characters)"
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.diff import SNAPSHOT_INTERVAL
+from grover.fs.exceptions import ConsistencyError
 
 
 async def _make_fs() -> tuple[DatabaseFileSystem, object]:
@@ -445,4 +447,167 @@ class TestExistsGetInfo:
         async with fs:
             info = await fs.get_info("/nope.py")
             assert info is None
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Hash Validation
+# ---------------------------------------------------------------------------
+
+
+class TestHashValidation:
+    async def test_version_content_hash_verified(self):
+        """Corrupt a version's content_hash in DB, get_version_content raises ConsistencyError."""
+        from sqlmodel import select
+
+        from grover.models.files import FileVersion
+
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/f.py", "original content\n")
+
+            # Corrupt the stored content_hash for version 1
+            session = await fs._get_session()
+            result = await session.execute(
+                select(FileVersion).where(FileVersion.version == 1)
+            )
+            ver = result.scalar_one()
+            ver.content_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+            await session.commit()
+
+            with pytest.raises(ConsistencyError, match="hash mismatch"):
+                await fs.get_version_content("/f.py", 1)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Path Validation on exists / get_info
+# ---------------------------------------------------------------------------
+
+
+class TestPathValidationExistsGetInfo:
+    async def test_exists_null_byte_path(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            assert await fs.exists("/foo\x00bar") is False
+        await engine.dispose()
+
+    async def test_get_info_null_byte_path(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            info = await fs.get_info("/foo\x00bar")
+            assert info is None
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Control Characters
+# ---------------------------------------------------------------------------
+
+
+class TestControlChars:
+    async def test_write_control_char_path_rejected(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            result = await fs.write("/bad\x01file.py", "content\n")
+            assert result.success is False
+            assert "control character" in result.message.lower()
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Edge Cases
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeCases:
+    async def test_read_empty_file(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/empty.py", "")
+            result = await fs.read("/empty.py")
+            assert result.success is True
+            assert result.content == ""
+        await engine.dispose()
+
+    async def test_write_overwrite_false(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/f.py", "v1\n")
+            result = await fs.write("/f.py", "v2\n", overwrite=False)
+            assert result.success is False
+            assert "already exists" in result.message
+        await engine.dispose()
+
+    async def test_move_directory_with_children(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/a")
+            await fs.write("/a/child.py", "child\n")
+
+            result = await fs.move("/a", "/b")
+            assert result.success is True
+
+            # Children should follow
+            assert await fs.exists("/b/child.py") is True
+            assert await fs.exists("/a/child.py") is False
+        await engine.dispose()
+
+    async def test_copy_directory_rejected(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/src")
+            result = await fs.copy("/src", "/dst")
+            assert result.success is False
+            assert "directory" in result.message.lower()
+        await engine.dispose()
+
+    async def test_read_directory_rejected(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/mydir")
+            result = await fs.read("/mydir")
+            assert result.success is False
+            assert "directory" in result.message.lower()
+        await engine.dispose()
+
+    async def test_edit_directory_rejected(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/mydir")
+            result = await fs.edit("/mydir", "old", "new")
+            assert result.success is False
+            assert "directory" in result.message.lower()
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Version Reconstruction Across Snapshots
+# ---------------------------------------------------------------------------
+
+
+class TestVersionReconstructionAcrossSnapshots:
+    async def test_25_edits_spanning_2_snapshot_intervals(self):
+        """25+ edits spanning 2 snapshot intervals, verify all versions."""
+        fs, engine = await _make_fs()
+        async with fs:
+            initial = "version_0\nstatic_line\n"
+            await fs.write("/f.py", initial)
+            contents = [initial]
+
+            for i in range(1, 26):
+                old_marker = f"version_{i - 1}"
+                new_marker = f"version_{i}"
+                prev = contents[-1]
+                new = prev.replace(old_marker, new_marker, 1)
+                await fs.edit("/f.py", old_marker, new_marker)
+                contents.append(new)
+
+            # Verify every version is reconstructable
+            for version_num in range(1, len(contents) + 1):
+                vc = await fs.get_version_content("/f.py", version_num)
+                assert vc is not None, f"Version {version_num} returned None"
+                assert vc == contents[version_num - 1], (
+                    f"Version {version_num} mismatch"
+                )
         await engine.dispose()
