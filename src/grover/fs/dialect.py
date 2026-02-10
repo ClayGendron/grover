@@ -32,6 +32,7 @@ async def upsert_file(
     conflict_keys: list[str],
     model: type | None = None,
     schema: str | None = None,
+    update_keys: list[str] | None = None,
 ) -> int:
     """Dialect-aware upsert into a file table. Returns rowcount.
 
@@ -50,8 +51,12 @@ async def upsert_file(
         model = File
 
     if dialect == "mssql":
-        return await _upsert_mssql(session, values, conflict_keys, model, schema)
-    return await _upsert_sqlite_pg(session, dialect, values, conflict_keys, model, schema)
+        return await _upsert_mssql(
+            session, values, conflict_keys, model, schema, update_keys,
+        )
+    return await _upsert_sqlite_pg(
+        session, dialect, values, conflict_keys, model, schema, update_keys,
+    )
 
 
 async def _upsert_sqlite_pg(
@@ -61,6 +66,7 @@ async def _upsert_sqlite_pg(
     conflict_keys: list[str],
     model: type,
     schema: str | None = None,
+    update_keys: list[str] | None = None,
 ) -> int:
     """SQLite / PostgreSQL upsert using INSERT ... ON CONFLICT DO UPDATE."""
     from sqlalchemy.dialects import sqlite as sqlite_dialect
@@ -73,8 +79,11 @@ async def _upsert_sqlite_pg(
 
     stmt = dialect_module.insert(model).values(**values)
 
-    # Columns to update on conflict (exclude conflict keys)
-    update_cols = {k: v for k, v in values.items() if k not in conflict_keys}
+    # Columns to update on conflict
+    if update_keys is not None:
+        update_cols = {k: v for k, v in values.items() if k in update_keys}
+    else:
+        update_cols = {k: v for k, v in values.items() if k not in conflict_keys}
 
     if update_cols:
         stmt = stmt.on_conflict_do_update(
@@ -97,6 +106,7 @@ async def _upsert_mssql(
     conflict_keys: list[str],
     model: type,
     schema: str | None = None,
+    update_keys: list[str] | None = None,
 ) -> int:
     """MSSQL upsert using MERGE INTO ... WITH (HOLDLOCK)."""
     table_name: str = getattr(model, "__tablename__", "grover_files")
@@ -105,9 +115,14 @@ async def _upsert_mssql(
     on_clause = " AND ".join(f"target.{k} = :{k}" for k in conflict_keys)
     insert_cols = ", ".join(values.keys())
     insert_vals = ", ".join(f":{k}" for k in values)
-    update_set = ", ".join(
-        f"target.{k} = :{k}" for k in values if k not in conflict_keys
-    )
+    if update_keys is not None:
+        update_set = ", ".join(
+            f"target.{k} = :{k}" for k in values if k in update_keys
+        )
+    else:
+        update_set = ", ".join(
+            f"target.{k} = :{k}" for k in values if k not in conflict_keys
+        )
 
     merge_sql = f"""
         MERGE INTO {table_name} WITH (HOLDLOCK) AS target

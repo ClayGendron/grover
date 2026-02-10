@@ -66,7 +66,6 @@ class TestVersionInfo:
         now = datetime.now(UTC)
         vi = VersionInfo(version=1, content_hash="abc", size_bytes=10, created_at=now)
         assert vi.created_by is None
-        assert vi.change_summary is None
 
 
 class TestReadResult:

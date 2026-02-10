@@ -32,7 +32,6 @@ class VersionInfo:
     size_bytes: int
     created_at: datetime
     created_by: str | None = None
-    change_summary: str | None = None
 
 
 @dataclass
@@ -45,6 +44,7 @@ class ReadResult:
     total_lines: int | None = None
     lines_read: int | None = None
     truncated: bool = False
+    offset: int = 0
 
 
 @dataclass

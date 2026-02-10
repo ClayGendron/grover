@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from grover.events import EventBus, EventType, FileEvent
+from grover.fs.exceptions import MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
@@ -181,7 +182,7 @@ class GroverAsync:
 
         try:
             mount, _ = self._registry.resolve(path)
-        except FileNotFoundError:
+        except MountNotFoundError:
             return
 
         backend = mount.backend
@@ -298,7 +299,7 @@ class GroverAsync:
             result = await self._ufs.read(event.path)
             if not result.success:
                 return
-            content = self._ufs._extract_raw_content(result.content)
+            content = result.content
         if content is not None:
             await self._analyze_and_integrate(event.path, content)
 
@@ -325,7 +326,7 @@ class GroverAsync:
             return
         result = await self._ufs.read(event.path)
         if result.success:
-            content = self._ufs._extract_raw_content(result.content)
+            content = result.content
             if content is not None:
                 await self._analyze_and_integrate(event.path, content)
 
@@ -399,7 +400,7 @@ class GroverAsync:
         result = await self._ufs.read(path)
         if not result.success:
             return None
-        return self._ufs._extract_raw_content(result.content)
+        return result.content
 
     async def write(self, path: str, content: str) -> bool:
         """Write *content* to *path*. Returns ``True`` on success."""
@@ -513,12 +514,12 @@ class GroverAsync:
         """Read raw file content, trying UFS first then direct backend."""
         read_result = await self._ufs.read(path)
         if read_result.success:
-            return self._ufs._extract_raw_content(read_result.content)
+            return read_result.content
 
         # File may exist on disk but not in the DB — read directly
         try:
             mount, rel_path = self._registry.resolve(path)
-        except FileNotFoundError:
+        except MountNotFoundError:
             return None
         backend = mount.backend
         if hasattr(backend, "_read_content"):

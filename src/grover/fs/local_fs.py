@@ -10,22 +10,11 @@ from pathlib import Path
 from typing import Generic
 
 from sqlalchemy import event
-from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .base import FV, BaseFileSystem, F
 from .types import FileInfo, ListResult, MkdirResult, ReadResult
 from .utils import get_similar_files, is_binary_file, normalize_path, validate_path
-
-
-# Disable foreign key checks for SQLite (we don't have a users table locally)
-@event.listens_for(Engine, "connect")
-def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
-    connection_module = type(dbapi_connection).__module__
-    if "sqlite" in connection_module or "aiosqlite" in connection_module:
-        cursor = dbapi_connection.cursor()  # type: ignore[union-attr]
-        cursor.execute("PRAGMA foreign_keys=OFF")
-        cursor.close()
 
 
 def _workspace_slug(workspace_dir: Path) -> str:
@@ -63,13 +52,10 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     - IDE, git, and other tools can see/edit files directly
     """
 
-    DEFAULT_MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
-
     def __init__(
         self,
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
-        max_file_size: int = DEFAULT_MAX_FILE_SIZE,
         file_model: type[F] | None = None,
         file_version_model: type[FV] | None = None,
         schema: str | None = None,
@@ -83,7 +69,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd() / "workspace"
         self.data_dir = Path(data_dir) if data_dir else _default_data_dir(self.workspace_dir)
-        self.max_file_size = max_file_size
 
         self._engine = None
         self._session_factory = None
@@ -105,6 +90,13 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             f"sqlite+aiosqlite:///{db_path}",
             echo=False,
         )
+
+        # Scope the pragma listener to this engine only
+        @event.listens_for(self._engine.sync_engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
+            cursor = dbapi_connection.cursor()  # type: ignore[union-attr]
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.close()
 
         async with self._engine.begin() as conn:
             fm_table = self._file_model.__table__  # type: ignore[unresolved-attribute]
@@ -163,7 +155,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         else:
             await session.commit()
 
-    def _resolve_path(self, virtual_path: str) -> Path:
+    def _resolve_path_sync(self, virtual_path: str) -> Path:
         """Convert virtual path to an actual disk path within the workspace.
 
         Walks each path component to reject symlinks (prevents TOCTOU attacks)
@@ -199,6 +191,10 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         return resolved
 
+    async def _resolve_path(self, virtual_path: str) -> Path:
+        """Async wrapper around _resolve_path_sync to avoid blocking the event loop."""
+        return await asyncio.to_thread(self._resolve_path_sync, virtual_path)
+
     def _to_virtual_path(self, physical_path: Path) -> str:
         """Convert a physical path back to a virtual path."""
         rel = physical_path.resolve().relative_to(self.workspace_dir.resolve())
@@ -207,20 +203,22 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
     async def _read_content(self, path: str) -> str | None:
         try:
-            actual_path = self._resolve_path(path)
+            actual_path = await self._resolve_path(path)
         except (PermissionError, ValueError):
             return None
 
-        if not actual_path.exists() or actual_path.is_dir():
-            return None
+        def _do_read() -> str | None:
+            if not actual_path.exists() or actual_path.is_dir():
+                return None
+            return actual_path.read_text(encoding="utf-8")
 
         try:
-            return await asyncio.to_thread(actual_path.read_text, encoding="utf-8")
+            return await asyncio.to_thread(_do_read)
         except (UnicodeDecodeError, PermissionError, OSError):
             return None
 
     async def _write_content(self, path: str, content: str) -> None:
-        actual_path = self._resolve_path(path)
+        actual_path = await self._resolve_path(path)
 
         def _do_write() -> None:
             actual_path.parent.mkdir(parents=True, exist_ok=True)
@@ -245,20 +243,24 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
     async def _delete_content(self, path: str) -> None:
         try:
-            actual_path = self._resolve_path(path)
+            actual_path = await self._resolve_path(path)
         except (PermissionError, ValueError):
             return
 
-        if actual_path.exists():
-            if actual_path.is_dir():
-                await asyncio.to_thread(shutil.rmtree, actual_path)
-            else:
-                await asyncio.to_thread(os.unlink, actual_path)
+        def _do_delete() -> None:
+            try:
+                actual_path.unlink()
+            except IsADirectoryError:
+                shutil.rmtree(actual_path)
+            except FileNotFoundError:
+                pass
+
+        await asyncio.to_thread(_do_delete)
 
     async def _content_exists(self, path: str) -> bool:
         try:
-            actual_path = self._resolve_path(path)
-            return actual_path.exists()
+            actual_path = await self._resolve_path(path)
+            return await asyncio.to_thread(actual_path.exists)
         except (PermissionError, ValueError):
             return False
 
@@ -267,7 +269,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # =========================================================================
 
     async def read(self, path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        """Read file with binary check, size limit, and similar file suggestions."""
+        """Read file with binary check and similar file suggestions."""
         valid, error = validate_path(path)
         if not valid:
             return ReadResult(success=False, message=error)
@@ -275,13 +277,17 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         path = normalize_path(path)
 
         try:
-            actual_path = self._resolve_path(path)
+            actual_path = await self._resolve_path(path)
         except PermissionError as e:
             return ReadResult(success=False, message=str(e))
 
-        if not actual_path.exists():
-            if actual_path.parent.exists():
-                suggestions = get_similar_files(actual_path.parent, actual_path.name)
+        exists = await asyncio.to_thread(actual_path.exists)
+        if not exists:
+            parent_exists = await asyncio.to_thread(actual_path.parent.exists)
+            if parent_exists:
+                suggestions = await asyncio.to_thread(
+                    get_similar_files, actual_path.parent, actual_path.name
+                )
                 if suggestions:
                     suggestion_text = "\n".join(f"  {s}" for s in suggestions)
                     return ReadResult(
@@ -290,22 +296,8 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                     )
             return ReadResult(success=False, message=f"File not found: {path}")
 
-        if is_binary_file(actual_path):
+        if await asyncio.to_thread(is_binary_file, actual_path):
             return ReadResult(success=False, message=f"Cannot read binary file: {path}")
-
-        try:
-            file_size = actual_path.stat().st_size
-        except OSError as e:
-            return ReadResult(success=False, message=f"Cannot access file: {e}")
-
-        if file_size > self.max_file_size:
-            return ReadResult(
-                success=False,
-                message=(
-                    f"File too large ({file_size:,} bytes, "
-                    f"limit {self.max_file_size:,}): {path}"
-                ),
-            )
 
         return await super().read(path, offset, limit)
 
@@ -318,7 +310,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         result = await super().mkdir(path, parents)
 
         if result.success:
-            actual_path = self._resolve_path(path)
+            actual_path = await self._resolve_path(path)
             await asyncio.to_thread(actual_path.mkdir, parents=True, exist_ok=True)
 
         return result
@@ -332,14 +324,16 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         path = normalize_path(path)
 
         try:
-            actual_path = self._resolve_path(path)
+            actual_path = await self._resolve_path(path)
         except PermissionError as e:
             return ListResult(success=False, message=str(e))
 
-        if not actual_path.exists():
+        exists = await asyncio.to_thread(actual_path.exists)
+        if not exists:
             return ListResult(success=False, message=f"Directory not found: {path}")
 
-        if not actual_path.is_dir():
+        is_dir = await asyncio.to_thread(actual_path.is_dir)
+        if not is_dir:
             return ListResult(success=False, message=f"Not a directory: {path}")
 
         entries: list[FileInfo] = []
@@ -379,5 +373,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 entries=entries,
                 path=path,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise

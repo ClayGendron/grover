@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 from grover.events import EventBus, EventType, FileEvent
 
+from .exceptions import MountNotFoundError
 from .permissions import Permission
+from .protocol import StorageBackend
 from .types import (
     DeleteResult,
     EditResult,
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
     from .mounts import MountConfig, MountRegistry
 
 
-class UnifiedFileSystem:
+class UnifiedFileSystem(StorageBackend):
     """Routes operations to backends via mount registry.
 
     Presents a single namespace to callers while delegating to the
@@ -86,6 +88,13 @@ class UnifiedFileSystem:
         if errors and exc_type is None:
             raise errors[0]
 
+    async def close(self) -> None:
+        """Close all entered backends."""
+        for backend in reversed(self._entered_backends):
+            if hasattr(backend, "close"):
+                await backend.close()
+        self._entered_backends.clear()
+
     # =========================================================================
     # Path Helpers
     # =========================================================================
@@ -112,27 +121,6 @@ class UnifiedFileSystem:
         perm = self._registry.get_permission(virtual_path)
         if perm == Permission.READ_ONLY:
             raise PermissionError(f"Cannot write to read-only path: {virtual_path}")
-
-    def _extract_raw_content(self, formatted_content: str | None) -> str | None:
-        """Extract raw file content from formatted ReadResult output."""
-        if formatted_content is None:
-            return None
-
-        if not formatted_content.startswith("<file>"):
-            return formatted_content
-
-        lines = formatted_content.split("\n")
-        raw_lines: list[str] = []
-        for line in lines[1:]:
-            if line.startswith("(") or line == "</file>" or line == "":
-                continue
-            if "| " in line:
-                raw_lines.append(line.split("| ", 1)[1])
-            elif "|" in line:
-                raw_lines.append(line.split("|", 1)[1])
-            else:
-                raw_lines.append(line)
-        return "\n".join(raw_lines)
 
     # =========================================================================
     # Read Operations
@@ -197,7 +185,7 @@ class UnifiedFileSystem:
 
         try:
             mount, rel_path = self._registry.resolve(path)
-        except FileNotFoundError:
+        except MountNotFoundError:
             return False
 
         return await mount.backend.exists(rel_path)
@@ -220,7 +208,7 @@ class UnifiedFileSystem:
 
         try:
             mount, rel_path = self._registry.resolve(path)
-        except FileNotFoundError:
+        except MountNotFoundError:
             return None
 
         info = await mount.backend.get_info(rel_path)
@@ -353,14 +341,13 @@ class UnifiedFileSystem:
                 message=f"Cannot read source for cross-mount move: {read_result.message}",
             )
 
-        raw_content = self._extract_raw_content(read_result.content)
-        if raw_content is None:
+        if read_result.content is None:
             return MoveResult(
                 success=False,
                 message=f"Source file has no content: {src}",
             )
 
-        write_result = await dest_mount.backend.write(dest_rel, raw_content)
+        write_result = await dest_mount.backend.write(dest_rel, read_result.content)
         if not write_result.success:
             return MoveResult(
                 success=False,
@@ -413,14 +400,13 @@ class UnifiedFileSystem:
                 message=f"Cannot read source for cross-mount copy: {read_result.message}",
             )
 
-        raw_content = self._extract_raw_content(read_result.content)
-        if raw_content is None:
+        if read_result.content is None:
             return WriteResult(
                 success=False,
                 message=f"Source file has no content: {src}",
             )
 
-        result = await dest_mount.backend.write(dest_rel, raw_content)
+        result = await dest_mount.backend.write(dest_rel, read_result.content)
         result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
         if result.success:
             await self._emit(

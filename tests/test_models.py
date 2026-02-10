@@ -63,7 +63,6 @@ class TestDefaultFactories:
         assert fv.content_hash == ""
         assert fv.size_bytes == 0
         assert fv.created_by is None
-        assert fv.change_summary is None
 
     def test_file_version_with_new_fields(self, session: Session):
         fv = FileVersion(
@@ -74,7 +73,6 @@ class TestDefaultFactories:
             content_hash="sha256hash",
             size_bytes=42,
             created_by="agent",
-            change_summary="Added a function",
         )
         session.add(fv)
         session.commit()
@@ -83,7 +81,6 @@ class TestDefaultFactories:
         assert fv.content_hash == "sha256hash"
         assert fv.size_bytes == 42
         assert fv.created_by == "agent"
-        assert fv.change_summary == "Added a function"
 
     def test_grover_edge_defaults(self, session: Session):
         edge = GroverEdge(source_path="/a.py", target_path="/b.py", type="imports")

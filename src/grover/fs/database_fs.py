@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Generic
 
 from sqlmodel import select
@@ -11,8 +12,11 @@ from .utils import normalize_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
@@ -41,7 +45,7 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         )
         self.session_factory = session_factory
         self._session: AsyncSession | None = None
-        self._session_cm: object = None
+        self._session_cm: AbstractAsyncContextManager[AsyncSession] | None = None
 
     # =========================================================================
     # Abstract Method Implementations
@@ -64,7 +68,12 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         if self._session is not None:
             await self._session.close()
             self._session = None
-        self._session_cm = None
+        if self._session_cm is not None:
+            try:
+                await self._session_cm.__aexit__(None, None, None)
+            except Exception:
+                logger.debug("Session CM exit failed", exc_info=True)
+            self._session_cm = None
 
     async def __aenter__(self) -> DatabaseFileSystem[F, FV]:
         return self
@@ -116,5 +125,14 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         pass  # Content lives in the file record
 
     async def _content_exists(self, path: str) -> bool:
-        content = await self._read_content(path)
-        return content is not None
+        path = normalize_path(path)
+        session = await self._get_session()
+        model = self._file_model
+        result = await session.execute(
+            select(model.id).where(  # type: ignore[arg-type]
+                model.path == path,  # type: ignore[arg-type]
+                model.content.isnot(None),  # type: ignore[union-attr]
+                model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+            )
+        )
+        return result.first() is not None

@@ -7,6 +7,10 @@ import posixpath
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .types import ReadResult
 
 # =============================================================================
 # Text File Extensions (allowed for write operations)
@@ -576,3 +580,43 @@ def replace(
         success=False,
         error="old_string not found in file content.",
     )
+
+
+# =============================================================================
+# Read Output Formatting (for LLM display)
+# =============================================================================
+
+
+def format_read_output(result: ReadResult) -> str:
+    """Format a ReadResult with line numbers and ``<file>`` wrapper for LLM display.
+
+    The *result* should contain raw (unformatted) content from
+    ``BaseFileSystem.read()``.  This function adds zero-padded line numbers
+    and wraps the output in ``<file>...</file>`` tags, matching the format
+    that was previously embedded in ``_format_read_output``.
+    """
+    if not result.content:
+        return "<file>\n(empty file)\n</file>"
+
+    lines = result.content.split("\n")
+    offset = result.offset
+
+    formatted_lines = [
+        f"{str(i + offset + 1).zfill(5)}| {line}"
+        for i, line in enumerate(lines)
+    ]
+
+    formatted = "<file>\n"
+    formatted += "\n".join(formatted_lines)
+
+    if result.truncated:
+        last_read_line = offset + len(lines)
+        formatted += (
+            f"\n\n(File has more lines. "
+            f"Use 'offset' parameter to read beyond line {last_read_line})"
+        )
+    else:
+        formatted += f"\n\n(End of file - total {result.total_lines or len(lines)} lines)"
+
+    formatted += "\n</file>"
+    return formatted

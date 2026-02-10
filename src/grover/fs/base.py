@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+from sqlalchemy import delete as sa_delete
 from sqlmodel import select
 
 from grover.fs.dialect import upsert_file
@@ -42,13 +44,13 @@ from .utils import (
     validate_path,
 )
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 # Constants for read operations
 DEFAULT_READ_LIMIT = 2000
-MAX_LINE_LENGTH = 2000
-MAX_BYTES = 50 * 1024  # 50KB
 
 F = TypeVar("F", bound=FileBase)
 FV = TypeVar("FV", bound=FileVersionBase)
@@ -181,7 +183,6 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         old_content: str,
         new_content: str,
         created_by: str = "agent",
-        change_summary: str | None = None,
     ) -> None:
         """Save a version record using diff-based storage.
 
@@ -196,28 +197,26 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         else:
             content = compute_diff(old_content, new_content)
 
+        new_content_bytes = new_content.encode()
         version = self._file_version_model(
             file_id=file.id,
             version=version_num,
             is_snapshot=is_snap or not old_content,
             content=content,
-            content_hash=hashlib.sha256(new_content.encode()).hexdigest(),
-            size_bytes=len(new_content.encode()),
+            content_hash=hashlib.sha256(new_content_bytes).hexdigest(),
+            size_bytes=len(new_content_bytes),
             created_by=created_by,
-            change_summary=change_summary,
         )
         session.add(version)
 
     async def _delete_versions(self, session: AsyncSession, file_id: str) -> None:
         """Delete all version records for a file."""
         fv_model = self._file_version_model
-        result = await session.execute(
-            select(fv_model).where(
+        await session.execute(
+            sa_delete(fv_model).where(
                 fv_model.file_id == file_id,  # type: ignore[arg-type]
             )
         )
-        for version in result.scalars().all():
-            await session.delete(version)
 
     async def _ensure_parent_dirs(self, session: AsyncSession, path: str) -> None:
         """Ensure all parent directories exist in the database."""
@@ -243,16 +242,17 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 conflict_keys=["path"],
                 model=self._file_model,
                 schema=self.schema,
+                update_keys=["updated_at"],
             )
 
-    def _format_read_output(
+    def _paginate_content(
         self,
         content: str,
         path: str,
         offset: int,
         limit: int,
     ) -> ReadResult:
-        """Format file content with line numbers and pagination."""
+        """Paginate file content and return raw text (no formatting)."""
         lines = content.split("\n")
         total_lines = len(lines)
 
@@ -265,54 +265,24 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 total_lines=0,
                 lines_read=0,
                 truncated=False,
+                offset=offset,
             )
 
-        output_lines = []
-        bytes_read = 0
         end_line = min(len(lines), offset + limit)
-
-        for i in range(offset, end_line):
-            line = lines[i]
-
-            if len(line) > MAX_LINE_LENGTH:
-                line = line[:MAX_LINE_LENGTH] + "..."
-
-            line_bytes = len(line.encode("utf-8")) + (1 if output_lines else 0)
-            if bytes_read + line_bytes > MAX_BYTES:
-                break
-
-            output_lines.append(line)
-            bytes_read += line_bytes
-
-        formatted_lines = [
-            f"{str(i + offset + 1).zfill(5)}| {line}"
-            for i, line in enumerate(output_lines)
-        ]
-
-        formatted_content = "<file>\n"
-        formatted_content += "\n".join(formatted_lines)
+        output_lines = lines[offset:end_line]
 
         last_read_line = offset + len(output_lines)
         has_more = total_lines > last_read_line
 
-        if has_more:
-            formatted_content += (
-                f"\n\n(File has more lines. "
-                f"Use 'offset' parameter to read beyond line {last_read_line})"
-            )
-        else:
-            formatted_content += f"\n\n(End of file - total {total_lines} lines)"
-
-        formatted_content += "\n</file>"
-
         return ReadResult(
             success=True,
             message=f"Read {len(output_lines)} lines from {path}",
-            content=formatted_content,
+            content="\n".join(output_lines),
             file_path=path,
             total_lines=total_lines,
             lines_read=len(output_lines),
             truncated=has_more,
+            offset=offset,
         )
 
     # =========================================================================
@@ -353,10 +323,11 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             if content is None:
                 return ReadResult(success=False, message=f"File content not found: {path}")
 
-            return self._format_read_output(content, path, offset, limit)
+            return self._paginate_content(content, path, offset, limit)
 
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     # =========================================================================
     # Core Operations: Write
@@ -387,8 +358,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 ),
             )
 
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-        size_bytes = len(content.encode())
+        content_bytes = content.encode()
+        content_hash = hashlib.sha256(content_bytes).hexdigest()
+        size_bytes = len(content_bytes)
 
         session = await self._get_session()
         try:
@@ -423,6 +395,8 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                         session, existing, old_content, content, created_by,
                     )
 
+                # Write content before commit — phantom metadata is worse than orphan content
+                await self._write_content(path, content)
                 await self._commit(session)
                 created = False
                 version = existing.current_version
@@ -442,12 +416,13 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 await self._save_version(
                     session, new_file, "", content, created_by,
                 )
+
+                # Write content before commit
+                await self._write_content(path, content)
                 await self._commit(session)
 
                 created = True
                 version = 1
-
-            await self._write_content(path, content)
 
             return WriteResult(
                 success=True,
@@ -456,8 +431,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 created=created,
                 version=version,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     # =========================================================================
     # Core Operations: Edit
@@ -505,17 +481,18 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             assert new_content is not None
 
             # Update metadata
+            new_content_bytes = new_content.encode()
             file.current_version += 1
-            file.content_hash = hashlib.sha256(new_content.encode()).hexdigest()
-            file.size_bytes = len(new_content.encode())
+            file.content_hash = hashlib.sha256(new_content_bytes).hexdigest()
+            file.size_bytes = len(new_content_bytes)
             file.updated_at = datetime.now(UTC)
 
             # Save version after incrementing
             await self._save_version(session, file, content, new_content, created_by)
 
-            await self._commit(session)
-
+            # Write content before commit
             await self._write_content(path, new_content)
+            await self._commit(session)
 
             return EditResult(
                 success=True,
@@ -523,8 +500,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 file_path=path,
                 version=file.current_version,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     # =========================================================================
     # Core Operations: Delete
@@ -574,8 +552,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 file_path=path,
                 permanent=permanent,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     # =========================================================================
     # Directory Operations
@@ -659,8 +638,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 path=path,
                 created_dirs=[],
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     async def list_dir(self, path: str = "/") -> ListResult:
         """List files and directories at the given path."""
@@ -711,8 +691,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 entries=entries,
                 path=path,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     def _file_to_info(self, f: FileBase) -> FileInfo:
         """Convert a file record to FileInfo."""
@@ -733,6 +714,10 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
     async def move(self, src: str, dest: str) -> MoveResult:
         """Move a file or directory."""
+        valid, error = validate_path(src)
+        if not valid:
+            return MoveResult(success=False, message=error)
+
         src = normalize_path(src)
         dest = normalize_path(dest)
 
@@ -756,13 +741,13 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 for desc in result.scalars().all():
                     new_path = dest + desc.path[len(src) :]
                     content = await self._read_content(desc.path)
-                    if content:
+                    if content is not None:
                         await self._write_content(new_path, content)
                         await self._delete_content(desc.path)
                     desc.path = new_path
 
             content = await self._read_content(src)
-            if content:
+            if content is not None:
                 await self._write_content(dest, content)
                 await self._delete_content(src)
 
@@ -778,8 +763,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 old_path=src,
                 new_path=dest,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     async def copy(self, src: str, dest: str) -> WriteResult:
         """Copy a file."""
@@ -797,8 +783,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             content = await self._read_content(src)
             if content is None:
                 return WriteResult(success=False, message=f"Source content not found: {src}")
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
         return await self.write(dest, content, created_by="copy")
 
@@ -851,12 +838,12 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                     size_bytes=v.size_bytes,
                     created_at=v.created_at,
                     created_by=v.created_by,
-                    change_summary=v.change_summary,
                 )
                 for v in versions
             ]
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     async def restore_version(self, path: str, version: int) -> RestoreResult:
         """Restore file to a previous version."""
@@ -927,8 +914,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
             entries = [(v.is_snapshot, v.content) for v in chain]
             return reconstruct_version(entries)
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     # =========================================================================
     # Trash Operations
@@ -965,8 +953,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 entries=entries,
                 path="/__trash__",
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     async def restore_from_trash(self, path: str) -> RestoreResult:
         """Restore a file from trash."""
@@ -998,8 +987,9 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 message=f"Restored from trash: {path}",
                 file_path=path,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
 
     async def empty_trash(self) -> DeleteResult:
         """Permanently delete all files in trash."""
@@ -1027,5 +1017,6 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 permanent=True,
                 total_deleted=count,
             )
-        finally:
-            pass
+        except Exception:
+            await session.rollback()
+            raise
