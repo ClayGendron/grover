@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -51,7 +52,8 @@ class SearchIndex:
 
     def __init__(self, provider: EmbeddingProvider) -> None:
         self._provider = provider
-        self._index = Index(ndim=provider.dimensions, metric="cos")
+        self._index = Index(ndim=provider.dimensions, metric="cos", dtype="f32")
+        self._lock = threading.Lock()
         self._next_key: int = 0
         # key -> metadata
         self._key_to_meta: dict[int, dict] = {}
@@ -80,7 +82,8 @@ class SearchIndex:
         key = self._next_key
         self._next_key += 1
 
-        self._index.add(key, vector)
+        with self._lock:
+            self._index.add(key, vector)
         self._key_to_meta[key] = {
             "path": path,
             "content": content,
@@ -109,7 +112,8 @@ class SearchIndex:
         for i, entry in enumerate(entries):
             key = self._next_key
             self._next_key += 1
-            self._index.add(key, vectors[i])
+            with self._lock:
+                self._index.add(key, vectors[i])
             self._key_to_meta[key] = {
                 "path": entry.path,
                 "content": entry.content,
@@ -124,9 +128,10 @@ class SearchIndex:
     def remove(self, path: str) -> None:
         """Remove all entries for *path* from the index."""
         keys = self._path_to_keys.pop(path, [])
-        for key in keys:
-            self._index.remove(key)
-            self._key_to_meta.pop(key, None)
+        with self._lock:
+            for key in keys:
+                self._index.remove(key)
+                self._key_to_meta.pop(key, None)
 
     def remove_file(self, path: str) -> None:
         """Remove *path* **and** all entries whose ``parent_path`` matches."""
@@ -150,7 +155,8 @@ class SearchIndex:
 
         vector = np.array(self._provider.embed(query), dtype=np.float32)
         effective_k = min(k, len(self))
-        matches = self._index.search(vector, effective_k)
+        with self._lock:
+            matches = self._index.search(vector, effective_k)
 
         results: list[SearchResult] = []
         for key, distance in zip(
@@ -200,7 +206,8 @@ class SearchIndex:
         index_path = dir_path / _INDEX_FILE
         meta_path = dir_path / _META_FILE
 
-        self._index.save(str(index_path))
+        with self._lock:
+            self._index.save(str(index_path))
 
         sidecar = {
             "next_key": self._next_key,
@@ -216,7 +223,8 @@ class SearchIndex:
         index_path = dir_path / _INDEX_FILE
         meta_path = dir_path / _META_FILE
 
-        self._index.load(str(index_path))
+        with self._lock:
+            self._index.load(str(index_path))
 
         with meta_path.open() as f:
             sidecar = json.load(f)
