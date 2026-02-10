@@ -40,6 +40,19 @@ class UnifiedFileSystem:
         self._event_bus = event_bus
         self._entered_backends: list[Any] = []
 
+    async def enter_backend(self, backend: Any) -> None:
+        """Enter a backend's context manager and track it."""
+        if hasattr(backend, "__aenter__"):
+            await backend.__aenter__()
+            self._entered_backends.append(backend)
+
+    async def exit_backend(self, backend: Any) -> None:
+        """Exit a backend's context manager and stop tracking it."""
+        if backend in self._entered_backends:
+            if hasattr(backend, "__aexit__"):
+                await backend.__aexit__(None, None, None)
+            self._entered_backends.remove(backend)
+
     async def _emit(self, event: FileEvent) -> None:
         if self._event_bus is not None:
             await self._event_bus.emit(event)
@@ -154,7 +167,7 @@ class UnifiedFileSystem:
 
     def _list_root(self) -> ListResult:
         entries: list[FileInfo] = []
-        for mount in self._registry.list_mounts():
+        for mount in self._registry.list_visible_mounts():
             name = mount.mount_path.lstrip("/")
             entries.append(
                 FileInfo(

@@ -31,6 +31,9 @@ class MountConfig:
     mount_type: str = "vfs"
     """Type identifier: "vfs" or "local"."""
 
+    hidden: bool = False
+    """If True, this mount is excluded from ``list_visible_mounts()``."""
+
     read_only_paths: set[str] = field(default_factory=set)
     """Paths within this mount that are forced read-only."""
 
@@ -90,6 +93,10 @@ class MountRegistry:
     def list_mounts(self) -> list[MountConfig]:
         """List all registered mounts, sorted by mount_path."""
         return sorted(self._mounts.values(), key=lambda m: m.mount_path)
+
+    def list_visible_mounts(self) -> list[MountConfig]:
+        """List non-hidden mounts, sorted by mount_path."""
+        return [m for m in self.list_mounts() if not m.hidden]
 
     def get_permission(self, virtual_path: str) -> Permission:
         """Get the effective permission for a virtual path."""

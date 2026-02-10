@@ -6,15 +6,17 @@ import hashlib
 import uuid
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from sqlmodel import select
 
 from grover.fs.dialect import upsert_file
 from grover.models.files import (
     SNAPSHOT_INTERVAL,
+    File,
+    FileBase,
     FileVersion,
-    GroverFile,
+    FileVersionBase,
     compute_diff,
     reconstruct_version,
 )
@@ -50,8 +52,11 @@ DEFAULT_READ_LIMIT = 2000
 MAX_LINE_LENGTH = 2000
 MAX_BYTES = 50 * 1024  # 50KB
 
+F = TypeVar("F", bound=FileBase)
+FV = TypeVar("FV", bound=FileVersionBase)
 
-class BaseFileSystem(ABC):
+
+class BaseFileSystem(ABC, Generic[F, FV]):
     """Base file system with shared logic for both backends.
 
     Subclasses must implement:
@@ -62,8 +67,28 @@ class BaseFileSystem(ABC):
     - _content_exists(path): Check if content exists in storage
     """
 
-    def __init__(self, dialect: str = "sqlite") -> None:
+    def __init__(
+        self,
+        dialect: str = "sqlite",
+        file_model: type[F] | None = None,
+        file_version_model: type[FV] | None = None,
+        schema: str | None = None,
+    ) -> None:
         self.dialect = dialect
+        self.schema = schema
+        self.in_transaction = False
+        self._file_model: type[F] = file_model or File  # type: ignore[assignment]
+        self._file_version_model: type[FV] = file_version_model or FileVersion  # type: ignore[assignment]
+
+    @property
+    def file_model(self) -> type[F]:
+        """The SQLModel table class used for file records."""
+        return self._file_model
+
+    @property
+    def file_version_model(self) -> type[FV]:
+        """The SQLModel table class used for file version records."""
+        return self._file_version_model
 
     # =========================================================================
     # Abstract Methods - Subclasses must implement
@@ -95,7 +120,7 @@ class BaseFileSystem(ABC):
 
         ``path`` is already normalized. For LocalFileSystem this writes to
         disk; for DatabaseFileSystem this updates the ``content`` column on
-        the GroverFile row. Parent directories are handled by the base class.
+        the file row. Parent directories are handled by the base class.
         """
         ...
 
@@ -105,7 +130,7 @@ class BaseFileSystem(ABC):
 
         Called during permanent deletes and moves. For LocalFileSystem this
         removes the file from disk. For DatabaseFileSystem this is a no-op
-        because content lives in the GroverFile row that the base class
+        because content lives in the file row that the base class
         already deletes.
         """
         ...
@@ -115,7 +140,7 @@ class BaseFileSystem(ABC):
         """Check whether raw content exists in the storage backend.
 
         ``path`` is already normalized. This checks actual storage (disk or
-        DB column), not the GroverFile metadata record.
+        DB column), not the file metadata record.
         """
         ...
 
@@ -138,14 +163,15 @@ class BaseFileSystem(ABC):
         session: AsyncSession,
         path: str,
         include_deleted: bool = False,
-    ) -> GroverFile | None:
+    ) -> F | None:
         """Get file record by path."""
         path = normalize_path(path)
-        query = select(GroverFile).where(
-            GroverFile.path == path,
+        model = self._file_model
+        query = select(model).where(
+            model.path == path,  # type: ignore[arg-type]
         )
         if not include_deleted:
-            query = query.where(GroverFile.deleted_at.is_(None))  # type: ignore[unresolved-attribute]
+            query = query.where(model.deleted_at.is_(None))  # type: ignore[unresolved-attribute]
 
         result = await session.execute(query)
         return result.scalar_one_or_none()
@@ -153,7 +179,7 @@ class BaseFileSystem(ABC):
     async def _save_version(
         self,
         session: AsyncSession,
-        file: GroverFile,
+        file: F,
         old_content: str,
         new_content: str,
         created_by: str = "agent",
@@ -172,7 +198,7 @@ class BaseFileSystem(ABC):
         else:
             content = compute_diff(old_content, new_content)
 
-        version = FileVersion(
+        version = self._file_version_model(
             file_id=file.id,
             version=version_num,
             is_snapshot=is_snap or not old_content,
@@ -206,6 +232,8 @@ class BaseFileSystem(ABC):
                     "updated_at": datetime.now(UTC),
                 },
                 conflict_keys=["path"],
+                model=self._file_model,
+                schema=self.schema,
             )
 
     def _format_read_output(
@@ -392,7 +420,7 @@ class BaseFileSystem(ABC):
             else:
                 await self._ensure_parent_dirs(session, path)
 
-                new_file = GroverFile(
+                new_file = self._file_model(
                     path=path,
                     name=name,
                     content_hash=content_hash,
@@ -509,10 +537,11 @@ class BaseFileSystem(ABC):
                 return DeleteResult(success=False, message=f"File not found: {path}")
 
             if permanent:
+                model = self._file_model
                 if file.is_directory:
                     result = await session.execute(
-                        select(GroverFile).where(
-                            GroverFile.path.startswith(path + "/"),
+                        select(model).where(
+                            model.path.startswith(path + "/"),  # type: ignore[union-attr]
                         )
                     )
                     for child in result.scalars().all():
@@ -598,6 +627,8 @@ class BaseFileSystem(ABC):
                         "updated_at": datetime.now(UTC),
                     },
                     conflict_keys=["path"],
+                    model=self._file_model,
+                    schema=self.schema,
                 )
                 if rowcount > 0:
                     created_dirs.append(dir_path)
@@ -633,9 +664,10 @@ class BaseFileSystem(ABC):
                 if not dir_file.is_directory:
                     return ListResult(success=False, message=f"Not a directory: {path}")
 
+            model = self._file_model
             result = await session.execute(
-                select(GroverFile).where(
-                    GroverFile.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                select(model).where(
+                    model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                 )
             )
             all_files = result.scalars().all()
@@ -671,8 +703,8 @@ class BaseFileSystem(ABC):
         finally:
             pass
 
-    def _file_to_info(self, f: GroverFile) -> FileInfo:
-        """Convert GroverFile to FileInfo."""
+    def _file_to_info(self, f: FileBase) -> FileInfo:
+        """Convert a file record to FileInfo."""
         return FileInfo(
             path=f.path,
             name=f.name,
@@ -704,9 +736,10 @@ class BaseFileSystem(ABC):
                 return MoveResult(success=False, message=f"Source not found: {src}")
 
             if src_file.is_directory:
+                model = self._file_model
                 result = await session.execute(
-                    select(GroverFile).where(
-                        GroverFile.path.startswith(src + "/"),
+                    select(model).where(
+                        model.path.startswith(src + "/"),  # type: ignore[union-attr]
                     )
                 )
                 for desc in result.scalars().all():
@@ -792,10 +825,11 @@ class BaseFileSystem(ABC):
             if not file:
                 return []
 
+            fv_model = self._file_version_model
             result = await session.execute(
-                select(FileVersion)
-                .where(FileVersion.file_id == file.id)
-                .order_by(FileVersion.version.desc())  # type: ignore[unresolved-attribute]
+                select(fv_model)
+                .where(fv_model.file_id == file.id)  # type: ignore[arg-type]
+                .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
             )
             versions = result.scalars().all()
 
@@ -844,15 +878,17 @@ class BaseFileSystem(ABC):
             if not file:
                 return None
 
+            fv_model = self._file_version_model
+
             # Find the nearest snapshot at or before the target version
             snapshot_result = await session.execute(
-                select(FileVersion)
+                select(fv_model)
                 .where(
-                    FileVersion.file_id == file.id,
-                    FileVersion.version <= version,
-                    FileVersion.is_snapshot.is_(True),  # type: ignore[unresolved-attribute]
+                    fv_model.file_id == file.id,  # type: ignore[arg-type]
+                    fv_model.version <= version,  # type: ignore[arg-type]
+                    fv_model.is_snapshot.is_(True),  # type: ignore[unresolved-attribute]
                 )
-                .order_by(FileVersion.version.desc())  # type: ignore[unresolved-attribute]
+                .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
                 .limit(1)
             )
             snapshot = snapshot_result.scalar_one_or_none()
@@ -861,13 +897,13 @@ class BaseFileSystem(ABC):
 
             # Collect all versions from snapshot through target
             chain_result = await session.execute(
-                select(FileVersion)
+                select(fv_model)
                 .where(
-                    FileVersion.file_id == file.id,
-                    FileVersion.version >= snapshot.version,
-                    FileVersion.version <= version,
+                    fv_model.file_id == file.id,  # type: ignore[arg-type]
+                    fv_model.version >= snapshot.version,  # type: ignore[arg-type]
+                    fv_model.version <= version,  # type: ignore[arg-type]
                 )
-                .order_by(FileVersion.version.asc())  # type: ignore[unresolved-attribute]
+                .order_by(fv_model.version.asc())  # type: ignore[unresolved-attribute]
             )
             chain = chain_result.scalars().all()
 
@@ -891,9 +927,10 @@ class BaseFileSystem(ABC):
         """List all soft-deleted files."""
         session = await self._get_session()
         try:
+            model = self._file_model
             result = await session.execute(
-                select(GroverFile).where(
-                    GroverFile.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+                select(model).where(
+                    model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
             )
             files = result.scalars().all()
@@ -926,10 +963,11 @@ class BaseFileSystem(ABC):
 
         session = await self._get_session()
         try:
+            model = self._file_model
             result = await session.execute(
-                select(GroverFile).where(
-                    GroverFile.original_path == path,
-                    GroverFile.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+                select(model).where(
+                    model.original_path == path,  # type: ignore[arg-type]
+                    model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
             )
             file = result.scalar_one_or_none()
@@ -956,9 +994,10 @@ class BaseFileSystem(ABC):
         """Permanently delete all files in trash."""
         session = await self._get_session()
         try:
+            model = self._file_model
             result = await session.execute(
-                select(GroverFile).where(
-                    GroverFile.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+                select(model).where(
+                    model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
             )
             files = result.scalars().all()

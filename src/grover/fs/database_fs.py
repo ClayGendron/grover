@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic
 
 from sqlmodel import select
 
-from grover.models.files import GroverFile
-
-from .base import BaseFileSystem
+from .base import FV, BaseFileSystem, F
 from .utils import normalize_path
 
 if TYPE_CHECKING:
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-class DatabaseFileSystem(BaseFileSystem):
+class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     """Database-backed file system using SQLAlchemy ORM.
 
     All content is stored in the database — portable and consistent
@@ -31,8 +29,16 @@ class DatabaseFileSystem(BaseFileSystem):
         self,
         session_factory: Callable[..., AsyncSession],
         dialect: str = "sqlite",
+        file_model: type[F] | None = None,
+        file_version_model: type[FV] | None = None,
+        schema: str | None = None,
     ) -> None:
-        super().__init__(dialect=dialect)
+        super().__init__(
+            dialect=dialect,
+            file_model=file_model,
+            file_version_model=file_version_model,
+            schema=schema,
+        )
         self.session_factory = session_factory
         self._session: AsyncSession | None = None
         self._session_cm: object = None
@@ -48,7 +54,10 @@ class DatabaseFileSystem(BaseFileSystem):
         return self._session
 
     async def _commit(self, session: AsyncSession) -> None:
-        await session.commit()
+        if self.in_transaction:
+            await session.flush()
+        else:
+            await session.commit()
 
     async def close(self) -> None:
         """Close the session and clean up resources."""
@@ -57,7 +66,7 @@ class DatabaseFileSystem(BaseFileSystem):
             self._session = None
         self._session_cm = None
 
-    async def __aenter__(self) -> DatabaseFileSystem:
+    async def __aenter__(self) -> DatabaseFileSystem[F, FV]:
         return self
 
     async def __aexit__(
@@ -80,10 +89,11 @@ class DatabaseFileSystem(BaseFileSystem):
     async def _read_content(self, path: str) -> str | None:
         path = normalize_path(path)
         session = await self._get_session()
+        model = self._file_model
         result = await session.execute(
-            select(GroverFile.content).where(
-                GroverFile.path == path,
-                GroverFile.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+            select(model.content).where(  # type: ignore[arg-type]
+                model.path == path,  # type: ignore[arg-type]
+                model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
             )
         )
         row = result.first()
@@ -92,9 +102,10 @@ class DatabaseFileSystem(BaseFileSystem):
     async def _write_content(self, path: str, content: str) -> None:
         path = normalize_path(path)
         session = await self._get_session()
+        model = self._file_model
         result = await session.execute(
-            select(GroverFile).where(
-                GroverFile.path == path,
+            select(model).where(
+                model.path == path,  # type: ignore[arg-type]
             )
         )
         file = result.scalar_one_or_none()

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import pytest
 
 from grover._grover import Grover
+from grover.fs.local_fs import LocalFileSystem
 from grover.graph._graph import Graph
 from grover.search._index import SearchResult
 
@@ -61,30 +63,19 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def grover(workspace: Path) -> Grover:
-    g = Grover(str(workspace), embedding_provider=FakeProvider())
-    yield g  # type: ignore[misc]
+def grover(workspace: Path) -> Iterator[Grover]:
+    g = Grover(embedding_provider=FakeProvider())
+    g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+    yield g
     g.close()
 
 
 @pytest.fixture
-def grover_no_search(workspace: Path) -> Grover:
+def grover_no_search(workspace: Path) -> Iterator[Grover]:
     """Grover without search to test graceful degradation."""
-    g = Grover.__new__(Grover)
-    # Manually init to bypass provider detection
-    g._closed = False
-    g._mount_path = "/project"
-
-    import asyncio
-    import threading
-
-    g._loop = asyncio.new_event_loop()
-    g._thread = threading.Thread(target=g._loop.run_forever, daemon=True)
-    g._thread.start()
-
-    # Use _async_init with no provider, patching the fallback
-    g._run(g._async_init(str(workspace), None, "/project", None))
-    yield g  # type: ignore[misc]
+    g = Grover()
+    g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+    yield g
     g.close()
 
 
@@ -94,34 +85,29 @@ def grover_no_search(workspace: Path) -> Grover:
 
 
 class TestGroverConstruction:
-    def test_local_backend_from_path(self, workspace: Path):
-        g = Grover(str(workspace), embedding_provider=FakeProvider())
+    def test_mount_first_api(self, workspace: Path):
+        g = Grover(embedding_provider=FakeProvider())
+        g.mount("/project", LocalFileSystem(workspace_dir=workspace))
         try:
-            assert g._local_fs is not None
-            assert g._local_fs.workspace_dir == workspace
+            assert g._async._meta_fs is not None
         finally:
             g.close()
 
     def test_custom_data_dir(self, workspace: Path, tmp_path: Path):
         custom_dir = tmp_path / "custom_data"
         g = Grover(
-            str(workspace),
             data_dir=str(custom_dir),
             embedding_provider=FakeProvider(),
         )
+        g.mount("/project", LocalFileSystem(workspace_dir=workspace))
         try:
-            assert g._local_fs.data_dir == custom_dir
-            assert custom_dir.exists()
+            assert g._async._meta_data_dir == custom_dir
         finally:
             g.close()
 
-    def test_context_manager(self, workspace: Path):
-        with Grover(str(workspace), embedding_provider=FakeProvider()) as g:
-            assert not g._closed
-        assert g._closed
-
     def test_close_idempotent(self, workspace: Path):
-        g = Grover(str(workspace), embedding_provider=FakeProvider())
+        g = Grover(embedding_provider=FakeProvider())
+        g.mount("/project", LocalFileSystem(workspace_dir=workspace))
         g.close()
         g.close()  # Should not raise
         assert g._closed
@@ -162,7 +148,7 @@ class TestGroverFilesystem:
         assert grover.exists("/project/yes.txt")
 
     def test_fs_property(self, grover: Grover):
-        assert grover.fs is grover._ufs
+        assert grover.fs is grover._async._ufs
 
 
 # ==================================================================
@@ -173,7 +159,7 @@ class TestGroverFilesystem:
 class TestGroverGraph:
     def test_graph_property(self, grover: Grover):
         assert isinstance(grover.graph, Graph)
-        assert grover.graph is grover._graph
+        assert grover.graph is grover._async._graph
 
     def test_dependents_after_write(self, grover: Grover):
         code = 'import os\n\ndef hello():\n    return "hi"\n'
@@ -226,7 +212,7 @@ class TestGroverSearch:
         assert results == []
 
     def test_search_raises_without_provider(self, grover_no_search: Grover):
-        if grover_no_search._search_index is not None:
+        if grover_no_search._async._search_index is not None:
             pytest.skip("sentence-transformers is installed; search available")
         with pytest.raises(RuntimeError, match="Search is not available"):
             grover_no_search.search("anything")
@@ -308,13 +294,13 @@ class TestGroverEventHandlers:
             'def vanishing_function():\n    pass\n',
         )
         # Verify it's in search
-        assert grover._search_index is not None
-        assert grover._search_index.has(
+        assert grover._async._search_index is not None
+        assert grover._async._search_index.has(
             "/.grover/chunks/project/vanish_py/vanishing_function.txt"
         )
         grover.delete("/project/vanish.py")
         # Should be removed from search
-        assert not grover._search_index.has(
+        assert not grover._async._search_index.has(
             "/.grover/chunks/project/vanish_py/vanishing_function.txt"
         )
 
@@ -330,7 +316,8 @@ class TestGroverPersistence:
         grover.save()
 
         # Verify DB has edges
-        data_dir = grover._local_fs.data_dir
+        data_dir = grover._async._meta_data_dir
+        assert data_dir is not None
         db_path = data_dir / "file_versions.db"
         assert db_path.exists()
 
@@ -338,7 +325,9 @@ class TestGroverPersistence:
         grover.write("/project/saved.txt", "save this content")
         grover.save()
 
-        search_dir = grover._local_fs.data_dir / "search"
+        data_dir = grover._async._meta_data_dir
+        assert data_dir is not None
+        search_dir = data_dir / "search"
         assert (search_dir / "search_meta.json").exists()
         assert (search_dir / "search.usearch").exists()
 
@@ -347,20 +336,20 @@ class TestGroverPersistence:
 
         # Create first instance, write data, save, close
         g1 = Grover(
-            str(workspace),
             data_dir=str(data_dir),
             embedding_provider=FakeProvider(),
         )
+        g1.mount("/project", LocalFileSystem(workspace_dir=workspace))
         g1.write("/project/keep.py", 'def keep():\n    pass\n')
         g1.save()
         g1.close()
 
         # Create second instance — should load state
         g2 = Grover(
-            str(workspace),
             data_dir=str(data_dir),
             embedding_provider=FakeProvider(),
         )
+        g2.mount("/project", LocalFileSystem(workspace_dir=workspace))
         try:
             assert g2.graph.has_node("/project/keep.py")
             # Search index should also be loaded

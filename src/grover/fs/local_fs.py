@@ -7,14 +7,13 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Generic
 
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from grover.models.files import FileVersion, GroverFile
-
-from .base import BaseFileSystem
+from .base import FV, BaseFileSystem, F
 from .types import FileInfo, ListResult, MkdirResult, ReadResult
 from .utils import get_similar_files, is_binary_file, normalize_path, validate_path
 
@@ -56,7 +55,7 @@ def _default_data_dir(workspace_dir: Path) -> Path:
     return Path.home() / ".grover" / _workspace_slug(workspace_dir)
 
 
-class LocalFileSystem(BaseFileSystem):
+class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     """Local file system with disk storage and SQLite versioning.
 
     - Files stored on disk at ``{workspace_dir}/{path}``
@@ -71,8 +70,16 @@ class LocalFileSystem(BaseFileSystem):
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
         max_file_size: int = DEFAULT_MAX_FILE_SIZE,
+        file_model: type[F] | None = None,
+        file_version_model: type[FV] | None = None,
+        schema: str | None = None,
     ) -> None:
-        super().__init__(dialect="sqlite")
+        super().__init__(
+            dialect="sqlite",
+            file_model=file_model,
+            file_version_model=file_version_model,
+            schema=schema,
+        )
 
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd() / "workspace"
         self.data_dir = Path(data_dir) if data_dir else _default_data_dir(self.workspace_dir)
@@ -100,12 +107,10 @@ class LocalFileSystem(BaseFileSystem):
         )
 
         async with self._engine.begin() as conn:
-            await conn.run_sync(
-                lambda sync_conn: GroverFile.__table__.create(sync_conn, checkfirst=True)  # type: ignore[unresolved-attribute]
-            )
-            await conn.run_sync(
-                lambda sync_conn: FileVersion.__table__.create(sync_conn, checkfirst=True)  # type: ignore[unresolved-attribute]
-            )
+            fm_table = self._file_model.__table__  # type: ignore[unresolved-attribute]
+            fv_table = self._file_version_model.__table__  # type: ignore[unresolved-attribute]
+            await conn.run_sync(lambda c: fm_table.create(c, checkfirst=True))
+            await conn.run_sync(lambda c: fv_table.create(c, checkfirst=True))
 
         self._session_factory = async_sessionmaker(
             self._engine,
@@ -123,7 +128,7 @@ class LocalFileSystem(BaseFileSystem):
             self._engine = None
             self._session_factory = None
 
-    async def __aenter__(self) -> LocalFileSystem:
+    async def __aenter__(self) -> LocalFileSystem[F, FV]:
         return self
 
     async def __aexit__(
@@ -153,7 +158,10 @@ class LocalFileSystem(BaseFileSystem):
         return self._session
 
     async def _commit(self, session: AsyncSession) -> None:
-        await session.commit()
+        if self.in_transaction:
+            await session.flush()
+        else:
+            await session.commit()
 
     def _resolve_path(self, virtual_path: str) -> Path:
         """Convert virtual path to an actual disk path within the workspace.

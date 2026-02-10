@@ -30,15 +30,28 @@ async def upsert_file(
     dialect: str,
     values: dict[str, Any],
     conflict_keys: list[str],
+    model: type | None = None,
+    schema: str | None = None,
 ) -> int:
-    """Dialect-aware upsert into grover_files. Returns rowcount.
+    """Dialect-aware upsert into a file table. Returns rowcount.
+
+    *model* is the SQLModel table class to insert into.  Defaults to
+    ``File`` (the built-in ``grover_files`` table) when not provided.
+
+    *schema* optionally qualifies the table (e.g. ``"app"`` →
+    ``app.grover_files``).
 
     - SQLite/PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
     - MSSQL: MERGE INTO ... WITH (HOLDLOCK)
     """
+    if model is None:
+        from grover.models.files import File
+
+        model = File
+
     if dialect == "mssql":
-        return await _upsert_mssql(session, values, conflict_keys)
-    return await _upsert_sqlite_pg(session, dialect, values, conflict_keys)
+        return await _upsert_mssql(session, values, conflict_keys, model, schema)
+    return await _upsert_sqlite_pg(session, dialect, values, conflict_keys, model, schema)
 
 
 async def _upsert_sqlite_pg(
@@ -46,11 +59,11 @@ async def _upsert_sqlite_pg(
     dialect: str,
     values: dict[str, Any],
     conflict_keys: list[str],
+    model: type,
+    schema: str | None = None,
 ) -> int:
     """SQLite / PostgreSQL upsert using INSERT ... ON CONFLICT DO UPDATE."""
     from sqlalchemy.dialects import sqlite as sqlite_dialect
-
-    from grover.models.files import GroverFile
 
     dialect_module = sqlite_dialect
     if dialect == "postgresql":
@@ -58,7 +71,7 @@ async def _upsert_sqlite_pg(
 
         dialect_module = pg_dialect
 
-    stmt = dialect_module.insert(GroverFile).values(**values)
+    stmt = dialect_module.insert(model).values(**values)
 
     # Columns to update on conflict (exclude conflict keys)
     update_cols = {k: v for k, v in values.items() if k not in conflict_keys}
@@ -71,6 +84,9 @@ async def _upsert_sqlite_pg(
     else:
         stmt = stmt.on_conflict_do_nothing(index_elements=conflict_keys)
 
+    if schema:
+        stmt = stmt.execution_options(schema_translate_map={None: schema})
+
     result = await session.execute(stmt)
     return result.rowcount  # type: ignore[return-value]
 
@@ -79,8 +95,13 @@ async def _upsert_mssql(
     session: AsyncSession,
     values: dict[str, Any],
     conflict_keys: list[str],
+    model: type,
+    schema: str | None = None,
 ) -> int:
     """MSSQL upsert using MERGE INTO ... WITH (HOLDLOCK)."""
+    table_name: str = getattr(model, "__tablename__", "grover_files")
+    if schema:
+        table_name = f"[{schema}].{table_name}"
     on_clause = " AND ".join(f"target.{k} = :{k}" for k in conflict_keys)
     insert_cols = ", ".join(values.keys())
     insert_vals = ", ".join(f":{k}" for k in values)
@@ -89,7 +110,7 @@ async def _upsert_mssql(
     )
 
     merge_sql = f"""
-        MERGE INTO grover_files WITH (HOLDLOCK) AS target
+        MERGE INTO {table_name} WITH (HOLDLOCK) AS target
         USING (SELECT {', '.join(f':{k} AS {k}' for k in conflict_keys)}) AS source
         ON {on_clause}
         WHEN NOT MATCHED THEN
