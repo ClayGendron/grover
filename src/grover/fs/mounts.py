@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from .exceptions import MountNotFoundError
 from .permissions import Permission
 from .utils import normalize_path
 
@@ -19,7 +20,7 @@ class MountConfig:
     mount_path: str
     """Virtual path prefix, e.g. "/web", "/my_project"."""
 
-    backend: StorageBackend | Any
+    backend: StorageBackend
     """Storage backend implementing the StorageBackend protocol."""
 
     permission: Permission = Permission.READ_WRITE
@@ -80,7 +81,7 @@ class MountRegistry:
                 best_len = len(mount_path)
 
         if best_match is None:
-            raise FileNotFoundError(f"No mount found for path: {virtual_path}")
+            raise MountNotFoundError(f"No mount found for path: {virtual_path}")
 
         relative = virtual_path[best_len:]
         if not relative:

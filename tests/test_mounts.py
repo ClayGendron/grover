@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from grover.fs.exceptions import MountNotFoundError
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
 
@@ -110,7 +111,7 @@ class TestMountResolution:
 
     def test_resolve_no_mount(self):
         reg = MountRegistry()
-        with pytest.raises(FileNotFoundError, match="No mount"):
+        with pytest.raises(MountNotFoundError, match="No mount"):
             reg.resolve("/unknown/path")
 
     def test_resolve_partial_name_no_match(self):
@@ -118,7 +119,7 @@ class TestMountResolution:
         reg = MountRegistry()
         reg.add_mount(MountConfig(mount_path="/data", backend=FakeBackend()))
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(MountNotFoundError):
             reg.resolve("/datafile")
 
 
