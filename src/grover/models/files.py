@@ -1,4 +1,9 @@
-"""GroverFile and FileVersion models with diff-based versioning."""
+"""File and FileVersion models with diff-based versioning.
+
+Provides ``FileBase`` and ``FileVersionBase`` non-table base classes.
+Subclass with ``table=True`` and a custom ``__tablename__`` to use a
+different table name per backend.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ import difflib
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 from unidiff import PatchSet
 from unidiff.constants import LINE_TYPE_ADDED, LINE_TYPE_CONTEXT, LINE_TYPE_NO_NEWLINE
@@ -22,10 +28,8 @@ SNAPSHOT_INTERVAL: int = 20
 # ---------------------------------------------------------------------------
 
 
-class GroverFile(SQLModel, table=True):
-    """A tracked file (or chunk) in the virtual filesystem."""
-
-    __tablename__ = "grover_files"
+class FileBase(SQLModel):
+    """Base fields for a tracked file. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     path: str = Field(index=True, unique=True)
@@ -40,15 +44,28 @@ class GroverFile(SQLModel, table=True):
     line_end: int | None = Field(default=None)
     current_version: int = Field(default=1)
     original_path: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    deleted_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
+    )
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+    )
 
 
-class FileVersion(SQLModel, table=True):
-    """A version snapshot or forward diff for a GroverFile."""
+class File(FileBase, table=True):
+    """Default file table — ``grover_files``."""
 
-    __tablename__ = "grover_file_versions"
+    __tablename__ = "grover_files"
+
+
+class FileVersionBase(SQLModel):
+    """Base fields for a file version record. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     file_id: str = Field(index=True)
@@ -59,7 +76,16 @@ class FileVersion(SQLModel, table=True):
     size_bytes: int = Field(default=0)
     created_by: str | None = Field(default=None)
     change_summary: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
+    )
+
+
+class FileVersion(FileVersionBase, table=True):
+    """Default file version table — ``grover_file_versions``."""
+
+    __tablename__ = "grover_file_versions"
 
 
 # ---------------------------------------------------------------------------

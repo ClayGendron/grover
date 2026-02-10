@@ -1,7 +1,10 @@
-"""Store all text files in this repo into a SQLite-backed Grover instance.
+"""Store repo files across two database backends (SQLite + PostgreSQL).
 
-Uses the mount-first Grover API with a DatabaseFileSystem backend.
-Files are mounted at /repo and accessed through Grover's sync API.
+Demonstrates the mount-first Grover API with multiple DatabaseFileSystem
+backends mounted at different paths on a single Grover instance.
+
+- /code   → SQLite   (source code)
+- /docs   → PostgreSQL (docs, config, markdown)
 
 Usage:
     uv run python scripts/store_repo.py
@@ -9,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import sys
 from pathlib import Path
@@ -20,8 +24,13 @@ from grover import Grover
 from grover.fs.database_fs import DatabaseFileSystem
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = REPO_ROOT / "grover_repo.db"
-MOUNT = "/project"
+SQLITE_PATH = REPO_ROOT / "grover_repo.db"
+PG_DB = "grover_test"
+PG_URL = f"postgresql+asyncpg://localhost/{PG_DB}"
+
+# File classification
+CODE_EXTENSIONS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".c", ".h", ".java"}
+DOC_EXTENSIONS = {".md", ".txt", ".rst", ".toml", ".yaml", ".yml", ".json", ".cfg", ".ini"}
 
 # Directories and patterns to skip
 SKIP_DIRS = {
@@ -52,230 +61,306 @@ def should_skip(path: Path) -> bool:
     return False
 
 
-def collect_files(root: Path) -> list[Path]:
-    """Walk the repo and collect text files."""
-    files = []
+def classify_file(path: Path) -> str | None:
+    """Return 'code', 'docs', or None (skip)."""
+    ext = path.suffix.lower()
+    if ext in CODE_EXTENSIONS:
+        return "code"
+    if ext in DOC_EXTENSIONS:
+        return "docs"
+    # Default: put anything with a recognisable text extension in docs
+    mime, _ = mimetypes.guess_type(str(path))
+    if mime and mime.startswith("text"):
+        return "docs"
+    return None
+
+
+def collect_files(root: Path) -> dict[str, list[Path]]:
+    """Walk the repo and classify files into code vs docs."""
+    buckets: dict[str, list[Path]] = {"code": [], "docs": []}
     for p in sorted(root.rglob("*")):
         if not p.is_file():
             continue
         try:
             if should_skip(p):
                 continue
-            files.append(p)
         except OSError:
             continue
-    return files
+        kind = classify_file(p)
+        if kind:
+            buckets[kind].append(p)
+    return buckets
+
+
+def _create_pg_database() -> None:
+    """Create the PostgreSQL database if it doesn't exist (sync, via psycopg2 or psql)."""
+    import subprocess
+
+    result = subprocess.run(
+        ["psql", "-d", "postgres", "-tc",
+         f"SELECT 1 FROM pg_database WHERE datname = '{PG_DB}'"],
+        capture_output=True, text=True,
+    )
+    if "1" not in result.stdout:
+        print(f"  Creating PostgreSQL database '{PG_DB}'...")
+        subprocess.run(["createdb", PG_DB], check=True)
+    else:
+        print(f"  PostgreSQL database '{PG_DB}' already exists")
+
+
+def _drop_pg_database() -> None:
+    """Drop the PostgreSQL database."""
+    import subprocess
+
+    subprocess.run(["dropdb", "--if-exists", PG_DB], check=True)
 
 
 def main() -> None:
-    print(f"Repo root: {REPO_ROOT}")
-    print(f"DB path:   {DB_PATH}")
+    print(f"Repo root:    {REPO_ROOT}")
+    print(f"SQLite path:  {SQLITE_PATH}")
+    print(f"PostgreSQL:   {PG_URL}")
     print()
 
-    # Collect files from disk
-    files = collect_files(REPO_ROOT)
-    print(f"Found {len(files)} text files to store\n")
+    # ------------------------------------------------------------------
+    # Collect and classify files
+    # ------------------------------------------------------------------
+    buckets = collect_files(REPO_ROOT)
+    print(f"Found {len(buckets['code'])} code files, {len(buckets['docs'])} doc files\n")
 
-    # Create async engine + session factory for a SQLite database backend
-    engine = create_async_engine(f"sqlite+aiosqlite:///{DB_PATH}", echo=False)
+    # ------------------------------------------------------------------
+    # Set up backends
+    # ------------------------------------------------------------------
+    print("=" * 60)
+    print("SETUP: Creating databases and backends")
+    print("=" * 60)
 
-    # Create tables synchronously before starting
-    import asyncio
+    # Create tables using throwaway engines (avoids event-loop mismatch
+    # with Grover's internal daemon-thread loop).
+    _create_pg_database()
 
     async def _create_tables() -> None:
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
+        for url in [f"sqlite+aiosqlite:///{SQLITE_PATH}", PG_URL]:
+            eng = create_async_engine(url, echo=False)
+            async with eng.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
+            await eng.dispose()
 
     asyncio.run(_create_tables())
 
-    session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False,
+    # Create the real engines (will be used on Grover's event loop)
+    sqlite_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{SQLITE_PATH}", echo=False,
+    )
+    pg_engine = create_async_engine(PG_URL, echo=False)
+
+    sqlite_factory = async_sessionmaker(
+        sqlite_engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    pg_factory = async_sessionmaker(
+        pg_engine, class_=AsyncSession, expire_on_commit=False,
     )
 
-    # Create Grover with mount-first API
-    db = DatabaseFileSystem(session_factory=session_factory, dialect="sqlite")
+    sqlite_db = DatabaseFileSystem(
+        session_factory=sqlite_factory, dialect="sqlite",
+    )
+    pg_db = DatabaseFileSystem(
+        session_factory=pg_factory, dialect="postgresql",
+    )
+
+    # ------------------------------------------------------------------
+    # Mount both backends on a single Grover instance
+    # ------------------------------------------------------------------
     g = Grover()
-    g.mount(MOUNT, db)
+    g.mount("/code", sqlite_db)
+    g.mount("/docs", pg_db)
+    print(f"  Mounted /code → SQLite ({SQLITE_PATH.name})")
+    print(f"  Mounted /docs → PostgreSQL ({PG_DB})\n")
 
     try:
         # --------------------------------------------------------------
-        # Phase 1: Batch-write all repo files (transaction mode)
+        # Phase 1: Batch-write files to both backends
         # --------------------------------------------------------------
         print("=" * 60)
-        print("PHASE 1: Writing files via Grover (batch/transaction mode)")
+        print("PHASE 1: Writing files (batch/transaction mode)")
         print("=" * 60)
 
-        written = 0
-        failed = 0
-        with g:
-            for path in files:
-                rel = path.relative_to(REPO_ROOT)
-                virtual_path = f"{MOUNT}/{rel}".replace("\\", "/")
+        stats = {"code_written": 0, "docs_written": 0, "failed": 0}
 
+        with g:
+            # Write code files to /code
+            for path in buckets["code"]:
+                rel = path.relative_to(REPO_ROOT)
+                virtual_path = f"/code/{rel}".replace("\\", "/")
                 try:
                     content = path.read_text(encoding="utf-8")
                 except (UnicodeDecodeError, OSError) as e:
                     print(f"  SKIP {virtual_path} ({e.__class__.__name__})")
-                    failed += 1
+                    stats["failed"] += 1
                     continue
-
-                ok = g.write(virtual_path, content)
-                if ok:
-                    written += 1
+                if g.write(virtual_path, content):
+                    stats["code_written"] += 1
                 else:
-                    print(f"  FAIL {virtual_path}")
-                    failed += 1
-            # All writes committed together on clean exit from `with g:`
+                    stats["failed"] += 1
 
-        print(f"\n  Written: {written}")
-        print(f"  Failed:  {failed}")
-        print(f"  DB size: {DB_PATH.stat().st_size / 1024:.1f} KB\n")
+            # Write doc files to /docs
+            for path in buckets["docs"]:
+                rel = path.relative_to(REPO_ROOT)
+                virtual_path = f"/docs/{rel}".replace("\\", "/")
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError) as e:
+                    print(f"  SKIP {virtual_path} ({e.__class__.__name__})")
+                    stats["failed"] += 1
+                    continue
+                if g.write(virtual_path, content):
+                    stats["docs_written"] += 1
+                else:
+                    stats["failed"] += 1
+            # All writes committed together on clean exit
+
+        print(f"\n  Code files written (SQLite):      {stats['code_written']}")
+        print(f"  Doc files written (PostgreSQL):    {stats['docs_written']}")
+        print(f"  Failed:                           {stats['failed']}")
+        if SQLITE_PATH.exists():
+            print(f"  SQLite DB size: {SQLITE_PATH.stat().st_size / 1024:.1f} KB")
 
         # --------------------------------------------------------------
-        # Phase 2: Read back and verify
+        # Phase 2: Read back and verify from both backends
         # --------------------------------------------------------------
-        print("=" * 60)
+        print("\n" + "=" * 60)
         print("PHASE 2: Verifying round-trip (read back + compare)")
         print("=" * 60)
 
-        verified = 0
-        mismatches = 0
-        for path in files:
-            rel = path.relative_to(REPO_ROOT)
-            virtual_path = f"{MOUNT}/{rel}".replace("\\", "/")
-
-            try:
-                original = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError):
-                continue
-
-            content = g.read(virtual_path)
-            if content is None:
-                mismatches += 1
-                print(f"  MISS {virtual_path}")
-                continue
-
-            if content == original:
-                verified += 1
-            else:
-                mismatches += 1
-                print(f"  DIFF {virtual_path}: "
-                      f"expected {len(original)} chars, got {len(content)}")
-
-        print(f"\n  Verified:   {verified}")
-        print(f"  Mismatches: {mismatches}\n")
+        for label, mount, file_list in [
+            ("Code (SQLite)", "/code", buckets["code"]),
+            ("Docs (PostgreSQL)", "/docs", buckets["docs"]),
+        ]:
+            verified = 0
+            mismatches = 0
+            for path in file_list:
+                rel = path.relative_to(REPO_ROOT)
+                virtual_path = f"{mount}/{rel}".replace("\\", "/")
+                try:
+                    original = path.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError):
+                    continue
+                content = g.read(virtual_path)
+                if content is None:
+                    mismatches += 1
+                elif content == original:
+                    verified += 1
+                else:
+                    mismatches += 1
+            print(f"\n  {label}: {verified} verified, {mismatches} mismatches")
 
         # --------------------------------------------------------------
         # Phase 3: Explore the virtual filesystem
         # --------------------------------------------------------------
-        print("=" * 60)
+        print("\n" + "=" * 60)
         print("PHASE 3: Exploring the virtual filesystem")
         print("=" * 60)
 
-        # List root (shows mount points)
+        # List root — should show both mounts
         root_entries = g.list_dir("/")
         print(f"\n  / (root) — {len(root_entries)} mount(s):")
         for e in root_entries:
             print(f"    {'DIR ' if e['is_directory'] else 'FILE'} {e['name']}")
 
-        # List mount root
-        mount_entries = g.list_dir(MOUNT)
-        print(f"\n  {MOUNT}/ — {len(mount_entries)} entries:")
-        for e in sorted(mount_entries, key=lambda x: x["name"]):
-            kind = "DIR " if e["is_directory"] else "FILE"
-            print(f"    {kind} {e['name']}")
+        # List each mount root
+        for mount in ["/code", "/docs"]:
+            entries = g.list_dir(mount)
+            print(f"\n  {mount}/ — {len(entries)} entries:")
+            for e in sorted(entries, key=lambda x: x["name"])[:15]:
+                kind = "DIR " if e["is_directory"] else "FILE"
+                print(f"    {kind} {e['name']}")
+            if len(entries) > 15:
+                print(f"    ... ({len(entries) - 15} more)")
 
-        # List src/grover
-        grover_entries = g.list_dir(f"{MOUNT}/src/grover")
-        print(f"\n  {MOUNT}/src/grover/ — {len(grover_entries)} entries:")
-        for e in sorted(grover_entries, key=lambda x: x["name"]):
-            kind = "DIR " if e["is_directory"] else "FILE"
-            print(f"    {kind} {e['name']}")
-
-        # Exists checks
-        print(f"\n  exists('{MOUNT}/pyproject.toml'): "
-              f"{g.exists(f'{MOUNT}/pyproject.toml')}")
-        print(f"  exists('{MOUNT}/nonexistent.txt'): "
-              f"{g.exists(f'{MOUNT}/nonexistent.txt')}")
-
-        # Read a file
-        readme = g.read(f"{MOUNT}/README.md")
-        if readme:
-            lines = readme.split("\n")
-            print(f"\n  {MOUNT}/README.md ({len(lines)} lines):")
-            for line in lines[:5]:
-                print(f"    {line}")
-            print("    ...")
+        # Cross-mount exists checks
+        print(f"\n  exists('/code/src/grover/_grover.py'): "
+              f"{g.exists('/code/src/grover/_grover.py')}")
+        print(f"  exists('/docs/README.md'): "
+              f"{g.exists('/docs/README.md')}")
+        print(f"  exists('/code/README.md'): "
+              f"{g.exists('/code/README.md')}  (should be False — README is in /docs)")
 
         # --------------------------------------------------------------
-        # Phase 4: Edit + versioning via underlying filesystem
+        # Phase 4: Cross-mount graph + search
         # --------------------------------------------------------------
         print("\n" + "=" * 60)
-        print("PHASE 4: Edit + versioning")
-        print("=" * 60)
-
-        test_path = f"{MOUNT}/test_versioning.txt"
-        g.write(test_path, "version 1\n")
-        g.edit(test_path, "version 1", "version 2")
-        g.edit(test_path, "version 2", "version 3")
-
-        current = g.read(test_path)
-        print(f"\n  Current content: {current!r}")
-
-        # Access version history via the underlying UnifiedFileSystem
-        ufs = g.fs
-        versions = g._run(ufs.list_versions(test_path))
-        print(f"  Version records: {len(versions)}")
-        for v in versions:
-            vc = g._run(ufs.get_version_content(test_path, v.version))
-            print(f"    v{v.version}: {vc!r}")
-
-        # Restore to v1
-        restore = g._run(ufs.restore_version(test_path, 1))
-        restored = g.read(test_path)
-        print(f"\n  Restored to v1: success={restore.success}")
-        print(f"  Content after restore: {restored!r}")
-
-        # --------------------------------------------------------------
-        # Phase 5: Graph check
-        # --------------------------------------------------------------
-        print("\n" + "=" * 60)
-        print("PHASE 5: Graph info")
+        print("PHASE 4: Graph info (spans both mounts)")
         print("=" * 60)
 
         graph = g.graph
         print(f"\n  Graph nodes: {graph.node_count}")
         print(f"  Graph edges: {graph.edge_count}")
-        if graph.node_count > 0:
-            sample = graph.nodes()[:5]
-            print(f"  Sample nodes: {sample}")
+
+        code_nodes = [n for n in graph.nodes() if n.startswith("/code/")]
+        docs_nodes = [n for n in graph.nodes() if n.startswith("/docs/")]
+        print(f"  Nodes in /code: {len(code_nodes)}")
+        print(f"  Nodes in /docs: {len(docs_nodes)}")
+
+        if code_nodes:
+            print(f"  Sample /code nodes: {code_nodes[:3]}")
+        if docs_nodes:
+            print(f"  Sample /docs nodes: {docs_nodes[:3]}")
 
         # --------------------------------------------------------------
-        # Phase 6: Delete test
+        # Phase 5: Edit + versioning on each backend
         # --------------------------------------------------------------
         print("\n" + "=" * 60)
-        print("PHASE 6: Delete test")
+        print("PHASE 5: Edit + versioning (both backends)")
         print("=" * 60)
 
-        ok = g.delete(test_path)
-        print(f"\n  Deleted {test_path}: {ok}")
-        print(f"  exists after delete: {g.exists(test_path)}")
+        ufs = g.fs
+        for mount, label in [("/code", "SQLite"), ("/docs", "PostgreSQL")]:
+            test_path = f"{mount}/test_versioning.txt"
+            g.write(test_path, "version 1\n")
+            g.edit(test_path, "version 1", "version 2")
+            g.edit(test_path, "version 2", "version 3")
+
+            current = g.read(test_path)
+            versions = g._run(ufs.list_versions(test_path))
+            print(f"\n  [{label}] {test_path}")
+            print(f"    Current: {current!r}")
+            print(f"    Versions: {len(versions)}")
+            for v in versions:
+                vc = g._run(ufs.get_version_content(test_path, v.version))
+                print(f"      v{v.version}: {vc!r}")
+
+            # Restore to v1
+            restore = g._run(ufs.restore_version(test_path, 1))
+            restored = g.read(test_path)
+            print(f"    Restored to v1: {restore.success}, content={restored!r}")
+
+            # Clean up
+            g.delete(test_path)
 
         # Save state
         g.save()
-        print(f"\n  Saved. DB size: {DB_PATH.stat().st_size / 1024:.1f} KB")
+        print("\n  State saved.")
 
     finally:
         g.close()
+
+    # Dispose engines to release all connections before dropping databases
+    async def _dispose_engines() -> None:
+        await sqlite_engine.dispose()
+        await pg_engine.dispose()
+
+    asyncio.run(_dispose_engines())
 
     # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("CLEANUP: Deleting database")
+    print("CLEANUP: Deleting databases")
     print("=" * 60)
-    DB_PATH.unlink()
-    print(f"  Deleted {DB_PATH}")
+    if SQLITE_PATH.exists():
+        SQLITE_PATH.unlink()
+        print(f"  Deleted {SQLITE_PATH}")
+    _drop_pg_database()
+    print(f"  Dropped PostgreSQL database '{PG_DB}'")
     print("\nDone!")
 
 
