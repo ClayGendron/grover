@@ -312,16 +312,28 @@ class Graph:
 
         await session.flush()
 
-    async def from_sql(self, session: AsyncSession) -> None:
+    async def from_sql(self, session: AsyncSession, file_model: type | None = None) -> None:
         """Load graph state from the database, replacing in-memory state.
 
-        Loads non-deleted ``GroverFile`` rows as nodes and all ``GroverEdge``
+        Loads non-deleted file rows as nodes and all ``GroverEdge``
         rows as edges.  Auto-creates nodes for dangling edge endpoints.
+
+        Parameters
+        ----------
+        session:
+            An async SQLAlchemy session.
+        file_model:
+            The SQLModel class to query for file nodes.  Defaults to
+            :class:`~grover.models.files.File`.
         """
         from sqlalchemy import select
 
         from grover.models.edges import GroverEdge
-        from grover.models.files import GroverFile
+
+        if file_model is None:
+            from grover.models.files import File
+
+            file_model = File
 
         # Reset
         self._graph = rustworkx.PyDiGraph()
@@ -330,13 +342,13 @@ class Graph:
 
         # Load non-deleted files as nodes
         result = await session.execute(
-            select(GroverFile).where(GroverFile.deleted_at.is_(None))  # type: ignore[union-attr]
+            select(file_model).where(file_model.deleted_at.is_(None))  # type: ignore[union-attr]
         )
         for file_row in result.scalars().all():
             self.add_node(
-                file_row.path,
-                parent_path=file_row.parent_path,
-                is_directory=file_row.is_directory,
+                file_row.path,  # type: ignore[unresolved-attribute]
+                parent_path=file_row.parent_path,  # type: ignore[unresolved-attribute]
+                is_directory=file_row.is_directory,  # type: ignore[unresolved-attribute]
             )
 
         # Load all edges

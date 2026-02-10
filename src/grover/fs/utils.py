@@ -109,7 +109,7 @@ def split_path(path: str) -> tuple[str, str]:
     """
     path = normalize_path(path)
     if path == "/":
-        return ("/", "")
+        return "/", ""
     return posixpath.split(path)
 
 

@@ -9,7 +9,7 @@ import pytest
 
 from grover.graph import Graph
 from grover.models.edges import GroverEdge
-from grover.models.files import GroverFile
+from grover.models.files import File
 from grover.ref import Ref
 
 if TYPE_CHECKING:
@@ -596,8 +596,8 @@ class TestToSql:
 
 class TestFromSql:
     async def test_loads_nodes_from_files(self, async_session: AsyncSession) -> None:
-        async_session.add(GroverFile(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(GroverFile(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
+        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
         await async_session.commit()
 
         g = Graph()
@@ -607,8 +607,8 @@ class TestFromSql:
         assert g.node_count == 2
 
     async def test_loads_edges(self, async_session: AsyncSession) -> None:
-        async_session.add(GroverFile(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(GroverFile(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
+        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
         async_session.add(GroverEdge(
             source_path="/a.py", target_path="/b.py", type="imports"
         ))
@@ -620,8 +620,8 @@ class TestFromSql:
         assert g.get_edge("/a.py", "/b.py")["type"] == "imports"
 
     async def test_skips_deleted_files(self, async_session: AsyncSession) -> None:
-        async_session.add(GroverFile(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(GroverFile(
+        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
+        async_session.add(File(
             path="/deleted.py", parent_path="/", name="deleted.py",
             deleted_at=datetime.now(UTC),
         ))
@@ -637,7 +637,7 @@ class TestFromSql:
         g.add_node("/old.py")
         assert g.has_node("/old.py")
 
-        async_session.add(GroverFile(path="/new.py", parent_path="/", name="new.py"))
+        async_session.add(File(path="/new.py", parent_path="/", name="new.py"))
         await async_session.commit()
 
         await g.from_sql(async_session)
@@ -647,8 +647,8 @@ class TestFromSql:
     async def test_metadata_round_trips(self, async_session: AsyncSession) -> None:
         import json
 
-        async_session.add(GroverFile(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(GroverFile(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
+        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
         async_session.add(GroverEdge(
             source_path="/a.py", target_path="/b.py", type="imports",
             metadata_json=json.dumps({"line": 10, "symbol": "Foo"}),

@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 @dataclass
 class FileInfo:
     """File/directory metadata."""
-
     path: str
     name: str
     is_directory: bool
@@ -28,7 +27,6 @@ class FileInfo:
 @dataclass
 class VersionInfo:
     """Version history entry."""
-
     version: int
     content_hash: str
     size_bytes: int
@@ -40,7 +38,6 @@ class VersionInfo:
 @dataclass
 class ReadResult:
     """Result of a read operation."""
-
     success: bool
     message: str
     content: str | None = None
@@ -53,7 +50,6 @@ class ReadResult:
 @dataclass
 class WriteResult:
     """Result of a write operation."""
-
     success: bool
     message: str
     file_path: str | None = None
@@ -64,7 +60,6 @@ class WriteResult:
 @dataclass
 class EditResult:
     """Result of an edit operation."""
-
     success: bool
     message: str
     file_path: str | None = None
@@ -74,7 +69,6 @@ class EditResult:
 @dataclass
 class DeleteResult:
     """Result of a delete operation."""
-
     success: bool
     message: str
     file_path: str | None = None
@@ -85,7 +79,6 @@ class DeleteResult:
 @dataclass
 class MkdirResult:
     """Result of a mkdir operation."""
-
     success: bool
     message: str
     path: str | None = None
@@ -95,7 +88,6 @@ class MkdirResult:
 @dataclass
 class ListResult:
     """Result of a list directory operation."""
-
     success: bool
     message: str
     entries: list[FileInfo] = field(default_factory=list)
@@ -105,7 +97,6 @@ class ListResult:
 @dataclass
 class MoveResult:
     """Result of a move operation."""
-
     success: bool
     message: str
     old_path: str | None = None
@@ -115,7 +106,6 @@ class MoveResult:
 @dataclass
 class RestoreResult:
     """Result of a restore operation."""
-
     success: bool
     message: str
     file_path: str | None = None

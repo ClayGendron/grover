@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover.fs.dialect import get_dialect, now_expression, upsert_file
-from grover.models.files import GroverFile
+from grover.models.files import File
 
 
 class TestGetDialect:
@@ -61,7 +61,7 @@ class TestUpsertFile:
             assert rowcount >= 0
 
             result = await session.execute(
-                select(GroverFile).where(GroverFile.path == "/hello.txt")
+                select(File).where(File.path == "/hello.txt")
             )
             file = result.scalar_one_or_none()
             assert file is not None
@@ -110,7 +110,7 @@ class TestUpsertFile:
             await session.commit()
 
             result = await session.execute(
-                select(GroverFile).where(GroverFile.path == "/hello.txt")
+                select(File).where(File.path == "/hello.txt")
             )
             file = result.scalar_one_or_none()
             assert file is not None
