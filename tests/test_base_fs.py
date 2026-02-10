@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.models.files import SNAPSHOT_INTERVAL
+from grover.fs.diff import SNAPSHOT_INTERVAL
 
 
 async def _make_fs() -> tuple[DatabaseFileSystem, object]:
@@ -240,6 +240,27 @@ class TestDelete:
             assert result.permanent is True
         await engine.dispose()
 
+    async def test_permanent_delete_cleans_versions(self):
+        from sqlmodel import select
+
+        from grover.models.files import FileVersion
+
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/f.py", "v1\n")
+            await fs.write("/f.py", "v2\n")
+            versions = await fs.list_versions("/f.py")
+            assert len(versions) == 2
+
+            await fs.delete("/f.py", permanent=True)
+
+        # Verify no orphaned version records remain
+        factory = fs.session_factory
+        async with factory() as session:
+            result = await session.execute(select(FileVersion))
+            assert result.scalars().all() == [], "Version records should be deleted"
+        await engine.dispose()
+
     async def test_delete_nonexistent(self):
         fs, engine = await _make_fs()
         async with fs:
@@ -300,6 +321,24 @@ class TestTrash:
 
             trash = await fs.list_trash()
             assert len(trash.entries) == 0
+        await engine.dispose()
+
+    async def test_empty_trash_cleans_versions(self):
+        from sqlmodel import select
+
+        from grover.models.files import FileVersion
+
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/a.py", "v1\n")
+            await fs.write("/a.py", "v2\n")
+            await fs.delete("/a.py")
+            await fs.empty_trash()
+
+        factory = fs.session_factory
+        async with factory() as session:
+            result = await session.execute(select(FileVersion))
+            assert result.scalars().all() == [], "Version records should be deleted"
         await engine.dispose()
 
 

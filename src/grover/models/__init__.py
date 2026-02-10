@@ -3,21 +3,17 @@
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
 from grover.models.files import (
-    SNAPSHOT_INTERVAL,
+    File,
+    FileBase,
     FileVersion,
-    GroverFile,
-    apply_diff,
-    compute_diff,
-    reconstruct_version,
+    FileVersionBase,
 )
 
 __all__ = [
-    "SNAPSHOT_INTERVAL",
     "Embedding",
+    "File",
+    "FileBase",
     "FileVersion",
+    "FileVersionBase",
     "GroverEdge",
-    "GroverFile",
-    "apply_diff",
-    "compute_diff",
-    "reconstruct_version",
 ]

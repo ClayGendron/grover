@@ -5,14 +5,12 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, select
 
+from grover.fs.diff import apply_diff, compute_diff, reconstruct_version
 from grover.models import (
     Embedding,
+    File,
     FileVersion,
     GroverEdge,
-    GroverFile,
-    apply_diff,
-    compute_diff,
-    reconstruct_version,
 )
 
 # ---------------------------------------------------------------------------
@@ -37,7 +35,7 @@ class TestTableCreation:
 
 class TestDefaultFactories:
     def test_grover_file_defaults(self, session: Session):
-        f = GroverFile(path="/hello.txt", name="hello.txt", parent_path="/")
+        f = File(path="/hello.txt", name="hello.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
@@ -115,17 +113,17 @@ class TestDefaultFactories:
         assert edge.metadata_json == "{}"
 
     def test_query_round_trip(self, session: Session):
-        """Insert and query back a GroverFile."""
-        f = GroverFile(path="/test.py", name="test.py", parent_path="/")
+        """Insert and query back a File."""
+        f = File(path="/test.py", name="test.py", parent_path="/")
         session.add(f)
         session.commit()
 
-        result = session.exec(select(GroverFile).where(GroverFile.path == "/test.py")).first()
+        result = session.exec(select(File).where(File.path == "/test.py")).first()
         assert result is not None
         assert result.path == "/test.py"
 
     def test_grover_file_directory(self, session: Session):
-        d = GroverFile(
+        d = File(
             path="/src",
             name="src",
             parent_path="/",
@@ -138,7 +136,7 @@ class TestDefaultFactories:
         assert d.is_directory is True
 
     def test_grover_file_with_content(self, session: Session):
-        f = GroverFile(
+        f = File(
             path="/readme.md",
             name="readme.md",
             parent_path="/",

@@ -11,14 +11,12 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from sqlmodel import select
 
 from grover.fs.dialect import upsert_file
+from grover.fs.diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
 from grover.models.files import (
-    SNAPSHOT_INTERVAL,
     File,
     FileBase,
     FileVersion,
     FileVersionBase,
-    compute_diff,
-    reconstruct_version,
 )
 
 from .types import (
@@ -209,6 +207,17 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             change_summary=change_summary,
         )
         session.add(version)
+
+    async def _delete_versions(self, session: AsyncSession, file_id: str) -> None:
+        """Delete all version records for a file."""
+        fv_model = self._file_version_model
+        result = await session.execute(
+            select(fv_model).where(
+                fv_model.file_id == file_id,  # type: ignore[arg-type]
+            )
+        )
+        for version in result.scalars().all():
+            await session.delete(version)
 
     async def _ensure_parent_dirs(self, session: AsyncSession, path: str) -> None:
         """Ensure all parent directories exist in the database."""
@@ -545,9 +554,11 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                         )
                     )
                     for child in result.scalars().all():
+                        await self._delete_versions(session, child.id)
                         await self._delete_content(child.path)
                         await session.delete(child)
 
+                await self._delete_versions(session, file.id)
                 await self._delete_content(path)
                 await session.delete(file)
             else:
@@ -1004,6 +1015,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
             count = len(files)
             for file in files:
+                await self._delete_versions(session, file.id)
                 await self._delete_content(file.original_path or file.path)
                 await session.delete(file)
 

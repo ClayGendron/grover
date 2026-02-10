@@ -255,6 +255,84 @@ class TestGroverAsyncTransaction:
         await g.close()
         await engine.dispose()
 
+    @pytest.mark.asyncio
+    async def test_reads_visible_during_transaction(self, grover: GroverAsync):
+        """Files written inside ``async with g:`` are readable before commit."""
+        async with grover:
+            await grover.write("/project/visible.txt", "hello")
+            assert await grover.read("/project/visible.txt") == "hello"
+            assert await grover.exists("/project/visible.txt")
+
+    @pytest.mark.asyncio
+    async def test_rollback_multi_mount(self, tmp_path: Path):
+        """Writes to multiple DatabaseFileSystem mounts roll back together."""
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+        from sqlmodel import SQLModel, select
+
+        from grover.fs.database_fs import DatabaseFileSystem
+        from grover.models.files import File
+
+        # Set up two separate SQLite databases
+        db_path_a = tmp_path / "mount_a.db"
+        db_path_b = tmp_path / "mount_b.db"
+
+        engine_a = create_async_engine(f"sqlite+aiosqlite:///{db_path_a}")
+        engine_b = create_async_engine(f"sqlite+aiosqlite:///{db_path_b}")
+
+        async with engine_a.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with engine_b.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        factory_a = async_sessionmaker(
+            engine_a, class_=AsyncSession, expire_on_commit=False,
+        )
+        factory_b = async_sessionmaker(
+            engine_b, class_=AsyncSession, expire_on_commit=False,
+        )
+
+        db_a = DatabaseFileSystem(session_factory=factory_a, dialect="sqlite")
+        db_b = DatabaseFileSystem(session_factory=factory_b, dialect="sqlite")
+
+        g = GroverAsync()
+        await g.mount("/a", db_a)
+        await g.mount("/b", db_b)
+
+        # Write to both mounts inside a transaction, then raise
+        with pytest.raises(RuntimeError, match="cross-mount boom"):
+            async with g:
+                await g.write("/a/file.txt", "content a")
+                await g.write("/b/file.txt", "content b")
+                # Both readable during txn
+                assert await g.read("/a/file.txt") == "content a"
+                assert await g.read("/b/file.txt") == "content b"
+                raise RuntimeError("cross-mount boom")
+
+        # Both should be rolled back
+        async with factory_a() as session:
+            result = await session.execute(
+                select(File).where(File.path == "/file.txt")
+            )
+            assert result.scalar_one_or_none() is None, (
+                "Mount /a should be rolled back"
+            )
+
+        async with factory_b() as session:
+            result = await session.execute(
+                select(File).where(File.path == "/file.txt")
+            )
+            assert result.scalar_one_or_none() is None, (
+                "Mount /b should be rolled back"
+            )
+
+        await g.close()
+        await engine_a.dispose()
+        await engine_b.dispose()
+
 
 # ==================================================================
 # Multi-Mount CRUD

@@ -152,6 +152,95 @@ class TestGroverFilesystem:
 
 
 # ==================================================================
+# Transaction
+# ==================================================================
+
+
+class TestGroverTransaction:
+    def test_context_manager_commits(self, grover: Grover):
+        """Writes inside ``with g:`` are visible after clean exit."""
+        with grover:
+            grover.write("/project/a.txt", "a")
+            grover.write("/project/b.txt", "b")
+
+        assert grover.read("/project/a.txt") == "a"
+        assert grover.read("/project/b.txt") == "b"
+
+    def test_reads_visible_during_transaction(self, grover: Grover):
+        """Files written inside ``with g:`` are readable before commit."""
+        with grover:
+            grover.write("/project/visible.txt", "hello")
+            assert grover.read("/project/visible.txt") == "hello"
+            assert grover.exists("/project/visible.txt")
+
+    def test_operations_after_transaction(self, grover: Grover):
+        """Normal operations resume after a transaction block."""
+        with grover:
+            grover.write("/project/in_tx.txt", "in transaction")
+
+        grover.write("/project/after_tx.txt", "after transaction")
+        assert grover.read("/project/after_tx.txt") == "after transaction"
+
+    def test_rollback_on_error(self, tmp_path: Path):
+        """Writes inside ``with g:`` are rolled back on exception."""
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+        from sqlmodel import SQLModel, select
+
+        from grover.fs.database_fs import DatabaseFileSystem
+        from grover.models.files import File
+
+        db_path = tmp_path / "rollback_test.db"
+        engine = create_async_engine(
+            f"sqlite+aiosqlite:///{db_path}", echo=False,
+        )
+
+        import asyncio
+
+        asyncio.run(_create_tables(engine))
+
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False,
+        )
+
+        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
+        g = Grover()
+        g.mount("/app", db)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with g:
+                g.write("/app/doomed.txt", "this should vanish")
+                # Readable during the transaction
+                assert g.read("/app/doomed.txt") == "this should vanish"
+                raise RuntimeError("boom")
+
+        # The file should NOT exist after rollback
+        async def _check() -> None:
+            async with factory() as session:
+                result = await session.execute(
+                    select(File).where(File.path == "/doomed.txt")
+                )
+                assert result.scalar_one_or_none() is None, (
+                    "Data should be rolled back after exception"
+                )
+
+        asyncio.run(_check())
+        g.close()
+        asyncio.run(engine.dispose())
+
+
+async def _create_tables(engine: object) -> None:
+    """Helper: create all SQLModel tables on the given async engine."""
+    from sqlmodel import SQLModel
+
+    async with engine.begin() as conn:  # type: ignore[union-attr]
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+
+# ==================================================================
 # Graph
 # ==================================================================
 

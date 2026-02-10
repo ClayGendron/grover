@@ -336,9 +336,50 @@ def main() -> None:
             # Clean up
             g.delete(test_path)
 
+        # --------------------------------------------------------------
+        # Phase 6: Transaction rollback test (atomicity)
+        # --------------------------------------------------------------
+        print("\n" + "=" * 60)
+        print("PHASE 6: Transaction rollback (atomicity test)")
+        print("=" * 60)
+
+        rollback_paths = [
+            "/code/rollback_test.py",
+            "/docs/rollback_test.md",
+        ]
+
+        # Verify they don't exist yet
+        for p in rollback_paths:
+            assert not g.exists(p), f"{p} should not exist before test"
+
+        # Write inside a transaction, then blow up
+        try:
+            with g:
+                for p in rollback_paths:
+                    g.write(p, f"content for {p}\n")
+                    assert g.read(p) == f"content for {p}\n", f"Readable during txn: {p}"
+                print("\n  Wrote 2 files inside transaction, now raising error...")
+                raise RuntimeError("Simulated failure!")
+        except RuntimeError:
+            pass  # Expected
+
+        # Verify both were rolled back
+        all_rolled_back = True
+        for p in rollback_paths:
+            still_exists = g.exists(p)
+            status = "LEAKED (not rolled back!)" if still_exists else "rolled back"
+            print(f"  {p}: {status}")
+            if still_exists:
+                all_rolled_back = False
+
+        if all_rolled_back:
+            print("\n  PASS — transaction was atomic, all writes rolled back")
+        else:
+            print("\n  FAIL — some writes survived the rollback")
+
         # Save state
         g.save()
-        print("\n  State saved.")
+        print("  State saved.")
 
     finally:
         g.close()
