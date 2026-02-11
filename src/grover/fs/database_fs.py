@@ -1,4 +1,4 @@
-"""DatabaseFileSystem — pure SQL storage."""
+"""DatabaseFileSystem — pure SQL storage, stateless."""
 
 from __future__ import annotations
 
@@ -11,27 +11,25 @@ from .base import FV, BaseFileSystem, F
 from .utils import normalize_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from contextlib import AbstractAsyncContextManager
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
-    """Database-backed file system using SQLAlchemy ORM.
+    """Database-backed file system — stateless, sessions provided per-operation.
 
     All content is stored in the database — portable and consistent
     across deployments. Works with SQLite, PostgreSQL, MSSQL, etc.
 
-    Uses a session factory to create per-operation sessions, avoiding
-    concurrent session issues in async streaming contexts.
+    This class holds only configuration (dialect, models, schema).
+    It has no session factory, no mutable state, and is safe for
+    concurrent use from multiple requests.  Sessions are injected
+    via the ``session`` kwarg on every public method.
     """
 
     def __init__(
         self,
-        session_factory: Callable[..., AsyncSession],
         dialect: str = "sqlite",
         file_model: type[F] | None = None,
         file_version_model: type[FV] | None = None,
@@ -43,40 +41,21 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             file_version_model=file_version_model,
             schema=schema,
         )
-        self.session_factory = session_factory
-        self._session: AsyncSession | None = None
-        self._session_cm: AbstractAsyncContextManager[AsyncSession] | None = None
 
     # =========================================================================
     # Abstract Method Implementations
     # =========================================================================
 
     async def _get_session(self) -> AsyncSession:
-        if self._session is None:
-            self._session_cm = self.session_factory()
-            self._session = await self._session_cm.__aenter__()
-        return self._session
+        raise RuntimeError(
+            "DatabaseFileSystem requires session= on each operation"
+        )
 
     async def _commit(self, session: AsyncSession) -> None:
-        if self.in_transaction:
-            await session.flush()
-        else:
-            await session.commit()
-
-    async def _close_session(self, session: AsyncSession) -> None:
-        pass  # Session lifecycle managed externally
+        await session.flush()
 
     async def close(self) -> None:
-        """Close the session and clean up resources."""
-        if self._session is not None:
-            await self._session.close()
-            self._session = None
-        if self._session_cm is not None:
-            try:
-                await self._session_cm.__aexit__(None, None, None)
-            except Exception:
-                logger.debug("Session CM exit failed", exc_info=True)
-            self._session_cm = None
+        """No-op — DFS has no resources to release."""
 
     async def __aenter__(self) -> DatabaseFileSystem[F, FV]:
         return self
@@ -87,20 +66,10 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         exc_val: object,
         exc_tb: object,
     ) -> None:
-        if self._session is not None:
-            try:
-                if exc_type is None:
-                    await self._session.commit()
-                else:
-                    await self._session.rollback()
-            finally:
-                await self._session.close()
-                self._session = None
-        self._session_cm = None
+        pass
 
-    async def _read_content(self, path: str) -> str | None:
+    async def _read_content(self, path: str, session: AsyncSession) -> str | None:
         path = normalize_path(path)
-        session = await self._get_session()
         model = self._file_model
         result = await session.execute(
             select(model.content).where(  # type: ignore[arg-type]
@@ -111,9 +80,8 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         row = result.first()
         return row[0] if row else None
 
-    async def _write_content(self, path: str, content: str) -> None:
+    async def _write_content(self, path: str, content: str, session: AsyncSession) -> None:
         path = normalize_path(path)
-        session = await self._get_session()
         model = self._file_model
         result = await session.execute(
             select(model).where(
@@ -124,12 +92,11 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         if file:
             file.content = content
 
-    async def _delete_content(self, path: str) -> None:
+    async def _delete_content(self, path: str, session: AsyncSession) -> None:
         pass  # Content lives in the file record
 
-    async def _content_exists(self, path: str) -> bool:
+    async def _content_exists(self, path: str, session: AsyncSession) -> bool:
         path = normalize_path(path)
-        session = await self._get_session()
         model = self._file_model
         result = await session.execute(
             select(model.id).where(  # type: ignore[arg-type]

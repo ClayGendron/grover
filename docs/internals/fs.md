@@ -93,7 +93,7 @@ else:
     await _session.flush()
 ```
 
-When `owns=True` (session created internally), `_commit` calls `session.commit()` and `_close_session` calls `session.close()`. When `owns=False` (session injected by UFS), only `session.flush()` is called — the outer `_session_for()` context manager handles commit/close.
+When `owns=True` (session created internally), `_commit` calls `session.commit()` and the `finally` block calls `session.close()`. When `owns=False` (session injected by UFS), only `session.flush()` is called — the outer `_session_for()` context manager handles commit/close.
 
 ---
 
@@ -128,7 +128,7 @@ except Exception:
     raise
 finally:
     if owns:
-        await self._close_session(_session)
+        await _session.close()
 ```
 
 - **Caller provided a session** (`session is not None`): `owns_it=False`. The backend flushes but never commits or closes — the caller (UFS) controls the lifecycle.
@@ -140,9 +140,8 @@ finally:
 |--------|----------|
 | `_get_session()` | New session from `_session_factory()` |
 | `_commit(session)` | `session.commit()` |
-| `_close_session(session)` | `session.close()` |
 
-When used through UFS (the normal path), LFS receives an injected session via `session=` so `_resolve_session` returns `owns=False` — meaning `_commit` and `_close_session` are never called. UFS controls the full session lifecycle. When LFS is used standalone (`session=None`), it creates its own session and manages it via the `owns=True` path.
+When used through UFS (the normal path), LFS receives an injected session via `session=` so `_resolve_session` returns `owns=False` — meaning `_commit` is never called and UFS controls the full session lifecycle. When LFS is used standalone (`session=None`), it creates its own session and manages it via the `owns=True` path (commit + close).
 
 ### DatabaseFileSystem Sessions
 
@@ -152,7 +151,6 @@ DFS is **stateless** — it holds no session factory, no cached session, and no 
 |--------|----------|
 | `_get_session()` | Raises `RuntimeError` — sessions must always be injected via `session=` |
 | `_commit(session)` | `session.flush()` — never commits (UFS controls the commit boundary) |
-| `_close_session(session)` | No-op — UFS controls session lifecycle |
 
 DFS relies entirely on UFS to provide sessions. Since `_resolve_session(session)` always receives a non-`None` session from UFS, `owns_it` is always `False`, meaning DFS never commits or closes sessions.
 
@@ -316,7 +314,7 @@ On restore (`restore_from_trash`), the content is written back to disk from the 
 | **Session ownership** | Session-injected via UFS (or standalone) | Stateless — sessions injected via `session=` kwarg |
 | **`_get_session()`** | New session from factory (standalone use only) | Raises `RuntimeError` |
 | **`_commit()`** | `session.commit()` (standalone use only) | `session.flush()` always (never commits) |
-| **`_close_session()`** | `session.close()` (standalone use only) | No-op |
+| **Session close** | `session.close()` via base class (standalone use only) | N/A (never owns sessions) |
 | **Atomic writes** | Temp file + fsync + rename | Standard DB transaction |
 | **IDE/git visibility** | Files are real on disk | No physical files |
 | **`list_dir()` behavior** | Merges DB records with disk scan | DB records only |

@@ -152,9 +152,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     async def _commit(self, session: AsyncSession) -> None:
         await session.commit()
 
-    async def _close_session(self, session: AsyncSession) -> None:
-        await session.close()
-
     def _resolve_path_sync(self, virtual_path: str) -> Path:
         """Convert virtual path to an actual disk path within the workspace.
 
@@ -316,7 +313,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             content = await self._read_content(path, _session)
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
         if content is None:
             return ReadResult(success=False, message=f"Could not read file: {path}")
@@ -348,7 +345,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             content = await self._read_content(norm, _session)
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
         # Ensure a DB record exists so super().delete() can soft-delete it
         if content is not None:
@@ -357,7 +354,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 file = await self._get_file(_session2, norm)
             finally:
                 if owns2:
-                    await self._close_session(_session2)
+                    await _session2.close()
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
                 await super().write(norm, content, created_by="backup", session=session)
@@ -372,7 +369,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 await self._delete_content(norm, _session3)
             finally:
                 if owns3:
-                    await self._close_session(_session3)
+                    await _session3.close()
 
         return result
 
@@ -416,7 +413,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                     child_files = []
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
         if file:
             if file.is_directory:
@@ -431,7 +428,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                             await self._write_content(child_path, child_content, _s)
                         finally:
                             if _o:
-                                await self._close_session(_s)
+                                await _s.close()
             else:
                 content = await self.get_version_content(
                     restored_path, file.current_version, session=session,
@@ -442,7 +439,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                         await self._write_content(restored_path, content, _s)
                     finally:
                         if _o:
-                            await self._close_session(_s)
+                            await _s.close()
 
         return result
 
@@ -535,4 +532,4 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             raise
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()

@@ -154,17 +154,6 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         """
         ...
 
-    @abstractmethod
-    async def _close_session(self, session: AsyncSession) -> None:
-        """Clean up a session after an operation completes.
-
-        Called in ``finally`` blocks so each public method releases its
-        session regardless of success or failure. LocalFileSystem closes
-        the session (session-per-operation). DatabaseFileSystem is a no-op
-        (session lifecycle managed externally).
-        """
-        ...
-
     # =========================================================================
     # Session Resolution
     # =========================================================================
@@ -365,7 +354,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     # =========================================================================
     # Core Operations: Write
@@ -489,7 +478,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     # =========================================================================
     # Core Operations: Edit
@@ -570,7 +559,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     # =========================================================================
     # Core Operations: Delete
@@ -651,7 +640,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     # =========================================================================
     # Directory Operations
@@ -754,7 +743,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     async def list_dir(
         self,
@@ -806,7 +795,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     def _file_to_info(self, f: FileBase) -> FileInfo:
         """Convert a file record to FileInfo."""
@@ -977,7 +966,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     async def copy(
         self,
@@ -1008,7 +997,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
             raise
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
         return await self.write(dest, content, created_by="copy", session=session)
 
@@ -1034,7 +1023,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     async def get_info(
         self,
@@ -1058,7 +1047,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     # =========================================================================
     # Version Control
@@ -1106,7 +1095,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     async def restore_version(
         self,
@@ -1213,7 +1202,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     # =========================================================================
     # Trash Operations
@@ -1263,7 +1252,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     async def restore_from_trash(
         self,
@@ -1349,7 +1338,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()
 
     async def empty_trash(
         self,
@@ -1393,4 +1382,4 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         finally:
             if owns:
-                await self._close_session(_session)
+                await _session.close()

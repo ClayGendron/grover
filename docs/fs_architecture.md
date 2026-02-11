@@ -32,7 +32,7 @@ graph TD
             BFS_dir["mkdir / list_dir / move / copy"]
             BFS_ver["_save_version / list_versions / get_version_content / restore_version"]
             BFS_trash["list_trash / restore_from_trash / empty_trash"]
-            BFS_session["_get_session / _commit / _close_session"]
+            BFS_session["_get_session / _commit"]
         end
 
         subgraph LocalFileSystem
@@ -232,7 +232,6 @@ sequenceDiagram
     Backend->>Backend: _resolve_session(session) → session, owns=False
     Note over Backend: Backend uses injected session as-is
     Backend->>Backend: do work → _write_content → session.flush()
-    Note over Backend: _close_session is no-op (owns=False)
     UFS->>UFS: session.commit() (on _session_for exit)
 
     Backend-->>UFS: WriteResult
