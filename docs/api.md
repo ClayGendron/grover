@@ -1,6 +1,6 @@
 # API Reference
 
-This is the complete API reference for Grover. For a quick overview, see the [README](../README.md).
+This is the complete API reference for Grover. For a quick overview, see the [Home](index.md).
 
 ---
 
@@ -95,7 +95,7 @@ g.tree(path="/", *, max_depth=None) -> TreeResult
 |-----------|------|---------|-------------|
 | `pattern` | `str` | required | Regex pattern (or literal if `fixed_string=True`) |
 | `path` | `str` | `"/"` | Directory or file to search |
-| `glob_filter` | `str \| None` | `None` | Only search files matching this glob pattern |
+| `glob_filter` | `str | None` | `None` | Only search files matching this glob pattern |
 | `case_sensitive` | `bool` | `True` | Case-sensitive matching |
 | `fixed_string` | `bool` | `False` | Treat pattern as literal string, not regex |
 | `invert` | `bool` | `False` | Return non-matching lines |
