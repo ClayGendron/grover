@@ -1,9 +1,10 @@
-"""Path utilities, text replacement, binary detection."""
+"""Path utilities, text replacement, binary detection, glob pattern matching."""
 
 from __future__ import annotations
 
 import mimetypes
 import posixpath
+import re
 import unicodedata
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -19,52 +20,204 @@ if TYPE_CHECKING:
 
 TEXT_EXTENSIONS = {
     # Programming languages
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp",
-    ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".scala", ".r",
-    ".m", ".mm", ".pl", ".pm", ".lua", ".sh", ".bash", ".zsh", ".fish",
-    ".ps1", ".psm1", ".bat", ".cmd", ".vbs",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".r",
+    ".m",
+    ".mm",
+    ".pl",
+    ".pm",
+    ".lua",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".ps1",
+    ".psm1",
+    ".bat",
+    ".cmd",
+    ".vbs",
     # Web
-    ".html", ".htm", ".css", ".scss", ".sass", ".less", ".vue", ".svelte",
+    ".html",
+    ".htm",
+    ".css",
+    ".scss",
+    ".sass",
+    ".less",
+    ".vue",
+    ".svelte",
     # Data/Config
-    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env",
-    ".xml", ".csv", ".tsv",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+    ".xml",
+    ".csv",
+    ".tsv",
     # Documentation
-    ".md", ".markdown", ".rst", ".txt", ".text", ".asciidoc", ".adoc",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".txt",
+    ".text",
+    ".asciidoc",
+    ".adoc",
     # SQL
-    ".sql", ".ddl", ".dml",
+    ".sql",
+    ".ddl",
+    ".dml",
     # Other text formats
-    ".log", ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig",
-    ".eslintrc", ".prettierrc", ".babelrc", ".npmrc", ".nvmrc",
-    ".makefile", ".dockerfile", ".tf", ".tfvars", ".hcl",
-    ".graphql", ".gql", ".proto",
+    ".log",
+    ".gitignore",
+    ".gitattributes",
+    ".dockerignore",
+    ".editorconfig",
+    ".eslintrc",
+    ".prettierrc",
+    ".babelrc",
+    ".npmrc",
+    ".nvmrc",
+    ".makefile",
+    ".dockerfile",
+    ".tf",
+    ".tfvars",
+    ".hcl",
+    ".graphql",
+    ".gql",
+    ".proto",
 }
 
 # Files without extensions that are text
 TEXT_FILENAMES = {
-    "Makefile", "Dockerfile", "Jenkinsfile", "Vagrantfile", "Procfile",
-    "Gemfile", "Rakefile", "Brewfile", "Podfile", "Fastfile",
-    ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig",
-    ".env", ".env.local", ".env.development", ".env.production",
-    "requirements.txt", "setup.py", "setup.cfg", "pyproject.toml",
-    "package.json", "tsconfig.json", "jsconfig.json",
-    "LICENSE", "README", "CHANGELOG", "CONTRIBUTING", "AUTHORS",
+    "Makefile",
+    "Dockerfile",
+    "Jenkinsfile",
+    "Vagrantfile",
+    "Procfile",
+    "Gemfile",
+    "Rakefile",
+    "Brewfile",
+    "Podfile",
+    "Fastfile",
+    ".gitignore",
+    ".gitattributes",
+    ".dockerignore",
+    ".editorconfig",
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "package.json",
+    "tsconfig.json",
+    "jsconfig.json",
+    "LICENSE",
+    "README",
+    "CHANGELOG",
+    "CONTRIBUTING",
+    "AUTHORS",
 }
 
 # Reserved filenames (Windows compatibility)
 RESERVED_NAMES = {
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
 }
 
 # Binary file extensions that should not be read
 BINARY_EXTENSIONS = {
-    ".zip", ".tar", ".gz", ".exe", ".dll", ".so", ".class", ".jar", ".war",
-    ".7z", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods",
-    ".odp", ".bin", ".dat", ".obj", ".o", ".a", ".lib", ".wasm", ".pyc", ".pyo",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff",
-    ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac",
-    ".pdf", ".ttf", ".otf", ".woff", ".woff2", ".eot",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".exe",
+    ".dll",
+    ".so",
+    ".class",
+    ".jar",
+    ".war",
+    ".7z",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".odt",
+    ".ods",
+    ".odp",
+    ".bin",
+    ".dat",
+    ".obj",
+    ".o",
+    ".a",
+    ".lib",
+    ".wasm",
+    ".pyc",
+    ".pyo",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".webp",
+    ".tiff",
+    ".mp3",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".mkv",
+    ".wav",
+    ".flac",
+    ".pdf",
+    ".ttf",
+    ".otf",
+    ".woff",
+    ".woff2",
+    ".eot",
 }
 
 
@@ -189,7 +342,7 @@ def from_trash_path(trash_path: str) -> str:
         return trash_path
 
     # Format: /__trash__/{uuid}/original/path
-    rest = trash_path[len("/__trash__/"):]
+    rest = trash_path[len("/__trash__/") :]
     slash_idx = rest.find("/")
     if slash_idx == -1:
         return "/"
@@ -197,8 +350,158 @@ def from_trash_path(trash_path: str) -> str:
 
 
 # =============================================================================
+# Glob Pattern Matching
+# =============================================================================
+
+
+def glob_to_sql_like(pattern: str, base_path: str = "/") -> str | None:
+    """Translate a glob pattern to a SQL LIKE clause for pre-filtering.
+
+    Returns None for patterns containing ``[seq]`` character classes,
+    which cannot be expressed in LIKE. The caller should fall back to
+    loading all paths and filtering with ``match_glob()``.
+
+    This is a performance optimisation only — ``match_glob()`` is the
+    authoritative filter.
+    """
+    if "[" in pattern:
+        return None
+
+    # Normalise base so we can prepend it
+    base_path = normalize_path(base_path)
+
+    # Build the full virtual pattern
+    if pattern.startswith("/"):
+        full = pattern
+    elif base_path == "/":
+        full = "/" + pattern
+    else:
+        full = base_path + "/" + pattern
+
+    # Translate glob tokens → LIKE tokens
+    like = ""
+    i = 0
+    while i < len(full):
+        ch = full[i]
+        if ch == "*":
+            # ** → % (any depth), * → match within one segment
+            if i + 1 < len(full) and full[i + 1] == "*":
+                like += "%"
+                i += 2
+                # Skip trailing /
+                if i < len(full) and full[i] == "/":
+                    i += 1
+                continue
+            # Single * — we still use % here because LIKE has no
+            # single-segment wildcard.  match_glob post-filters.
+            like += "%"
+        elif ch == "?":
+            like += "_"
+        elif ch == "%":
+            like += "\\%"
+        elif ch == "_":
+            like += "\\_"
+        else:
+            like += ch
+        i += 1
+
+    return like
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Convert a glob pattern to a compiled regex.
+
+    - ``*`` matches any characters except ``/``
+    - ``**`` matches any characters including ``/`` (zero or more path segments)
+    - ``?`` matches a single character except ``/``
+    - ``[seq]`` matches any character in *seq*
+    """
+    result = ""
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "*":
+            if i + 1 < len(pattern) and pattern[i + 1] == "*":
+                # **/ → zero or more directory levels
+                if i + 2 < len(pattern) and pattern[i + 2] == "/":
+                    result += "(?:.*/)?"
+                    i += 3
+                else:
+                    result += ".*"
+                    i += 2
+                continue
+            result += "[^/]*"
+        elif ch == "?":
+            result += "[^/]"
+        elif ch == "[":
+            j = i + 1
+            while j < len(pattern) and pattern[j] != "]":
+                j += 1
+            if j >= len(pattern):
+                # Unclosed bracket — treat [ as literal
+                result += re.escape(ch)
+            else:
+                bracket = pattern[i : j + 1]
+                # Translate glob negation [!...] to regex negation [^...]
+                if bracket.startswith("[!"):
+                    bracket = "[^" + bracket[2:]
+                result += bracket
+                i = j
+        else:
+            result += re.escape(ch)
+        i += 1
+    return re.compile("^" + result + "$")
+
+
+def compile_glob(pattern: str, base_path: str = "/") -> re.Pattern[str] | None:
+    """Compile a glob *pattern* into a regex for repeated matching.
+
+    Returns ``None`` if the pattern is malformed.  Use the returned
+    regex with ``regex.match(path) is not None`` to test individual
+    paths efficiently without recompiling.
+    """
+    base_path = normalize_path(base_path)
+
+    if pattern.startswith("/"):
+        full_pattern = pattern
+    elif base_path == "/":
+        full_pattern = "/" + pattern
+    else:
+        full_pattern = base_path + "/" + pattern
+
+    try:
+        return _glob_to_regex(full_pattern)
+    except re.error:
+        return None
+
+
+def match_glob(path: str, pattern: str, base_path: str = "/") -> bool:
+    """Authoritative glob match for a virtual path against *pattern*.
+
+    Handles ``*``, ``?``, ``[seq]``, and ``**`` (recursive).
+    Uses a regex translation that correctly prevents ``*`` from
+    crossing directory boundaries while allowing ``**`` to match
+    across any number of path segments.
+
+    For matching many paths against the same pattern, use
+    :func:`compile_glob` to avoid repeated regex compilation.
+    """
+    regex = compile_glob(pattern, base_path)
+    if regex is None:
+        return False
+    return regex.match(path) is not None
+
+
+# =============================================================================
 # Binary File Detection
 # =============================================================================
+
+
+def has_binary_extension(file_path: str) -> bool:
+    """Check if a virtual path has a known binary file extension."""
+    name = split_path(file_path)[1]
+    ext_suffix = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    return ext_suffix.lower() in BINARY_EXTENSIONS
 
 
 def is_binary_file(file_path: str | Path) -> bool:
@@ -224,10 +527,7 @@ def is_binary_file(file_path: str | Path) -> bool:
         if b"\x00" in chunk:
             return True
 
-        non_printable = sum(
-            1 for byte in chunk
-            if byte < 9 or (13 < byte < 32)
-        )
+        non_printable = sum(1 for byte in chunk if byte < 9 or (13 < byte < 32))
 
         return (non_printable / len(chunk)) > 0.3
 
@@ -609,10 +909,7 @@ def format_read_output(result: ReadResult) -> str:
     lines = result.content.split("\n")
     offset = result.offset
 
-    formatted_lines = [
-        f"{str(i + offset + 1).zfill(5)}| {line}"
-        for i, line in enumerate(lines)
-    ]
+    formatted_lines = [f"{str(i + offset + 1).zfill(5)}| {line}" for i, line in enumerate(lines)]
 
     formatted = "<file>\n"
     formatted += "\n".join(formatted_lines)

@@ -22,10 +22,13 @@ from grover.fs.types import (
     DeleteResult,
     EditResult,
     FileInfo,
+    GlobResult,
+    GrepResult,
     ListResult,
     MkdirResult,
     MoveResult,
     ReadResult,
+    TreeResult,
     WriteResult,
 )
 from grover.fs.vfs import VFS
@@ -112,6 +115,36 @@ class MinimalBackend:
             return WriteResult(success=False, message=f"Not found: {src}")
         self._files[dest] = content
         return WriteResult(success=True, message="OK", file_path=dest)
+
+    async def glob(
+        self, pattern: str, path: str = "/",
+        *, session: AsyncSession | None = None,
+    ) -> GlobResult:
+        return GlobResult(success=True, message="OK")
+
+    async def grep(
+        self, pattern: str, path: str = "/",
+        *,
+        glob_filter: str | None = None,
+        case_sensitive: bool = True,
+        fixed_string: bool = False,
+        invert: bool = False,
+        word_match: bool = False,
+        context_lines: int = 0,
+        max_results: int = 1000,
+        max_results_per_file: int = 0,
+        count_only: bool = False,
+        files_only: bool = False,
+        session: AsyncSession | None = None,
+    ) -> GrepResult:
+        return GrepResult(success=True, message="OK")
+
+    async def tree(
+        self, path: str = "/",
+        *, max_depth: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> TreeResult:
+        return TreeResult(success=True, message="OK")
 
     async def list_dir(
         self, path: str = "/",

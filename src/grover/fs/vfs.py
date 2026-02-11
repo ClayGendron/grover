@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover.events import EventBus, EventType, FileEvent
@@ -17,12 +16,16 @@ from .types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
+    GlobResult,
+    GrepMatch,
+    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
+    TreeResult,
     WriteResult,
 )
 from .utils import normalize_path
@@ -49,9 +52,7 @@ class VFS:
     Session lifecycle is per-operation only.  No transaction mode.
     """
 
-    def __init__(
-        self, registry: MountRegistry, event_bus: EventBus | None = None
-    ) -> None:
+    def __init__(self, registry: MountRegistry, event_bus: EventBus | None = None) -> None:
         self._registry = registry
         self._event_bus = event_bus
 
@@ -120,12 +121,10 @@ class VFS:
 
     def _prefix_file_info(self, info: FileInfo, mount: MountConfig) -> FileInfo:
         prefixed_path = self._prefix_path(info.path, mount.mount_path) or info.path
-        return dc_replace(
-            info,
-            path=prefixed_path,
-            mount_type=mount.mount_type,
-            permission=self._registry.get_permission(prefixed_path).value,
-        )
+        info.path = prefixed_path
+        info.mount_type = mount.mount_type
+        info.permission = self._registry.get_permission(prefixed_path).value
+        return info
 
     def _check_writable(self, virtual_path: str) -> None:
         perm = self._registry.get_permission(virtual_path)
@@ -137,7 +136,10 @@ class VFS:
     # ------------------------------------------------------------------
 
     async def read(
-        self, path: str, offset: int = 0, limit: int = 2000,
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
     ) -> ReadResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
@@ -157,9 +159,7 @@ class VFS:
             result = await mount.backend.list_dir(rel_path, session=sess)
 
         result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [
-            self._prefix_file_info(entry, mount) for entry in result.entries
-        ]
+        result.entries = [self._prefix_file_info(entry, mount) for entry in result.entries]
 
         return result
 
@@ -238,6 +238,190 @@ class VFS:
         return permission.value, is_override
 
     # ------------------------------------------------------------------
+    # Search / Query Operations
+    # ------------------------------------------------------------------
+
+    async def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        path = normalize_path(path)
+
+        if path == "/":
+            # Aggregate across all visible mounts (exclude hidden)
+            all_entries: list[FileInfo] = []
+            for mount in self._registry.list_visible_mounts():
+                async with self._session_for(mount) as sess:
+                    result = await mount.backend.glob(pattern, "/", session=sess)
+                if result.success:
+                    all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
+            return GlobResult(
+                success=True,
+                message=f"Found {len(all_entries)} match(es)",
+                entries=all_entries,
+                pattern=pattern,
+                path=path,
+            )
+
+        mount, rel_path = self._registry.resolve(path)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.glob(pattern, rel_path, session=sess)
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
+        result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
+        return result
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        glob_filter: str | None = None,
+        case_sensitive: bool = True,
+        fixed_string: bool = False,
+        invert: bool = False,
+        word_match: bool = False,
+        context_lines: int = 0,
+        max_results: int = 1000,
+        max_results_per_file: int = 0,
+        count_only: bool = False,
+        files_only: bool = False,
+    ) -> GrepResult:
+        path = normalize_path(path)
+        kwargs = {
+            "glob_filter": glob_filter,
+            "case_sensitive": case_sensitive,
+            "fixed_string": fixed_string,
+            "invert": invert,
+            "word_match": word_match,
+            "context_lines": context_lines,
+            "max_results": max_results,
+            "max_results_per_file": max_results_per_file,
+            "count_only": count_only,
+            "files_only": files_only,
+        }
+
+        if path == "/":
+            all_matches: list[GrepMatch] = []
+            total_searched = 0
+            total_matched = 0
+            truncated = False
+
+            # Don't pass count_only to backends — we need actual matches
+            # to aggregate correctly. We apply count_only at VFS level.
+            mount_kwargs_base = {**kwargs, "count_only": False}
+
+            for mount in self._registry.list_visible_mounts():
+                remaining = max_results - len(all_matches) if max_results > 0 else max_results
+                if max_results > 0 and remaining <= 0:
+                    truncated = True
+                    break
+                mount_kwargs = {**mount_kwargs_base, "max_results": remaining}
+                async with self._session_for(mount) as sess:
+                    result = await mount.backend.grep(
+                        pattern,
+                        "/",
+                        session=sess,
+                        **mount_kwargs,
+                    )
+                if result.success:
+                    for m in result.matches:
+                        prefixed = self._prefix_path(m.file_path, mount.mount_path)
+                        m.file_path = prefixed or m.file_path
+                    all_matches.extend(result.matches)
+                    total_searched += result.files_searched
+                    total_matched += result.files_matched
+                    if result.truncated:
+                        truncated = True
+
+            if count_only:
+                total = total_matched if files_only else len(all_matches)
+                return GrepResult(
+                    success=True,
+                    message=f"Count: {total}",
+                    matches=[],
+                    pattern=pattern,
+                    path=path,
+                    files_searched=total_searched,
+                    files_matched=total_matched,
+                    truncated=truncated,
+                )
+
+            return GrepResult(
+                success=True,
+                message=f"Found {len(all_matches)} match(es) in {total_matched} file(s)",
+                matches=all_matches,
+                pattern=pattern,
+                path=path,
+                files_searched=total_searched,
+                files_matched=total_matched,
+                truncated=truncated,
+            )
+
+        mount, rel_path = self._registry.resolve(path)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.grep(
+                pattern,
+                rel_path,
+                session=sess,
+                **kwargs,
+            )
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
+        for m in result.matches:
+            m.file_path = self._prefix_path(m.file_path, mount.mount_path) or m.file_path
+        return result
+
+    async def tree(self, path: str = "/", *, max_depth: int | None = None) -> TreeResult:
+        path = normalize_path(path)
+
+        if path == "/":
+            all_entries: list[FileInfo] = []
+            total_files = 0
+            total_dirs = 0
+
+            # Include mount roots themselves
+            for mount in self._registry.list_visible_mounts():
+                name = mount.mount_path.lstrip("/")
+                all_entries.append(
+                    FileInfo(
+                        path=mount.mount_path,
+                        name=name,
+                        is_directory=True,
+                        permission=mount.permission.value,
+                        mount_type=mount.mount_type,
+                    )
+                )
+                total_dirs += 1
+
+            # Backends count depth from their own root, so pass max_depth
+            # unchanged — the mount roots are added above at VFS level.
+            if max_depth is None or max_depth > 0:
+                for mount in self._registry.list_visible_mounts():
+                    async with self._session_for(mount) as sess:
+                        result = await mount.backend.tree(
+                            "/",
+                            max_depth=max_depth,
+                            session=sess,
+                        )
+                    if result.success:
+                        all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
+                        total_files += result.total_files
+                        total_dirs += result.total_dirs
+
+            all_entries.sort(key=lambda e: e.path)
+            return TreeResult(
+                success=True,
+                message=f"{total_dirs} directories, {total_files} files",
+                entries=all_entries,
+                path="/",
+                total_files=total_files,
+                total_dirs=total_dirs,
+            )
+
+        mount, rel_path = self._registry.resolve(path)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.tree(rel_path, max_depth=max_depth, session=sess)
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
+        result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
+        return result
+
+    # ------------------------------------------------------------------
     # Write Operations (permission-checked)
     # ------------------------------------------------------------------
 
@@ -288,13 +472,13 @@ class VFS:
             )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(
-                FileEvent(event_type=EventType.FILE_WRITTEN, path=path)
-            )
+            await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=path))
         return result
 
     async def delete(
-        self, path: str, permanent: bool = False,
+        self,
+        path: str,
+        permanent: bool = False,
     ) -> DeleteResult:
         path = normalize_path(path)
         try:
@@ -316,13 +500,13 @@ class VFS:
             result = await mount.backend.delete(rel_path, permanent, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(
-                FileEvent(event_type=EventType.FILE_DELETED, path=path)
-            )
+            await self._emit(FileEvent(event_type=EventType.FILE_DELETED, path=path))
         return result
 
     async def mkdir(
-        self, path: str, parents: bool = True,
+        self,
+        path: str,
+        parents: bool = True,
     ) -> MkdirResult:
         path = normalize_path(path)
         try:
@@ -340,7 +524,9 @@ class VFS:
         return result
 
     async def move(
-        self, src: str, dest: str,
+        self,
+        src: str,
+        dest: str,
     ) -> MoveResult:
         src = normalize_path(src)
         dest = normalize_path(dest)
@@ -402,9 +588,7 @@ class VFS:
                 message=f"Copied but failed to delete source: {delete_result.message}",
             )
 
-        await self._emit(
-            FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src)
-        )
+        await self._emit(FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src))
         return MoveResult(
             success=True,
             message=f"Moved {src} -> {dest} (cross-mount)",
@@ -413,7 +597,9 @@ class VFS:
         )
 
     async def copy(
-        self, src: str, dest: str,
+        self,
+        src: str,
+        dest: str,
     ) -> WriteResult:
         src = normalize_path(src)
         dest = normalize_path(dest)
@@ -431,9 +617,7 @@ class VFS:
                 result = await src_mount.backend.copy(src_rel, dest_rel, session=sess)
             result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
             if result.success:
-                await self._emit(
-                    FileEvent(event_type=EventType.FILE_WRITTEN, path=dest)
-                )
+                await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
             return result
 
         # Cross-mount copy: read → write
@@ -457,9 +641,7 @@ class VFS:
             )
         result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
         if result.success:
-            await self._emit(
-                FileEvent(event_type=EventType.FILE_WRITTEN, path=dest)
-            )
+            await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
         return result
 
     # ------------------------------------------------------------------
@@ -494,9 +676,7 @@ class VFS:
             result = await cap.restore_version(rel_path, version, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(
-                FileEvent(event_type=EventType.FILE_RESTORED, path=path)
-            )
+            await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
         return result
 
     async def get_version_content(self, path: str, version: int) -> GetVersionContentResult:
@@ -546,16 +726,12 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         cap = self._get_capability(mount.backend, SupportsTrash)
         if cap is None:
-            raise CapabilityNotSupportedError(
-                f"Mount at {mount.mount_path} does not support trash"
-            )
+            raise CapabilityNotSupportedError(f"Mount at {mount.mount_path} does not support trash")
         async with self._session_for(mount) as sess:
             result = await cap.restore_from_trash(rel_path, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(
-                FileEvent(event_type=EventType.FILE_RESTORED, path=path)
-            )
+            await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
         return result
 
     async def empty_trash(self) -> DeleteResult:

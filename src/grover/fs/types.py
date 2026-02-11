@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 @dataclass
 class FileInfo:
     """File/directory metadata."""
+
     path: str
     name: str
     is_directory: bool
@@ -27,6 +28,7 @@ class FileInfo:
 @dataclass
 class VersionInfo:
     """Version history entry."""
+
     version: int
     content_hash: str
     size_bytes: int
@@ -37,6 +39,7 @@ class VersionInfo:
 @dataclass
 class ReadResult:
     """Result of a read operation."""
+
     success: bool
     message: str
     content: str | None = None
@@ -50,6 +53,7 @@ class ReadResult:
 @dataclass
 class WriteResult:
     """Result of a write operation."""
+
     success: bool
     message: str
     file_path: str | None = None
@@ -60,6 +64,7 @@ class WriteResult:
 @dataclass
 class EditResult:
     """Result of an edit operation."""
+
     success: bool
     message: str
     file_path: str | None = None
@@ -69,6 +74,7 @@ class EditResult:
 @dataclass
 class DeleteResult:
     """Result of a delete operation."""
+
     success: bool
     message: str
     file_path: str | None = None
@@ -79,6 +85,7 @@ class DeleteResult:
 @dataclass
 class MkdirResult:
     """Result of a mkdir operation."""
+
     success: bool
     message: str
     path: str | None = None
@@ -88,6 +95,7 @@ class MkdirResult:
 @dataclass
 class ListResult:
     """Result of a list directory operation."""
+
     success: bool
     message: str
     entries: list[FileInfo] = field(default_factory=list)
@@ -97,6 +105,7 @@ class ListResult:
 @dataclass
 class MoveResult:
     """Result of a move operation."""
+
     success: bool
     message: str
     old_path: str | None = None
@@ -106,6 +115,7 @@ class MoveResult:
 @dataclass
 class RestoreResult:
     """Result of a restore operation."""
+
     success: bool
     message: str
     file_path: str | None = None
@@ -116,14 +126,64 @@ class RestoreResult:
 @dataclass
 class ListVersionsResult:
     """Result of a list_versions operation."""
+
     success: bool
     message: str
     versions: list[VersionInfo] = field(default_factory=list)
 
 
 @dataclass
+class GlobResult:
+    """Result of a glob operation."""
+
+    success: bool
+    message: str
+    entries: list[FileInfo] = field(default_factory=list)
+    pattern: str = ""
+    path: str = "/"
+
+
+@dataclass
+class GrepMatch:
+    """A single grep match within a file."""
+
+    file_path: str
+    line_number: int  # 1-indexed
+    line_content: str
+    context_before: list[str] = field(default_factory=list)
+    context_after: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GrepResult:
+    """Result of a grep operation."""
+
+    success: bool
+    message: str
+    matches: list[GrepMatch] = field(default_factory=list)
+    pattern: str = ""
+    path: str = "/"
+    files_searched: int = 0
+    files_matched: int = 0
+    truncated: bool = False
+
+
+@dataclass
+class TreeResult:
+    """Result of a tree operation."""
+
+    success: bool
+    message: str
+    entries: list[FileInfo] = field(default_factory=list)
+    path: str = "/"
+    total_files: int = 0
+    total_dirs: int = 0
+
+
+@dataclass
 class GetVersionContentResult:
     """Result of a get_version_content operation."""
+
     success: bool
     message: str
     content: str | None = None

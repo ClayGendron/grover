@@ -151,7 +151,11 @@ async def write_file(
         old_content = await read_content(path, session)
         if old_content is not None:
             await versioning.save_version(
-                session, existing, old_content, content, created_by,
+                session,
+                existing,
+                old_content,
+                content,
+                created_by,
             )
 
         # Write content first, then flush. If disk write fails the
@@ -176,7 +180,11 @@ async def write_file(
 
         # Save initial snapshot (version 1)
         await versioning.save_version(
-            session, new_file, "", content, created_by,
+            session,
+            new_file,
+            "",
+            content,
+            created_by,
         )
 
         # Write content first, then flush — see comment above.
@@ -397,7 +405,11 @@ async def move_file(
 
         # Save version for dest
         await versioning.save_version(
-            session, dest_file, old_dest_content, content, "move",
+            session,
+            dest_file,
+            old_dest_content,
+            content,
+            "move",
         )
 
         # Write content to dest storage
@@ -438,7 +450,7 @@ async def move_file(
 
         for desc in children:
             old_paths.append(desc.path)
-            new_path = dest + desc.path[len(src):]
+            new_path = dest + desc.path[len(src) :]
             content = await read_content(desc.path, session)
             if content is not None:
                 await write_content(new_path, content, session)

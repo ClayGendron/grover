@@ -16,9 +16,12 @@ from grover.fs.types import (
     DeleteResult,
     EditResult,
     GetVersionContentResult,
+    GlobResult,
+    GrepResult,
     ListVersionsResult,
     ReadResult,
     RestoreResult,
+    TreeResult,
     WriteResult,
 )
 from grover.fs.vfs import VFS
@@ -93,17 +96,13 @@ class GroverAsync:
 
                 self._search_index = SearchIndex(SentenceTransformerProvider())
             except Exception:
-                logger.debug(
-                    "No embedding provider available; search disabled"
-                )
+                logger.debug("No embedding provider available; search disabled")
 
         # Register event handlers
         self._event_bus.register(EventType.FILE_WRITTEN, self._on_file_written)
         self._event_bus.register(EventType.FILE_DELETED, self._on_file_deleted)
         self._event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
-        self._event_bus.register(
-            EventType.FILE_RESTORED, self._on_file_restored
-        )
+        self._event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
 
     # ------------------------------------------------------------------
     # Mount / Unmount
@@ -172,9 +171,7 @@ class GroverAsync:
             )
         else:
             if backend is None:
-                raise ValueError(
-                    "Provide backend, engine, or session_factory"
-                )
+                raise ValueError("Provide backend, engine, or session_factory")
             # Auto-detect mount type
             if mount_type is None:
                 mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
@@ -229,10 +226,7 @@ class GroverAsync:
 
         # Clean graph nodes and search entries with this mount prefix
         prefix = path + "/"
-        nodes_to_remove = [
-            n for n in self._graph.nodes()
-            if n == path or n.startswith(prefix)
-        ]
+        nodes_to_remove = [n for n in self._graph.nodes() if n == path or n.startswith(prefix)]
         for node in nodes_to_remove:
             if self._graph.has_node(node):
                 self._graph.remove_file_subgraph(node)
@@ -321,9 +315,7 @@ class GroverAsync:
                 try:
                     self._search_index.load(str(search_dir))
                 except Exception:
-                    logger.debug(
-                        "Failed to load search index", exc_info=True
-                    )
+                    logger.debug("Failed to load search index", exc_info=True)
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -377,9 +369,7 @@ class GroverAsync:
     # Core pipeline
     # ------------------------------------------------------------------
 
-    async def _analyze_and_integrate(
-        self, path: str, content: str
-    ) -> dict[str, int]:
+    async def _analyze_and_integrate(self, path: str, content: str) -> dict[str, int]:
         stats = {"chunks_created": 0, "edges_added": 0}
 
         if self._graph.has_node(path):
@@ -408,9 +398,7 @@ class GroverAsync:
 
             for edge in edges:
                 meta: dict[str, Any] = dict(edge.metadata)
-                self._graph.add_edge(
-                    edge.source, edge.target, edge.edge_type, **meta
-                )
+                self._graph.add_edge(edge.source, edge.target, edge.edge_type, **meta)
                 stats["edges_added"] += 1
 
             if self._search_index is not None:
@@ -453,12 +441,65 @@ class GroverAsync:
     async def list_dir(self, path: str = "/") -> list[dict[str, Any]]:
         result = await self._vfs.list_dir(path)
         return [
-            {"path": e.path, "name": e.name, "is_directory": e.is_directory}
-            for e in result.entries
+            {"path": e.path, "name": e.name, "is_directory": e.is_directory} for e in result.entries
         ]
 
     async def exists(self, path: str) -> bool:
         return await self._vfs.exists(path)
+
+    # ------------------------------------------------------------------
+    # Search / Query operations
+    # ------------------------------------------------------------------
+
+    async def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        try:
+            return await self._vfs.glob(pattern, path)
+        except Exception as e:
+            return GlobResult(
+                success=False, message=f"Glob failed: {e}", pattern=pattern, path=path
+            )
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        glob_filter: str | None = None,
+        case_sensitive: bool = True,
+        fixed_string: bool = False,
+        invert: bool = False,
+        word_match: bool = False,
+        context_lines: int = 0,
+        max_results: int = 1000,
+        max_results_per_file: int = 0,
+        count_only: bool = False,
+        files_only: bool = False,
+    ) -> GrepResult:
+        try:
+            return await self._vfs.grep(
+                pattern,
+                path,
+                glob_filter=glob_filter,
+                case_sensitive=case_sensitive,
+                fixed_string=fixed_string,
+                invert=invert,
+                word_match=word_match,
+                context_lines=context_lines,
+                max_results=max_results,
+                max_results_per_file=max_results_per_file,
+                count_only=count_only,
+                files_only=files_only,
+            )
+        except Exception as e:
+            return GrepResult(
+                success=False, message=f"Grep failed: {e}", pattern=pattern, path=path
+            )
+
+    async def tree(self, path: str = "/", *, max_depth: int | None = None) -> TreeResult:
+        try:
+            return await self._vfs.tree(path, max_depth=max_depth)
+        except Exception as e:
+            return TreeResult(success=False, message=f"Tree failed: {e}", path=path)
 
     # ------------------------------------------------------------------
     # Version operations (normalize exceptions to Results)
@@ -553,9 +594,7 @@ class GroverAsync:
         await self._async_save()
         return stats
 
-    async def _walk_and_index(
-        self, path: str, stats: dict[str, int]
-    ) -> None:
+    async def _walk_and_index(self, path: str, stats: dict[str, int]) -> None:
         result = await self._vfs.list_dir(path)
         if not result.success:
             return
@@ -569,9 +608,7 @@ class GroverAsync:
                 content = await self._read_file_content(entry.path)
                 if content is None:
                     continue
-                file_stats = await self._analyze_and_integrate(
-                    entry.path, content
-                )
+                file_stats = await self._analyze_and_integrate(entry.path, content)
                 stats["files_scanned"] += 1
                 stats["chunks_created"] += file_stats["chunks_created"]
                 stats["edges_added"] += file_stats["edges_added"]

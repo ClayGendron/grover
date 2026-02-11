@@ -23,12 +23,15 @@ if TYPE_CHECKING:
         EditResult,
         FileInfo,
         GetVersionContentResult,
+        GlobResult,
+        GrepResult,
         ListResult,
         ListVersionsResult,
         MkdirResult,
         MoveResult,
         ReadResult,
         RestoreResult,
+        TreeResult,
         WriteResult,
     )
 
@@ -58,23 +61,33 @@ class StorageBackend(Protocol):
     # ------------------------------------------------------------------
 
     async def read(
-        self, path: str, offset: int = 0, limit: int = 2000,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
+        *,
+        session: AsyncSession | None = None,
     ) -> ReadResult: ...
 
     async def list_dir(
-        self, path: str = "/",
-        *, session: AsyncSession | None = None,
+        self,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
     ) -> ListResult: ...
 
     async def exists(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> bool: ...
 
     async def get_info(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> FileInfo | None: ...
 
     # ------------------------------------------------------------------
@@ -82,36 +95,95 @@ class StorageBackend(Protocol):
     # ------------------------------------------------------------------
 
     async def write(
-        self, path: str, content: str, created_by: str = "agent",
-        *, overwrite: bool = True,
+        self,
+        path: str,
+        content: str,
+        created_by: str = "agent",
+        *,
+        overwrite: bool = True,
         session: AsyncSession | None = None,
     ) -> WriteResult: ...
 
     async def edit(
-        self, path: str, old_string: str, new_string: str,
-        replace_all: bool = False, created_by: str = "agent",
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        created_by: str = "agent",
+        *,
+        session: AsyncSession | None = None,
     ) -> EditResult: ...
 
     async def delete(
-        self, path: str, permanent: bool = False,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        permanent: bool = False,
+        *,
+        session: AsyncSession | None = None,
     ) -> DeleteResult: ...
 
     async def mkdir(
-        self, path: str, parents: bool = True,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        parents: bool = True,
+        *,
+        session: AsyncSession | None = None,
     ) -> MkdirResult: ...
 
     async def move(
-        self, src: str, dest: str,
-        *, session: AsyncSession | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> MoveResult: ...
 
     async def copy(
-        self, src: str, dest: str,
-        *, session: AsyncSession | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> WriteResult: ...
+
+    # ------------------------------------------------------------------
+    # Search / Query
+    # ------------------------------------------------------------------
+
+    async def glob(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
+    ) -> GlobResult: ...
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        glob_filter: str | None = None,
+        case_sensitive: bool = True,
+        fixed_string: bool = False,
+        invert: bool = False,
+        word_match: bool = False,
+        context_lines: int = 0,
+        max_results: int = 1000,
+        max_results_per_file: int = 0,
+        count_only: bool = False,
+        files_only: bool = False,
+        session: AsyncSession | None = None,
+    ) -> GrepResult: ...
+
+    async def tree(
+        self,
+        path: str = "/",
+        *,
+        max_depth: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> TreeResult: ...
 
 
 @runtime_checkable
@@ -119,18 +191,26 @@ class SupportsVersions(Protocol):
     """Opt-in: version listing, content retrieval, restore."""
 
     async def list_versions(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> ListVersionsResult: ...
 
     async def get_version_content(
-        self, path: str, version: int,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        version: int,
+        *,
+        session: AsyncSession | None = None,
     ) -> GetVersionContentResult: ...
 
     async def restore_version(
-        self, path: str, version: int,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        version: int,
+        *,
+        session: AsyncSession | None = None,
     ) -> RestoreResult: ...
 
 
@@ -139,16 +219,22 @@ class SupportsTrash(Protocol):
     """Opt-in: soft-delete trash management."""
 
     async def list_trash(
-        self, *, session: AsyncSession | None = None,
+        self,
+        *,
+        session: AsyncSession | None = None,
     ) -> ListResult: ...
 
     async def restore_from_trash(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> RestoreResult: ...
 
     async def empty_trash(
-        self, *, session: AsyncSession | None = None,
+        self,
+        *,
+        session: AsyncSession | None = None,
     ) -> DeleteResult: ...
 
 
@@ -157,5 +243,7 @@ class SupportsReconcile(Protocol):
     """Opt-in: disk ↔ DB reconciliation."""
 
     async def reconcile(
-        self, *, session: AsyncSession | None = None,
+        self,
+        *,
+        session: AsyncSession | None = None,
     ) -> dict[str, int]: ...

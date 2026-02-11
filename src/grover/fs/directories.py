@@ -45,7 +45,7 @@ class DirectoryService:
                 continue
 
             dir_name = parts[i - 1]
-            parent = "/".join(parts[:i - 1]) or "/"
+            parent = "/".join(parts[: i - 1]) or "/"
             await upsert_file(
                 session,
                 self.dialect,

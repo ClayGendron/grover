@@ -21,8 +21,8 @@ GroverAsync(*, data_dir=None, embedding_provider=None)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `data_dir` | `str \| Path \| None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. |
-| `embedding_provider` | `EmbeddingProvider \| None` | Custom embedding provider for search. Falls back to `SentenceTransformerProvider` if the `search` extra is installed. Search is disabled if neither is available. |
+| `data_dir` | `str | Path | None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. |
+| `embedding_provider` | `EmbeddingProvider | None` | Custom embedding provider for search. Falls back to `SentenceTransformerProvider` if the `search` extra is installed. Search is disabled if neither is available. |
 
 ### Mount / Unmount
 
@@ -43,14 +43,14 @@ Mount a storage backend at a virtual path. You can pass either:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `path` | `str` | required | Virtual mount path (e.g., `"/project"`) |
-| `backend` | `StorageBackend \| None` | `None` | Pre-created backend instance |
-| `engine` | `AsyncEngine \| None` | `None` | SQLAlchemy async engine (creates DatabaseFileSystem) |
-| `session_factory` | `Callable[..., AsyncSession] \| None` | `None` | Custom session factory |
+| `backend` | `StorageBackend | None` | `None` | Pre-created backend instance |
+| `engine` | `AsyncEngine | None` | `None` | SQLAlchemy async engine (creates DatabaseFileSystem) |
+| `session_factory` | `Callable[..., AsyncSession] | None` | `None` | Custom session factory |
 | `dialect` | `str` | `"sqlite"` | Database dialect (`"sqlite"`, `"postgresql"`, `"mssql"`) |
-| `file_model` | `type \| None` | `None` | Custom SQLModel file table class |
-| `file_version_model` | `type \| None` | `None` | Custom SQLModel file version table class |
-| `db_schema` | `str \| None` | `None` | Database schema name |
-| `mount_type` | `str \| None` | `None` | Mount type label (auto-detected if `None`) |
+| `file_model` | `type | None` | `None` | Custom SQLModel file table class |
+| `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
+| `db_schema` | `str | None` | `None` | Database schema name |
+| `mount_type` | `str | None` | `None` | Mount type label (auto-detected if `None`) |
 | `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |
 | `label` | `str` | `""` | Human-readable mount label |
 | `hidden` | `bool` | `False` | Hidden mounts are excluded from listing and indexing |
@@ -74,6 +74,37 @@ g.exists(path) -> bool
 | `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
 | `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. |
 | `exists(path)` | Check if a path exists. Returns `bool`. |
+
+### Search / Query
+
+```python
+g.glob(pattern, path="/") -> GlobResult
+g.grep(pattern, path="/", *, ...) -> GrepResult
+g.tree(path="/", *, max_depth=None) -> TreeResult
+```
+
+| Method | Description |
+|--------|-------------|
+| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `entries` (list of `FileInfo`). |
+| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepResult` with `matches` (list of `GrepMatch`). |
+| `tree(path, max_depth)` | List all entries recursively. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
+
+**grep options:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `pattern` | `str` | required | Regex pattern (or literal if `fixed_string=True`) |
+| `path` | `str` | `"/"` | Directory or file to search |
+| `glob_filter` | `str \| None` | `None` | Only search files matching this glob pattern |
+| `case_sensitive` | `bool` | `True` | Case-sensitive matching |
+| `fixed_string` | `bool` | `False` | Treat pattern as literal string, not regex |
+| `invert` | `bool` | `False` | Return non-matching lines |
+| `word_match` | `bool` | `False` | Match whole words only (`\b` boundaries) |
+| `context_lines` | `int` | `0` | Lines of context before/after each match |
+| `max_results` | `int` | `1000` | Maximum matches returned (0 = unlimited) |
+| `max_results_per_file` | `int` | `0` | Maximum matches per file (0 = unlimited) |
+| `count_only` | `bool` | `False` | Return count in message, no match details |
+| `files_only` | `bool` | `False` | One match per file (file listing mode) |
 
 ### Versioning
 
@@ -210,6 +241,7 @@ from grover.fs import (
     ReadResult, WriteResult, EditResult, DeleteResult,
     ListResult, MoveResult, RestoreResult,
     ListVersionsResult, GetVersionContentResult,
+    GlobResult, GrepResult, GrepMatch, TreeResult,
     FileInfo, VersionInfo,
 )
 ```
@@ -226,6 +258,10 @@ Every result has a `success: bool` and `message: str` field. Check `success` to 
 | `RestoreResult` | `file_path`, `restored_version`, `current_version` |
 | `ListVersionsResult` | `versions` (list of `VersionInfo`) |
 | `GetVersionContentResult` | `content` |
+| `GlobResult` | `entries` (list of `FileInfo`), `pattern`, `path` |
+| `GrepResult` | `matches` (list of `GrepMatch`), `pattern`, `path`, `files_searched`, `files_matched`, `truncated` |
+| `GrepMatch` | `file_path`, `line_number`, `line_content`, `context_before`, `context_after` |
+| `TreeResult` | `entries` (list of `FileInfo`), `path`, `total_files`, `total_dirs` |
 | `FileInfo` | `path`, `name`, `is_directory`, `size_bytes`, `mime_type`, `version` |
 | `VersionInfo` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
 
@@ -282,7 +318,7 @@ Permission.READ_ONLY   # Reads and listings only
 
 | Protocol | Methods |
 |----------|---------|
-| `StorageBackend` | `open`, `close`, `read`, `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `list_dir`, `exists`, `get_info` |
+| `StorageBackend` | `open`, `close`, `read`, `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `list_dir`, `exists`, `get_info`, `glob`, `grep`, `tree` |
 | `SupportsVersions` | `list_versions`, `get_version_content`, `restore_version` |
 | `SupportsTrash` | `list_trash`, `restore_from_trash`, `empty_trash` |
 | `SupportsReconcile` | `reconcile` |

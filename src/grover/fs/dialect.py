@@ -52,10 +52,21 @@ async def upsert_file(
 
     if dialect == "mssql":
         return await _upsert_mssql(
-            session, values, conflict_keys, model, schema, update_keys,
+            session,
+            values,
+            conflict_keys,
+            model,
+            schema,
+            update_keys,
         )
     return await _upsert_sqlite_pg(
-        session, dialect, values, conflict_keys, model, schema, update_keys,
+        session,
+        dialect,
+        values,
+        conflict_keys,
+        model,
+        schema,
+        update_keys,
     )
 
 
@@ -116,17 +127,13 @@ async def _upsert_mssql(
     insert_cols = ", ".join(values.keys())
     insert_vals = ", ".join(f":{k}" for k in values)
     if update_keys is not None:
-        update_set = ", ".join(
-            f"target.{k} = :{k}" for k in values if k in update_keys
-        )
+        update_set = ", ".join(f"target.{k} = :{k}" for k in values if k in update_keys)
     else:
-        update_set = ", ".join(
-            f"target.{k} = :{k}" for k in values if k not in conflict_keys
-        )
+        update_set = ", ".join(f"target.{k} = :{k}" for k in values if k not in conflict_keys)
 
     merge_sql = f"""
         MERGE INTO {table_name} WITH (HOLDLOCK) AS target
-        USING (SELECT {', '.join(f':{k} AS {k}' for k in conflict_keys)}) AS source
+        USING (SELECT {", ".join(f":{k} AS {k}" for k in conflict_keys)}) AS source
         ON {on_clause}
         WHEN NOT MATCHED THEN
             INSERT ({insert_cols})

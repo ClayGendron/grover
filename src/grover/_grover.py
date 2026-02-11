@@ -14,7 +14,15 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover.fs.types import DeleteResult, EditResult, ReadResult, WriteResult
+    from grover.fs.types import (
+        DeleteResult,
+        EditResult,
+        GlobResult,
+        GrepResult,
+        ReadResult,
+        TreeResult,
+        WriteResult,
+    )
     from grover.fs.vfs import VFS
     from grover.graph._graph import Graph
     from grover.ref import Ref
@@ -47,9 +55,7 @@ class Grover:
 
         # Private event loop in a daemon thread
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._loop.run_forever, daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
 
         self._async = GroverAsync(
@@ -152,6 +158,52 @@ class Grover:
     def exists(self, path: str) -> bool:
         """Check whether *path* exists."""
         return self._run(self._async.exists(path))
+
+    # ------------------------------------------------------------------
+    # Search / Query wrappers (sync)
+    # ------------------------------------------------------------------
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        """Find files matching a glob *pattern* under *path*."""
+        return self._run(self._async.glob(pattern, path))
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        glob_filter: str | None = None,
+        case_sensitive: bool = True,
+        fixed_string: bool = False,
+        invert: bool = False,
+        word_match: bool = False,
+        context_lines: int = 0,
+        max_results: int = 1000,
+        max_results_per_file: int = 0,
+        count_only: bool = False,
+        files_only: bool = False,
+    ) -> GrepResult:
+        """Search file contents for *pattern* under *path*."""
+        return self._run(
+            self._async.grep(
+                pattern,
+                path,
+                glob_filter=glob_filter,
+                case_sensitive=case_sensitive,
+                fixed_string=fixed_string,
+                invert=invert,
+                word_match=word_match,
+                context_lines=context_lines,
+                max_results=max_results,
+                max_results_per_file=max_results_per_file,
+                count_only=count_only,
+                files_only=files_only,
+            )
+        )
+
+    def tree(self, path: str = "/", *, max_depth: int | None = None) -> TreeResult:
+        """List all entries under *path* recursively."""
+        return self._run(self._async.tree(path, max_depth=max_depth))
 
     # ------------------------------------------------------------------
     # Version / Trash / Reconciliation wrappers (sync)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -30,15 +31,27 @@ from .types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
+    GlobResult,
+    GrepMatch,
+    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
+    TreeResult,
     WriteResult,
 )
-from .utils import get_similar_files, is_binary_file, normalize_path, validate_path
+from .utils import (
+    compile_glob,
+    get_similar_files,
+    has_binary_extension,
+    is_binary_file,
+    normalize_path,
+    split_path,
+    validate_path,
+)
 from .versioning import VersioningService
 
 if TYPE_CHECKING:
@@ -143,7 +156,8 @@ class LocalFileSystem:
                 result = cursor.fetchone()
                 if result[0].lower() != "wal":
                     logging.getLogger(__name__).warning(
-                        "WAL mode not active, got: %s", result[0],
+                        "WAL mode not active, got: %s",
+                        result[0],
                     )
                 cursor.execute("PRAGMA busy_timeout=5000")
                 cursor.execute("PRAGMA synchronous=FULL")
@@ -290,8 +304,12 @@ class LocalFileSystem:
     # ------------------------------------------------------------------
 
     async def read(
-        self, path: str, offset: int = 0, limit: int = 2000,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
+        *,
+        session: AsyncSession | None = None,
     ) -> ReadResult:
         """Read file with binary check and similar file suggestions."""
         sess = self._require_session(session)
@@ -336,13 +354,21 @@ class LocalFileSystem:
         return MetadataService.paginate_content(content, path, offset, limit)
 
     async def write(
-        self, path: str, content: str, created_by: str = "agent",
-        *, overwrite: bool = True,
+        self,
+        path: str,
+        content: str,
+        created_by: str = "agent",
+        *,
+        overwrite: bool = True,
         session: AsyncSession | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await write_file(
-            path, content, created_by, overwrite, sess,
+            path,
+            content,
+            created_by,
+            overwrite,
+            sess,
             metadata=self.metadata,
             versioning=self.versioning,
             directories=self.directories,
@@ -352,13 +378,23 @@ class LocalFileSystem:
         )
 
     async def edit(
-        self, path: str, old_string: str, new_string: str,
-        replace_all: bool = False, created_by: str = "agent",
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        created_by: str = "agent",
+        *,
+        session: AsyncSession | None = None,
     ) -> EditResult:
         sess = self._require_session(session)
         return await edit_file(
-            path, old_string, new_string, replace_all, created_by, sess,
+            path,
+            old_string,
+            new_string,
+            replace_all,
+            created_by,
+            sess,
             metadata=self.metadata,
             versioning=self.versioning,
             read_content=self._read_content,
@@ -366,8 +402,11 @@ class LocalFileSystem:
         )
 
     async def delete(
-        self, path: str, permanent: bool = False,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        permanent: bool = False,
+        *,
+        session: AsyncSession | None = None,
     ) -> DeleteResult:
         """Delete file, backing up content to the database first.
 
@@ -386,7 +425,11 @@ class LocalFileSystem:
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
                 await write_file(
-                    norm, content, "backup", True, sess,
+                    norm,
+                    content,
+                    "backup",
+                    True,
+                    sess,
                     metadata=self.metadata,
                     versioning=self.versioning,
                     directories=self.directories,
@@ -396,7 +439,9 @@ class LocalFileSystem:
                 )
 
         result = await delete_file(
-            norm, permanent, sess,
+            norm,
+            permanent,
+            sess,
             metadata=self.metadata,
             versioning=self.versioning,
             file_model=self._file_model,
@@ -410,13 +455,19 @@ class LocalFileSystem:
         return result
 
     async def mkdir(
-        self, path: str, parents: bool = True,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        parents: bool = True,
+        *,
+        session: AsyncSession | None = None,
     ) -> MkdirResult:
         """Create directory in database and on disk."""
         sess = self._require_session(session)
         created_dirs, error = await self.directories.mkdir(
-            sess, path, parents, self.metadata.get_file,
+            sess,
+            path,
+            parents,
+            self.metadata.get_file,
         )
         if error is not None:
             return MkdirResult(success=False, message=error)
@@ -440,8 +491,10 @@ class LocalFileSystem:
         )
 
     async def list_dir(
-        self, path: str = "/",
-        *, session: AsyncSession | None = None,
+        self,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
     ) -> ListResult:
         """List directory, including files only on disk."""
         sess = self._require_session(session)
@@ -502,26 +555,35 @@ class LocalFileSystem:
         )
 
     async def exists(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> bool:
         sess = self._require_session(session)
         return await self.metadata.exists(sess, path)
 
     async def get_info(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> FileInfo | None:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
 
     async def move(
-        self, src: str, dest: str,
-        *, session: AsyncSession | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> MoveResult:
         sess = self._require_session(session)
         return await move_file(
-            src, dest, sess,
+            src,
+            dest,
+            sess,
             metadata=self.metadata,
             versioning=self.versioning,
             file_model=self._file_model,
@@ -531,15 +593,438 @@ class LocalFileSystem:
         )
 
     async def copy(
-        self, src: str, dest: str,
-        *, session: AsyncSession | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await copy_file(
-            src, dest, sess,
+            src,
+            dest,
+            sess,
             metadata=self.metadata,
             read_content=self._read_content,
             write_fn=self.write,
+        )
+
+    # ------------------------------------------------------------------
+    # Search / Query Operations
+    # ------------------------------------------------------------------
+
+    async def glob(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
+    ) -> GlobResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+
+        if not pattern:
+            return GlobResult(
+                success=False,
+                message="Empty glob pattern",
+                pattern=pattern,
+                path=path,
+            )
+
+        try:
+            actual_path = await self._resolve_path(path)
+        except PermissionError as e:
+            return GlobResult(
+                success=False,
+                message=str(e),
+                pattern=pattern,
+                path=path,
+            )
+
+        exists = await asyncio.to_thread(actual_path.exists)
+        if not exists:
+            return GlobResult(
+                success=False,
+                message=f"Directory not found: {path}",
+                pattern=pattern,
+                path=path,
+            )
+
+        is_dir = await asyncio.to_thread(actual_path.is_dir)
+        if not is_dir:
+            return GlobResult(
+                success=False,
+                message=f"Not a directory: {path}",
+                pattern=pattern,
+                path=path,
+            )
+
+        glob_regex = compile_glob(pattern, path)
+
+        def _collect_and_match() -> list[tuple[Path, str, bool, int | None]]:
+            """Walk disk, filter with compiled glob regex."""
+            if glob_regex is None:
+                return []
+            results: list[tuple[Path, str, bool, int | None]] = []
+            for root, dirs, files in os.walk(actual_path):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for name in dirs:
+                    full = Path(root) / name
+                    try:
+                        vp = self._to_virtual_path(full)
+                    except (ValueError, PermissionError):
+                        continue
+                    if glob_regex.match(vp) is not None:
+                        results.append((full, vp, True, None))
+                for name in files:
+                    if name.startswith("."):
+                        continue
+                    full = Path(root) / name
+                    try:
+                        vp = self._to_virtual_path(full)
+                    except (ValueError, PermissionError):
+                        continue
+                    if glob_regex.match(vp) is not None:
+                        try:
+                            sz = full.stat().st_size
+                        except OSError:
+                            sz = None
+                        results.append((full, vp, False, sz))
+            return results
+
+        matched = await asyncio.to_thread(_collect_and_match)
+
+        # Batch metadata lookup
+        vpaths = [vp for _, vp, _, _ in matched]
+        model = self._file_model
+        if vpaths:
+            db_result = await sess.execute(
+                select(model).where(model.path.in_(vpaths))  # type: ignore[union-attr]
+            )
+            file_map = {f.path: f for f in db_result.scalars().all()}
+        else:
+            file_map = {}
+
+        entries: list[FileInfo] = []
+        for p, vpath, is_d, size in matched:
+            file = file_map.get(vpath)
+            entries.append(
+                FileInfo(
+                    path=vpath,
+                    name=p.name,
+                    is_directory=is_d,
+                    size_bytes=file.size_bytes if file else size,
+                    mime_type=file.mime_type if file else None,
+                    version=file.current_version if file else 1,
+                    created_at=file.created_at if file else None,
+                    updated_at=file.updated_at if file else None,
+                )
+            )
+
+        return GlobResult(
+            success=True,
+            message=f"Found {len(entries)} match(es)",
+            entries=entries,
+            pattern=pattern,
+            path=path,
+        )
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        glob_filter: str | None = None,
+        case_sensitive: bool = True,
+        fixed_string: bool = False,
+        invert: bool = False,
+        word_match: bool = False,
+        context_lines: int = 0,
+        max_results: int = 1000,
+        max_results_per_file: int = 0,
+        count_only: bool = False,
+        files_only: bool = False,
+        session: AsyncSession | None = None,
+    ) -> GrepResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        context_lines = max(0, context_lines)
+
+        # Compile regex
+        try:
+            regex_pattern = re.escape(pattern) if fixed_string else pattern
+            if word_match:
+                regex_pattern = r"\b" + regex_pattern + r"\b"
+            flags = 0 if case_sensitive else re.IGNORECASE
+            regex = re.compile(regex_pattern, flags)
+        except re.error as e:
+            return GrepResult(
+                success=False,
+                message=f"Invalid regex: {e}",
+                pattern=pattern,
+                path=path,
+            )
+
+        # Get candidate files
+        if glob_filter:
+            glob_result = await self.glob(glob_filter, path, session=sess)
+            if not glob_result.success:
+                return GrepResult(
+                    success=False,
+                    message=glob_result.message,
+                    pattern=pattern,
+                    path=path,
+                )
+            candidate_vpaths = [e.path for e in glob_result.entries if not e.is_directory]
+        else:
+            try:
+                actual_path = await self._resolve_path(path)
+            except PermissionError as e:
+                return GrepResult(
+                    success=False,
+                    message=str(e),
+                    pattern=pattern,
+                    path=path,
+                )
+
+            # Check if path exists
+            exists = await asyncio.to_thread(actual_path.exists)
+            if not exists:
+                return GrepResult(
+                    success=False,
+                    message=f"Path not found: {path}",
+                    pattern=pattern,
+                    path=path,
+                )
+
+            # Check if path is a file (not a directory)
+            is_file = await asyncio.to_thread(actual_path.is_file)
+            if is_file:
+                candidate_vpaths = [path]
+            else:
+
+                def _collect_files() -> list[str]:
+                    vpaths = []
+                    for root, dirs, files in os.walk(actual_path):
+                        dirs[:] = [d for d in dirs if not d.startswith(".")]
+                        for name in files:
+                            if name.startswith("."):
+                                continue
+                            full = Path(root) / name
+                            try:
+                                vp = self._to_virtual_path(full)
+                                vpaths.append(vp)
+                            except (ValueError, PermissionError):
+                                continue
+                    return vpaths
+
+                candidate_vpaths = await asyncio.to_thread(_collect_files)
+
+        matches: list[GrepMatch] = []
+        files_searched = 0
+        files_matched = 0
+        truncated = False
+
+        for file_path in candidate_vpaths:
+            if has_binary_extension(file_path):
+                continue
+
+            # Also check content-based binary detection and file size on disk
+            try:
+                actual = await self._resolve_path(file_path)
+                stat = await asyncio.to_thread(actual.stat)
+                # Skip files larger than 10 MB
+                if stat.st_size > 10 * 1024 * 1024:
+                    continue
+                if await asyncio.to_thread(is_binary_file, actual):
+                    continue
+            except (PermissionError, ValueError, OSError):
+                continue
+
+            content = await self._read_content(file_path, sess)
+            if content is None:
+                continue
+
+            files_searched += 1
+            lines = content.split("\n")
+            file_matches: list[GrepMatch] = []
+
+            for i, line in enumerate(lines):
+                has_match = regex.search(line) is not None
+                if invert:
+                    has_match = not has_match
+
+                if has_match:
+                    ctx_before = []
+                    ctx_after = []
+                    if context_lines > 0:
+                        start = max(0, i - context_lines)
+                        ctx_before = lines[start:i]
+                        end = min(len(lines), i + context_lines + 1)
+                        ctx_after = lines[i + 1 : end]
+
+                    file_matches.append(
+                        GrepMatch(
+                            file_path=file_path,
+                            line_number=i + 1,
+                            line_content=line,
+                            context_before=ctx_before,
+                            context_after=ctx_after,
+                        )
+                    )
+
+                    if max_results_per_file > 0 and len(file_matches) >= max_results_per_file:
+                        break
+
+            if file_matches:
+                files_matched += 1
+                if files_only:
+                    matches.append(file_matches[0])
+                else:
+                    matches.extend(file_matches)
+
+                if max_results > 0 and len(matches) >= max_results:
+                    truncated = True
+                    matches = matches[:max_results]
+                    break
+
+        if count_only:
+            total = files_matched if files_only else len(matches)
+            return GrepResult(
+                success=True,
+                message=f"Count: {total}",
+                matches=[],
+                pattern=pattern,
+                path=path,
+                files_searched=files_searched,
+                files_matched=files_matched,
+                truncated=truncated,
+            )
+
+        return GrepResult(
+            success=True,
+            message=f"Found {len(matches)} match(es) in {files_matched} file(s)",
+            matches=matches,
+            pattern=pattern,
+            path=path,
+            files_searched=files_searched,
+            files_matched=files_matched,
+            truncated=truncated,
+        )
+
+    async def tree(
+        self,
+        path: str = "/",
+        *,
+        max_depth: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> TreeResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+
+        try:
+            actual_path = await self._resolve_path(path)
+        except PermissionError as e:
+            return TreeResult(success=False, message=str(e), path=path)
+
+        exists = await asyncio.to_thread(actual_path.exists)
+        if not exists:
+            return TreeResult(
+                success=False,
+                message=f"Directory not found: {path}",
+                path=path,
+            )
+
+        is_dir = await asyncio.to_thread(actual_path.is_dir)
+        if not is_dir:
+            return TreeResult(
+                success=False,
+                message=f"Not a directory: {path}",
+                path=path,
+            )
+
+        def _walk() -> list[tuple[str, bool, int | None]]:
+            """Collect (virtual_path, is_dir, size) with depth limit."""
+            items = []
+            base_depth = len(actual_path.resolve().parts)
+            for root, dirs, files in os.walk(actual_path):
+                dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+                root_path = Path(root).resolve()
+                current_depth = len(root_path.parts) - base_depth
+
+                if max_depth is not None and current_depth >= max_depth:
+                    dirs[:] = []
+                    continue
+
+                # Add directories at this level
+                for d in dirs:
+                    full = Path(root) / d
+                    try:
+                        vp = self._to_virtual_path(full)
+                        items.append((vp, True, None))
+                    except (ValueError, PermissionError):
+                        continue
+
+                # Add files at this level
+                for name in sorted(files):
+                    if name.startswith("."):
+                        continue
+                    full = Path(root) / name
+                    try:
+                        vp = self._to_virtual_path(full)
+                        sz = full.stat().st_size if full.is_file() else None
+                        items.append((vp, False, sz))
+                    except (ValueError, PermissionError, OSError):
+                        continue
+
+            return items
+
+        disk_items = await asyncio.to_thread(_walk)
+
+        # Batch metadata lookup
+        vpaths = [vp for vp, _, _ in disk_items]
+        model = self._file_model
+        if vpaths:
+            db_result = await sess.execute(
+                select(model).where(model.path.in_(vpaths))  # type: ignore[union-attr]
+            )
+            file_map = {f.path: f for f in db_result.scalars().all()}
+        else:
+            file_map = {}
+
+        entries: list[FileInfo] = []
+        total_files = 0
+        total_dirs = 0
+
+        for vpath, is_d, disk_size in disk_items:
+            file = file_map.get(vpath)
+            name = split_path(vpath)[1]
+            entries.append(
+                FileInfo(
+                    path=vpath,
+                    name=name,
+                    is_directory=is_d,
+                    size_bytes=file.size_bytes if file else disk_size,
+                    mime_type=file.mime_type if file else None,
+                    version=file.current_version if file else 1,
+                    created_at=file.created_at if file else None,
+                    updated_at=file.updated_at if file else None,
+                )
+            )
+            if is_d:
+                total_dirs += 1
+            else:
+                total_files += 1
+
+        entries.sort(key=lambda e: e.path)
+
+        return TreeResult(
+            success=True,
+            message=f"{total_dirs} directories, {total_files} files",
+            entries=entries,
+            path=path,
+            total_files=total_files,
+            total_dirs=total_dirs,
         )
 
     # ------------------------------------------------------------------
@@ -547,8 +1032,10 @@ class LocalFileSystem:
     # ------------------------------------------------------------------
 
     async def list_versions(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> ListVersionsResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -563,26 +1050,34 @@ class LocalFileSystem:
         )
 
     async def get_version_content(
-        self, path: str, version: int,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        version: int,
+        *,
+        session: AsyncSession | None = None,
     ) -> GetVersionContentResult:
         sess = self._require_session(session)
         path = normalize_path(path)
         file = await self.metadata.get_file(sess, path)
         if not file:
             return GetVersionContentResult(
-                success=False, message=f"File not found: {path}",
+                success=False,
+                message=f"File not found: {path}",
             )
         content = await self.versioning.get_version_content(sess, file, version)
         if content is None:
             return GetVersionContentResult(
-                success=False, message=f"Version {version} not found for {path}",
+                success=False,
+                message=f"Version {version} not found for {path}",
             )
         return GetVersionContentResult(success=True, message="OK", content=content)
 
     async def restore_version(
-        self, path: str, version: int,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        version: int,
+        *,
+        session: AsyncSession | None = None,
     ) -> RestoreResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -594,7 +1089,10 @@ class LocalFileSystem:
             )
 
         write_result = await self.write(
-            path, vc_result.content, created_by="restore", session=sess,
+            path,
+            vc_result.content,
+            created_by="restore",
+            session=sess,
         )
 
         return RestoreResult(
@@ -610,14 +1108,18 @@ class LocalFileSystem:
     # ------------------------------------------------------------------
 
     async def list_trash(
-        self, *, session: AsyncSession | None = None,
+        self,
+        *,
+        session: AsyncSession | None = None,
     ) -> ListResult:
         sess = self._require_session(session)
         return await self.trash.list_trash(sess)
 
     async def restore_from_trash(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> RestoreResult:
         """Restore a file from trash, writing content back to disk."""
         sess = self._require_session(session)
@@ -639,13 +1141,17 @@ class LocalFileSystem:
                 for child in children_result.scalars().all():
                     if not child.is_directory:
                         vc = await self.get_version_content(
-                            child.path, child.current_version, session=sess,
+                            child.path,
+                            child.current_version,
+                            session=sess,
                         )
                         if vc.success and vc.content is not None:
                             await self._write_content(child.path, vc.content, sess)
             else:
                 vc = await self.get_version_content(
-                    restored_path, file.current_version, session=sess,
+                    restored_path,
+                    file.current_version,
+                    session=sess,
                 )
                 if vc.success and vc.content is not None:
                     await self._write_content(restored_path, vc.content, sess)
@@ -653,7 +1159,9 @@ class LocalFileSystem:
         return result
 
     async def empty_trash(
-        self, *, session: AsyncSession | None = None,
+        self,
+        *,
+        session: AsyncSession | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
         return await self.trash.empty_trash(sess)
@@ -663,7 +1171,9 @@ class LocalFileSystem:
     # ------------------------------------------------------------------
 
     async def reconcile(
-        self, *, session: AsyncSession | None = None,
+        self,
+        *,
+        session: AsyncSession | None = None,
     ) -> dict[str, int]:
         """Walk disk, compare with DB, create/update/soft-delete as needed."""
         sess = self._require_session(session)
@@ -689,7 +1199,9 @@ class LocalFileSystem:
             return items
 
         async def _noop_write(
-            _path: str, _content: str, _session: AsyncSession,
+            _path: str,
+            _content: str,
+            _session: AsyncSession,
         ) -> None:
             pass
 
@@ -704,7 +1216,11 @@ class LocalFileSystem:
                 content = await self._read_content(vpath, sess)
                 if content is not None:
                     await write_file(
-                        vpath, content, "reconcile", True, sess,
+                        vpath,
+                        content,
+                        "reconcile",
+                        True,
+                        sess,
                         metadata=self.metadata,
                         versioning=self.versioning,
                         directories=self.directories,
@@ -730,6 +1246,7 @@ class LocalFileSystem:
                     from datetime import UTC, datetime
 
                     from .utils import to_trash_path
+
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)
