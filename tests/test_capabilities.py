@@ -311,7 +311,7 @@ class TestMixedMounts:
         result = await mixed_vfs.list_trash()
         assert result.success
         # Should have the DFS trashed file, MinimalBackend skipped
-        assert len(result.entries) >= 1
+        assert len(result.entries) == 1
 
     async def test_versioning_works_on_sql_mount(self, mixed_vfs: VFS) -> None:
         await mixed_vfs.write("/db/a.txt", "v1")
@@ -369,17 +369,34 @@ class TestVFSSessionRollback:
     async def test_backend_exception_triggers_rollback(
         self, rollback_vfs: tuple[VFS, async_sessionmaker],
     ) -> None:
-        """Write a file, then force a failure on edit — original should be intact."""
+        """Write succeeds, then a forced failure rolls back — original intact."""
         vfs, factory = rollback_vfs
 
-        # Successful write
+        # Successful write — committed
         result = await vfs.write("/db/test.txt", "original")
         assert result.success
 
-        # Verify file exists and has content
-        read = await vfs.read("/db/test.txt")
-        assert read.success
-        assert read.content == "original"
+        # Resolve the mount and monkey-patch the backend to raise on write
+        mount, _ = vfs._registry.resolve("/db/test.txt")
+        original_write = mount.backend.write
+
+        async def _exploding_write(*args, **kwargs):
+            # Partially mutate session state, then blow up
+            raise RuntimeError("Simulated mid-write failure")
+
+        mount.backend.write = _exploding_write  # type: ignore[assignment]
+
+        try:
+            # This should raise, and _session_for should rollback
+            with pytest.raises(RuntimeError, match="Simulated mid-write failure"):
+                await vfs.write("/db/test.txt", "corrupted")
+
+            # Original content must still be intact (session was rolled back)
+            read = await vfs.read("/db/test.txt")
+            assert read.success
+            assert read.content == "original"
+        finally:
+            mount.backend.write = original_write  # type: ignore[assignment]
 
     async def test_failing_backend_propagates_exception(self) -> None:
         """VFS propagates backend exceptions (not swallowed)."""

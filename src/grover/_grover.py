@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover.fs.types import ReadResult
+    from grover.fs.types import DeleteResult, EditResult, ReadResult, WriteResult
     from grover.fs.vfs import VFS
     from grover.graph._graph import Graph
     from grover.ref import Ref
@@ -133,15 +133,15 @@ class Grover:
         """Read file content at *path*."""
         return self._run(self._async.read(path))
 
-    def write(self, path: str, content: str) -> bool:
-        """Write *content* to *path*. Returns ``True`` on success."""
+    def write(self, path: str, content: str) -> WriteResult:
+        """Write *content* to *path*."""
         return self._run(self._async.write(path, content))
 
-    def edit(self, path: str, old: str, new: str) -> bool:
+    def edit(self, path: str, old: str, new: str) -> EditResult:
         """Replace *old* with *new* in the file at *path*."""
         return self._run(self._async.edit(path, old, new))
 
-    def delete(self, path: str, permanent: bool = False) -> bool:
+    def delete(self, path: str, permanent: bool = False) -> DeleteResult:
         """Delete the file at *path*."""
         return self._run(self._async.delete(path, permanent))
 

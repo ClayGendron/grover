@@ -393,7 +393,7 @@ Services (stateful, hold model refs, receive session per-call):
   trash.py       — TrashService (list_trash, restore_from_trash, empty_trash)
 
 Orchestration (stateless functions):
-  operations.py  — write_file(), edit_file(), delete_file(), move_file(), copy_file(), list_dir_db()
+  operations.py  — read_file(), write_file(), edit_file(), delete_file(), move_file(), copy_file(), list_dir_db()
                    Takes services + content callbacks as parameters.
 
 Concrete Backends (no base class, implement protocol directly):

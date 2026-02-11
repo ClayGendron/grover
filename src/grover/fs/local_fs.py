@@ -688,6 +688,11 @@ class LocalFileSystem:
                         continue
             return items
 
+        async def _noop_write(
+            _path: str, _content: str, _session: AsyncSession,
+        ) -> None:
+            pass
+
         items = await asyncio.to_thread(_walk)
         for vpath, _ in items:
             disk_paths.add(vpath)
@@ -698,11 +703,6 @@ class LocalFileSystem:
                 # (content already exists on disk, no need to rewrite)
                 content = await self._read_content(vpath, sess)
                 if content is not None:
-                    async def _noop_write(
-                        _path: str, _content: str, _session: AsyncSession,
-                    ) -> None:
-                        pass
-
                     await write_file(
                         vpath, content, "reconcile", True, sess,
                         metadata=self.metadata,

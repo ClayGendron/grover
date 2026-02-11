@@ -14,10 +14,12 @@ from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.types import (
     DeleteResult,
+    EditResult,
     GetVersionContentResult,
     ListVersionsResult,
     ReadResult,
     RestoreResult,
+    WriteResult,
 )
 from grover.fs.vfs import VFS
 from grover.graph._graph import Graph
@@ -193,11 +195,11 @@ class GroverAsync:
                 hidden=hidden,
             )
 
-        self._registry.add_mount(config)
-
-        # Call open() on the backend (skip if already opened for LFS above)
+        # Call open() on the backend BEFORE registering (skip if already opened for LFS)
         if not isinstance(backend, LocalFileSystem) and hasattr(config.backend, "open"):
             await config.backend.open()
+
+        self._registry.add_mount(config)
 
         # Lazily initialise meta_fs on first non-hidden mount
         if not hidden and self._meta_fs is None:
@@ -214,6 +216,10 @@ class GroverAsync:
         try:
             mount, _ = self._registry.resolve(path)
         except MountNotFoundError:
+            return
+
+        # Only unmount if the path is an exact mount point, not a subpath
+        if mount.mount_path != path:
             return
 
         backend = mount.backend
@@ -426,17 +432,23 @@ class GroverAsync:
     async def read(self, path: str) -> ReadResult:
         return await self._vfs.read(path)
 
-    async def write(self, path: str, content: str) -> bool:
-        result = await self._vfs.write(path, content)
-        return result.success
+    async def write(self, path: str, content: str) -> WriteResult:
+        try:
+            return await self._vfs.write(path, content)
+        except Exception as e:
+            return WriteResult(success=False, message=f"Write failed: {e}")
 
-    async def edit(self, path: str, old: str, new: str) -> bool:
-        result = await self._vfs.edit(path, old, new)
-        return result.success
+    async def edit(self, path: str, old: str, new: str) -> EditResult:
+        try:
+            return await self._vfs.edit(path, old, new)
+        except Exception as e:
+            return EditResult(success=False, message=f"Edit failed: {e}")
 
-    async def delete(self, path: str, permanent: bool = False) -> bool:
-        result = await self._vfs.delete(path, permanent)
-        return result.success
+    async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+        try:
+            return await self._vfs.delete(path, permanent)
+        except Exception as e:
+            return DeleteResult(success=False, message=f"Delete failed: {e}")
 
     async def list_dir(self, path: str = "/") -> list[dict[str, Any]]:
         result = await self._vfs.list_dir(path)
