@@ -34,7 +34,7 @@ pip install grover[mssql]        # MSSQL backend
 pip install grover[all]          # search + treesitter + postgres
 ```
 
-Requires Python 3.11+.
+Requires Python 3.12+.
 
 ## Quick start
 
