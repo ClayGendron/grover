@@ -24,9 +24,7 @@ if TYPE_CHECKING:
 # =========================================================================
 
 
-async def _collecting_handler(
-    events: list[FileEvent], event: FileEvent
-) -> None:
+async def _collecting_handler(events: list[FileEvent], event: FileEvent) -> None:
     events.append(event)
 
 
@@ -357,9 +355,14 @@ class TestVersionOperations:
         db = DatabaseFileSystem(dialect="sqlite")
 
         registry = MountRegistry()
-        registry.add_mount(MountConfig(
-            mount_path="/vfs", backend=db, session_factory=factory, mount_type="vfs",
-        ))
+        registry.add_mount(
+            MountConfig(
+                mount_path="/vfs",
+                backend=db,
+                session_factory=factory,
+                mount_type="vfs",
+            )
+        )
         ufs = VFS(registry)
         yield ufs
         await ufs.close()

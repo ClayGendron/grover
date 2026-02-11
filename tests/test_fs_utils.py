@@ -354,7 +354,8 @@ class TestReplaceEdgeCases:
 class TestFormatReadOutput:
     def test_format_read_output_with_offset(self):
         result = ReadResult(
-            success=True, message="ok",
+            success=True,
+            message="ok",
             content="line1\nline2\nline3",
             offset=10,
         )
@@ -366,7 +367,8 @@ class TestFormatReadOutput:
 
     def test_format_read_output_truncated(self):
         result = ReadResult(
-            success=True, message="ok",
+            success=True,
+            message="ok",
             content="line1\nline2",
             offset=0,
             truncated=True,
@@ -387,7 +389,8 @@ class TestFormatReadOutput:
 
     def test_format_read_output_end_of_file(self):
         result = ReadResult(
-            success=True, message="ok",
+            success=True,
+            message="ok",
             content="hello\nworld",
             total_lines=2,
             truncated=False,

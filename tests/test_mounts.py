@@ -38,9 +38,7 @@ class TestMountConfig:
         assert cfg.permission == Permission.READ_WRITE
 
     def test_read_only_mount(self):
-        cfg = MountConfig(
-            mount_path="/x", backend=FakeBackend(), permission=Permission.READ_ONLY
-        )
+        cfg = MountConfig(mount_path="/x", backend=FakeBackend(), permission=Permission.READ_ONLY)
         assert cfg.permission == Permission.READ_ONLY
 
     def test_default_mount_type(self):

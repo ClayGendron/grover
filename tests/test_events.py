@@ -23,9 +23,7 @@ if TYPE_CHECKING:
 # =========================================================================
 
 
-async def _collecting_handler(
-    events: list[FileEvent], event: FileEvent
-) -> None:
+async def _collecting_handler(events: list[FileEvent], event: FileEvent) -> None:
     """Append event to a list for assertion."""
     events.append(event)
 
@@ -69,15 +67,11 @@ class TestFileEvent:
         assert ev.content is None
 
     def test_with_content(self) -> None:
-        ev = FileEvent(
-            event_type=EventType.FILE_WRITTEN, path="/a.txt", content="hello"
-        )
+        ev = FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt", content="hello")
         assert ev.content == "hello"
 
     def test_move_event(self) -> None:
-        ev = FileEvent(
-            event_type=EventType.FILE_MOVED, path="/b.txt", old_path="/a.txt"
-        )
+        ev = FileEvent(event_type=EventType.FILE_MOVED, path="/b.txt", old_path="/a.txt")
         assert ev.old_path == "/a.txt"
         assert ev.path == "/b.txt"
 
@@ -217,9 +211,7 @@ class TestEventBusEmit:
         bus.register(EventType.FILE_WRITTEN, _failing_handler)
 
         with caplog.at_level(logging.WARNING, logger="grover.events"):
-            await bus.emit(
-                FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt")
-            )
+            await bus.emit(FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt"))
 
         assert "failed" in caplog.text
         assert "file_written" in caplog.text
@@ -380,9 +372,7 @@ class TestEventBusVFSIntegration:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-        factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(dialect="sqlite")
 
         bus = EventBus()
@@ -397,7 +387,10 @@ class TestEventBusVFSIntegration:
         registry = MountRegistry()
         registry.add_mount(
             MountConfig(
-                mount_path="/vfs", backend=fs, session_factory=factory, mount_type="vfs",
+                mount_path="/vfs",
+                backend=fs,
+                session_factory=factory,
+                mount_type="vfs",
             )
         )
         ufs = VFS(registry, event_bus=bus)

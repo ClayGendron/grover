@@ -609,9 +609,7 @@ class TestFromSql:
     async def test_loads_edges(self, async_session: AsyncSession) -> None:
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
-        async_session.add(GroverEdge(
-            source_path="/a.py", target_path="/b.py", type="imports"
-        ))
+        async_session.add(GroverEdge(source_path="/a.py", target_path="/b.py", type="imports"))
         await async_session.commit()
 
         g = Graph()
@@ -621,10 +619,14 @@ class TestFromSql:
 
     async def test_skips_deleted_files(self, async_session: AsyncSession) -> None:
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(
-            path="/deleted.py", parent_path="/", name="deleted.py",
-            deleted_at=datetime.now(UTC),
-        ))
+        async_session.add(
+            File(
+                path="/deleted.py",
+                parent_path="/",
+                name="deleted.py",
+                deleted_at=datetime.now(UTC),
+            )
+        )
         await async_session.commit()
 
         g = Graph()
@@ -649,10 +651,14 @@ class TestFromSql:
 
         async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
         async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
-        async_session.add(GroverEdge(
-            source_path="/a.py", target_path="/b.py", type="imports",
-            metadata_json=json.dumps({"line": 10, "symbol": "Foo"}),
-        ))
+        async_session.add(
+            GroverEdge(
+                source_path="/a.py",
+                target_path="/b.py",
+                type="imports",
+                metadata_json=json.dumps({"line": 10, "symbol": "Foo"}),
+            )
+        )
         await async_session.commit()
 
         g = Graph()
@@ -661,13 +667,11 @@ class TestFromSql:
         assert data["metadata"]["line"] == 10
         assert data["metadata"]["symbol"] == "Foo"
 
-    async def test_auto_creates_nodes_for_dangling_edges(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_auto_creates_nodes_for_dangling_edges(self, async_session: AsyncSession) -> None:
         # Edge endpoints not in grover_files — from_sql should still load them
-        async_session.add(GroverEdge(
-            source_path="/orphan_a.py", target_path="/orphan_b.py", type="imports"
-        ))
+        async_session.add(
+            GroverEdge(source_path="/orphan_a.py", target_path="/orphan_b.py", type="imports")
+        )
         await async_session.commit()
 
         g = Graph()
@@ -711,9 +715,7 @@ class TestRoundTrip:
         data = g2.get_edge("/a.py", "/b.py")
         assert data["metadata"] == {"line": 10, "symbol": "Foo"}
 
-    async def test_edge_ids_preserved_round_trip(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_edge_ids_preserved_round_trip(self, async_session: AsyncSession) -> None:
         g1 = Graph()
         g1.add_edge("/a.py", "/b.py", "imports")
         original_id = g1.get_edge("/a.py", "/b.py")["id"]

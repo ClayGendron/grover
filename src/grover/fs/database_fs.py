@@ -78,8 +78,8 @@ class DatabaseFileSystem:
     ) -> None:
         from grover.models.files import File, FileVersion
 
-        fm: type[FileBase] = file_model or File  # type: ignore[assignment]
-        fvm: type[FileVersionBase] = file_version_model or FileVersion  # type: ignore[assignment]
+        fm: type[FileBase] = file_model or File
+        fvm: type[FileVersionBase] = file_version_model or FileVersion
 
         self.dialect = dialect
         self.schema = schema
@@ -123,8 +123,8 @@ class DatabaseFileSystem:
         path = normalize_path(path)
         model = self._file_model
         result = await session.execute(
-            select(model.content).where(  # type: ignore[arg-type]
-                model.path == path,  # type: ignore[arg-type]
+            select(model.content).where(
+                model.path == path,
                 model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
             )
         )
@@ -136,7 +136,7 @@ class DatabaseFileSystem:
         model = self._file_model
         result = await session.execute(
             select(model).where(
-                model.path == path,  # type: ignore[arg-type]
+                model.path == path,
             )
         )
         file = result.scalar_one_or_none()
@@ -475,7 +475,7 @@ class DatabaseFileSystem:
                     candidate_paths = [path]
                 elif file and file.is_directory:
                     result = await sess.execute(
-                        select(model.path).where(  # type: ignore[arg-type]
+                        select(model.path).where(
                             model.path.like(path + "/%", escape="\\"),  # type: ignore[union-attr]
                             model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                             model.is_directory.is_(False),  # type: ignore[union-attr]
@@ -491,7 +491,7 @@ class DatabaseFileSystem:
                     )
             else:
                 result = await sess.execute(
-                    select(model.path).where(  # type: ignore[arg-type]
+                    select(model.path).where(
                         model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                         model.is_directory.is_(False),  # type: ignore[union-attr]
                     )
@@ -620,10 +620,8 @@ class DatabaseFileSystem:
         # depth = LENGTH(path) - LENGTH(REPLACE(path, '/', ''))
         if max_depth is not None:
             max_slashes = base_depth + max_depth
-            slash_count = func.length(model.path) - func.length(
-                func.replace(model.path, "/", "")
-            )
-            conditions.append(slash_count <= max_slashes)  # type: ignore[arg-type]
+            slash_count = func.length(model.path) - func.length(func.replace(model.path, "/", ""))
+            conditions.append(slash_count <= max_slashes)
 
         result = await sess.execute(select(model).where(*conditions))
         all_files = list(result.scalars().all())

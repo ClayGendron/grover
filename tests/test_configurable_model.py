@@ -188,9 +188,7 @@ class TestCustomModelFilesystem:
 
         # Query the custom table directly
         async with factory() as session:
-            result = await session.execute(
-                select(WikiFile).where(WikiFile.path == "/page.md")
-            )
+            result = await session.execute(select(WikiFile).where(WikiFile.path == "/page.md"))
             wiki_file = result.scalar_one_or_none()
             assert wiki_file is not None
             assert wiki_file.name == "page.md"
@@ -233,9 +231,7 @@ class TestUpsertWithCustomModel:
             assert rowcount >= 0
 
             # Verify it's in the wiki_files table
-            result = await session.execute(
-                select(WikiFile).where(WikiFile.path == "/wiki/page.md")
-            )
+            result = await session.execute(select(WikiFile).where(WikiFile.path == "/wiki/page.md"))
             row = result.scalar_one_or_none()
             assert row is not None
             assert row.name == "page.md"
@@ -268,9 +264,7 @@ class TestUpsertWithCustomModel:
             )
             await session.commit()
 
-            result = await session.execute(
-                select(File).where(File.path == "/hello.txt")
-            )
+            result = await session.execute(select(File).where(File.path == "/hello.txt"))
             assert result.scalar_one_or_none() is not None
 
         await engine.dispose()
@@ -292,9 +286,13 @@ class TestGraphWithCustomModel:
             # Insert into custom table
             session.add(WikiFile(path="/wiki/a.md", parent_path="/wiki", name="a.md"))
             session.add(WikiFile(path="/wiki/b.md", parent_path="/wiki", name="b.md"))
-            session.add(GroverEdge(
-                source_path="/wiki/a.md", target_path="/wiki/b.md", type="links_to",
-            ))
+            session.add(
+                GroverEdge(
+                    source_path="/wiki/a.md",
+                    target_path="/wiki/b.md",
+                    type="links_to",
+                )
+            )
             await session.commit()
 
             g = Graph()
@@ -315,10 +313,14 @@ class TestGraphWithCustomModel:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             session.add(WikiFile(path="/wiki/active.md", parent_path="/wiki", name="active.md"))
-            session.add(WikiFile(
-                path="/wiki/deleted.md", parent_path="/wiki", name="deleted.md",
-                deleted_at=datetime.now(UTC),
-            ))
+            session.add(
+                WikiFile(
+                    path="/wiki/deleted.md",
+                    parent_path="/wiki",
+                    name="deleted.md",
+                    deleted_at=datetime.now(UTC),
+                )
+            )
             await session.commit()
 
             g = Graph()

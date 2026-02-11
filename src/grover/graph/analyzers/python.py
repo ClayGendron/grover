@@ -77,13 +77,15 @@ class PythonAnalyzer:
                 name=scoped_name,
             )
         )
-        edges.append(
-            EdgeData(source=parent_path, target=chunk_path, edge_type="contains")
-        )
+        edges.append(EdgeData(source=parent_path, target=chunk_path, edge_type="contains"))
 
         # Recurse into nested definitions
         self._visit_body(
-            node.body, parent_path, content, chunks, edges,
+            node.body,
+            parent_path,
+            content,
+            chunks,
+            edges,
             scope=[*scope, node.name],
         )
 
@@ -112,9 +114,7 @@ class PythonAnalyzer:
                 name=scoped_name,
             )
         )
-        edges.append(
-            EdgeData(source=parent_path, target=chunk_path, edge_type="contains")
-        )
+        edges.append(EdgeData(source=parent_path, target=chunk_path, edge_type="contains"))
 
         # Inheritance edges
         for base in node.bases:
@@ -131,7 +131,11 @@ class PythonAnalyzer:
 
         # Recurse into class body for methods, nested classes
         self._visit_body(
-            node.body, parent_path, content, chunks, edges,
+            node.body,
+            parent_path,
+            content,
+            chunks,
+            edges,
             scope=[*scope, node.name],
         )
 

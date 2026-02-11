@@ -22,9 +22,7 @@ class Ref:
     version: int | str | None = None
     line_start: int | None = None
     line_end: int | None = None
-    metadata: dict[str, Any] = field(
-        default_factory=dict, hash=False, compare=False
-    )
+    metadata: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
     def __repr__(self) -> str:
         parts = [f"path={self.path!r}"]

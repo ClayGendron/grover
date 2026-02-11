@@ -1,4 +1,7 @@
-"""Grover: The agentic filesystem. Safe file operations, knowledge graphs, and semantic search — unified for AI agents."""
+"""Grover: The agentic filesystem.
+
+Safe file operations, knowledge graphs, and semantic search — unified for AI agents.
+"""
 
 from grover._grover import Grover
 from grover._grover_async import GroverAsync

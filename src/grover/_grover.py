@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     )
     from grover.fs.vfs import VFS
     from grover.graph._graph import Graph
+    from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
     from grover.search._index import SearchResult
 
@@ -101,8 +102,8 @@ class Grover:
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
         dialect: str = "sqlite",
-        file_model: type | None = None,
-        file_version_model: type | None = None,
+        file_model: type[FileBase] | None = None,
+        file_version_model: type[FileVersionBase] | None = None,
         db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,

@@ -32,15 +32,15 @@ class FileBase(SQLModel):
     original_path: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_type=DateTime(timezone=True),
+        sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_type=DateTime(timezone=True),
+        sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
     deleted_at: datetime | None = Field(
         default=None,
-        sa_type=DateTime(timezone=True),
+        sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
 
 
@@ -53,9 +53,7 @@ class File(FileBase, table=True):
 class FileVersionBase(SQLModel):
     """Base fields for a file version record. Subclass with ``table=True`` for a concrete table."""
 
-    __table_args__ = (
-        UniqueConstraint("file_id", "version"),
-    )
+    __table_args__ = (UniqueConstraint("file_id", "version"),)
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     file_id: str = Field(index=True)
@@ -67,7 +65,7 @@ class FileVersionBase(SQLModel):
     created_by: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_type=DateTime(timezone=True),
+        sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
 
 

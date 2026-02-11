@@ -48,9 +48,7 @@ class EventBus:
     """
 
     def __init__(self) -> None:
-        self._handlers: dict[EventType, list[Callable[..., Any]]] = {
-            et: [] for et in EventType
-        }
+        self._handlers: dict[EventType, list[Callable[..., Any]]] = {et: [] for et in EventType}
 
     def register(self, event_type: EventType, handler: Callable[..., Any]) -> None:
         """Append *handler* to the list for *event_type*."""

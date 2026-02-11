@@ -213,13 +213,7 @@ class TestApplyDiffBoundsValidation:
         """A hunk referencing lines beyond the file should raise."""
         base = "line1\nline2\n"
         # Craft a diff with source_start beyond file length
-        bad_diff = (
-            "--- a\n"
-            "+++ b\n"
-            "@@ -100,1 +100,1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
+        bad_diff = "--- a\n+++ b\n@@ -100,1 +100,1 @@\n-old\n+new\n"
         with pytest.raises(ValueError, match="out of bounds"):
             apply_diff(base, bad_diff)
 
@@ -228,17 +222,7 @@ class TestApplyDiffBoundsValidation:
         base = "line1\nline2\n"
         # source_start=1, source_length=5 — valid unidiff structure but
         # the base file only has 2 lines, so end_idx=5 > 2
-        bad_diff = (
-            "--- a\n"
-            "+++ b\n"
-            "@@ -1,5 +1,1 @@\n"
-            "-line1\n"
-            "-line2\n"
-            "-line3\n"
-            "-line4\n"
-            "-line5\n"
-            "+new\n"
-        )
+        bad_diff = "--- a\n+++ b\n@@ -1,5 +1,1 @@\n-line1\n-line2\n-line3\n-line4\n-line5\n+new\n"
         with pytest.raises(ValueError, match="out of bounds"):
             apply_diff(base, bad_diff)
 
@@ -347,12 +331,14 @@ class TestReconstructVersion:
         d1 = compute_diff(v0, v1)
         d3 = compute_diff(v2, v3)
 
-        result = reconstruct_version([
-            (True, v0),
-            (False, d1),
-            (True, v2),   # mid-chain snapshot resets
-            (False, d3),
-        ])
+        result = reconstruct_version(
+            [
+                (True, v0),
+                (False, d1),
+                (True, v2),  # mid-chain snapshot resets
+                (False, d3),
+            ]
+        )
         assert result == v3
 
     def test_multi_version_round_trip(self):

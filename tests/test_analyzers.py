@@ -46,8 +46,12 @@ class TestChunkFile:
 
     def test_frozen(self):
         c = ChunkFile(
-            chunk_path="x", parent_path="y", content="z",
-            line_start=1, line_end=1, name="n",
+            chunk_path="x",
+            parent_path="y",
+            content="z",
+            line_start=1,
+            line_end=1,
+            name="n",
         )
         with pytest.raises(AttributeError):
             c.name = "other"  # type: ignore[misc]
@@ -92,14 +96,10 @@ class TestBuildChunkPath:
         )
 
     def test_root_file(self):
-        assert build_chunk_path("/main.py", "run") == (
-            "/.grover/chunks/main_py/run.txt"
-        )
+        assert build_chunk_path("/main.py", "run") == ("/.grover/chunks/main_py/run.txt")
 
     def test_deeply_nested_dir(self):
-        assert build_chunk_path("/a/b/c/d.py", "foo") == (
-            "/.grover/chunks/a/b/c/d_py/foo.txt"
-        )
+        assert build_chunk_path("/a/b/c/d.py", "foo") == ("/.grover/chunks/a/b/c/d_py/foo.txt")
 
     def test_dotted_filename(self):
         assert build_chunk_path("/src/auth.test.py", "test_login") == (

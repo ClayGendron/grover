@@ -79,9 +79,7 @@ class VersioningService:
         """List all saved versions for a file."""
         fv_model = self._file_version_model
         result = await session.execute(
-            select(fv_model)
-            .where(fv_model.file_id == file.id)  # type: ignore[arg-type]
-            .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
+            select(fv_model).where(fv_model.file_id == file.id).order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
         )
         versions = result.scalars().all()
 
@@ -109,8 +107,8 @@ class VersioningService:
         snapshot_result = await session.execute(
             select(fv_model)
             .where(
-                fv_model.file_id == file.id,  # type: ignore[arg-type]
-                fv_model.version <= version,  # type: ignore[arg-type]
+                fv_model.file_id == file.id,
+                fv_model.version <= version,
                 fv_model.is_snapshot.is_(True),  # type: ignore[unresolved-attribute]
             )
             .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
@@ -124,9 +122,9 @@ class VersioningService:
         chain_result = await session.execute(
             select(fv_model)
             .where(
-                fv_model.file_id == file.id,  # type: ignore[arg-type]
-                fv_model.version >= snapshot.version,  # type: ignore[arg-type]
-                fv_model.version <= version,  # type: ignore[arg-type]
+                fv_model.file_id == file.id,
+                fv_model.version >= snapshot.version,
+                fv_model.version <= version,
             )
             .order_by(fv_model.version.asc())  # type: ignore[unresolved-attribute]
         )

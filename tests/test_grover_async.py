@@ -123,7 +123,7 @@ class TestGroverAsyncLifecycle:
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
-        with pytest.raises(ValueError, match="Cannot unmount /.grover"):
+        with pytest.raises(ValueError, match=r"Cannot unmount /\.grover"):
             await g.unmount("/.grover")
         await g.close()
 
@@ -190,7 +190,9 @@ class TestGroverAsyncMultiMount:
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app"))
-        await g.mount("/data", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data"))
+        await g.mount(
+            "/data", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data")
+        )
 
         await g.write("/app/code.txt", "code content")
         await g.write("/data/doc.txt", "doc content")
@@ -208,7 +210,9 @@ class TestGroverAsyncMultiMount:
         await g.close()
 
     @pytest.mark.asyncio
-    async def test_isolation_between_mounts(self, workspace: Path, workspace2: Path, tmp_path: Path):
+    async def test_isolation_between_mounts(
+        self, workspace: Path, workspace2: Path, tmp_path: Path
+    ):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount("/a", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a"))
@@ -233,19 +237,19 @@ class TestGroverAsyncGraph:
 
     @pytest.mark.asyncio
     async def test_write_updates_graph(self, grover: GroverAsync):
-        await grover.write("/project/mod.py", 'def work():\n    pass\n')
+        await grover.write("/project/mod.py", "def work():\n    pass\n")
         assert grover.graph.has_node("/project/mod.py")
 
     @pytest.mark.asyncio
     async def test_contains_returns_chunks(self, grover: GroverAsync):
-        code = 'def foo():\n    pass\n\ndef bar():\n    pass\n'
+        code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await grover.write("/project/funcs.py", code)
         chunks = grover.contains("/project/funcs.py")
         assert len(chunks) >= 2
 
     @pytest.mark.asyncio
     async def test_delete_removes_from_graph(self, grover: GroverAsync):
-        await grover.write("/project/gone.py", 'def gone():\n    pass\n')
+        await grover.write("/project/gone.py", "def gone():\n    pass\n")
         assert grover.graph.has_node("/project/gone.py")
         await grover.delete("/project/gone.py")
         assert not grover.graph.has_node("/project/gone.py")
@@ -292,22 +296,25 @@ class TestGroverAsyncSearch:
 class TestGroverAsyncIndex:
     @pytest.mark.asyncio
     async def test_index_scans_files(self, grover: GroverAsync, workspace: Path):
-        (workspace / "one.py").write_text('def one():\n    return 1\n')
-        (workspace / "two.py").write_text('def two():\n    return 2\n')
+        (workspace / "one.py").write_text("def one():\n    return 1\n")
+        (workspace / "two.py").write_text("def two():\n    return 2\n")
         stats = await grover.index()
         assert stats["files_scanned"] >= 2
 
     @pytest.mark.asyncio
     async def test_index_specific_mount(
-        self, workspace: Path, workspace2: Path, tmp_path: Path,
+        self,
+        workspace: Path,
+        workspace2: Path,
+        tmp_path: Path,
     ):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount("/a", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a"))
         await g.mount("/b", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b"))
 
-        (workspace / "a.py").write_text('def a():\n    pass\n')
-        (workspace2 / "b.py").write_text('def b():\n    pass\n')
+        (workspace / "a.py").write_text("def a():\n    pass\n")
+        (workspace2 / "b.py").write_text("def b():\n    pass\n")
 
         stats = await g.index("/a")
         # Should only index mount /a
@@ -327,18 +334,18 @@ class TestGroverAsyncPersistence:
     async def test_save_and_load(self, workspace: Path, tmp_path: Path):
         data_dir = tmp_path / "data"
 
-        g1 = GroverAsync(
-            data_dir=str(data_dir), embedding_provider=FakeProvider()
+        g1 = GroverAsync(data_dir=str(data_dir), embedding_provider=FakeProvider())
+        await g1.mount(
+            "/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
         )
-        await g1.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
-        await g1.write("/project/keep.py", 'def keep():\n    pass\n')
+        await g1.write("/project/keep.py", "def keep():\n    pass\n")
         await g1.save()
         await g1.close()
 
-        g2 = GroverAsync(
-            data_dir=str(data_dir), embedding_provider=FakeProvider()
+        g2 = GroverAsync(data_dir=str(data_dir), embedding_provider=FakeProvider())
+        await g2.mount(
+            "/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
         )
-        await g2.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
         assert g2.graph.has_node("/project/keep.py")
         results = await g2.search("keep")
         assert len(results) >= 1
@@ -368,10 +375,10 @@ class TestGroverAsyncProperties:
 class TestGroverAsyncGraphQueries:
     @pytest.mark.asyncio
     async def test_dependents_returns_refs(self, grover: GroverAsync):
-        await grover.write("/project/lib.py", 'def helper():\n    return 42\n')
+        await grover.write("/project/lib.py", "def helper():\n    return 42\n")
         await grover.write(
             "/project/main.py",
-            'from lib import helper\n\ndef run():\n    return helper()\n',
+            "from lib import helper\n\ndef run():\n    return helper()\n",
         )
         deps = grover.dependents("/project/lib.py")
         # main.py imports lib.py, so main.py is a dependent
@@ -382,10 +389,10 @@ class TestGroverAsyncGraphQueries:
 
     @pytest.mark.asyncio
     async def test_dependencies_returns_refs(self, grover: GroverAsync):
-        await grover.write("/project/dep.py", 'def util():\n    pass\n')
+        await grover.write("/project/dep.py", "def util():\n    pass\n")
         await grover.write(
             "/project/consumer.py",
-            'from dep import util\n\ndef main():\n    util()\n',
+            "from dep import util\n\ndef main():\n    util()\n",
         )
         deps = grover.dependencies("/project/consumer.py")
         assert isinstance(deps, list)
@@ -393,25 +400,25 @@ class TestGroverAsyncGraphQueries:
 
     @pytest.mark.asyncio
     async def test_impacts_transitive(self, grover: GroverAsync):
-        await grover.write("/project/c.py", 'VALUE = 1\n')
-        await grover.write("/project/b.py", 'from c import VALUE\n\ndef get():\n    return VALUE\n')
+        await grover.write("/project/c.py", "VALUE = 1\n")
+        await grover.write("/project/b.py", "from c import VALUE\n\ndef get():\n    return VALUE\n")
         await grover.write(
             "/project/a.py",
-            'from b import get\n\ndef run():\n    return get()\n',
+            "from b import get\n\ndef run():\n    return get()\n",
         )
         imp = grover.impacts("/project/c.py")
         assert isinstance(imp, list)
 
     @pytest.mark.asyncio
     async def test_path_between_found(self, grover: GroverAsync):
-        await grover.write("/project/start.py", 'X = 1\n')
+        await grover.write("/project/start.py", "X = 1\n")
         await grover.write(
             "/project/mid.py",
-            'from start import X\n\ndef mid():\n    return X\n',
+            "from start import X\n\ndef mid():\n    return X\n",
         )
         await grover.write(
             "/project/end.py",
-            'from mid import mid\n\ndef end():\n    return mid()\n',
+            "from mid import mid\n\ndef end():\n    return mid()\n",
         )
         path = grover.path_between("/project/end.py", "/project/start.py")
         # May or may not find a path depending on import analysis depth
@@ -421,8 +428,8 @@ class TestGroverAsyncGraphQueries:
 
     @pytest.mark.asyncio
     async def test_path_between_none(self, grover: GroverAsync):
-        await grover.write("/project/island_a.py", 'A = 1\n')
-        await grover.write("/project/island_b.py", 'B = 2\n')
+        await grover.write("/project/island_a.py", "A = 1\n")
+        await grover.write("/project/island_b.py", "B = 2\n")
         path = grover.path_between("/project/island_a.py", "/project/island_b.py")
         assert path is None
 
@@ -435,7 +442,7 @@ class TestGroverAsyncGraphQueries:
 class TestGroverAsyncEventHandlers:
     @pytest.mark.asyncio
     async def test_move_updates_graph(self, grover: GroverAsync):
-        await grover.write("/project/old.py", 'def foo():\n    pass\n')
+        await grover.write("/project/old.py", "def foo():\n    pass\n")
         assert grover.graph.has_node("/project/old.py")
 
         result = await grover.fs.move("/project/old.py", "/project/new.py")
@@ -458,7 +465,7 @@ class TestGroverAsyncEventHandlers:
 
     @pytest.mark.asyncio
     async def test_restored_event_reanalyzes(self, grover: GroverAsync):
-        await grover.write("/project/restore_me.py", 'def restored():\n    pass\n')
+        await grover.write("/project/restore_me.py", "def restored():\n    pass\n")
         assert grover.graph.has_node("/project/restore_me.py")
         await grover.delete("/project/restore_me.py")
         assert not grover.graph.has_node("/project/restore_me.py")
@@ -538,7 +545,7 @@ class TestGroverAsyncMountOptions:
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
-        await g.write("/app/file.py", 'def demo():\n    pass\n')
+        await g.write("/app/file.py", "def demo():\n    pass\n")
         assert g.graph.has_node("/app/file.py")
 
         await g.unmount("/app")

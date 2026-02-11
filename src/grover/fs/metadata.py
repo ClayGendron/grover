@@ -42,7 +42,7 @@ class MetadataService:
         path = normalize_path(path)
         model = self._file_model
         query = select(model).where(
-            model.path == path,  # type: ignore[arg-type]
+            model.path == path,
         )
         if not include_deleted:
             query = query.where(model.deleted_at.is_(None))  # type: ignore[unresolved-attribute]

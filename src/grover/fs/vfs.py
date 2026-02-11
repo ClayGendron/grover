@@ -284,18 +284,6 @@ class VFS:
         files_only: bool = False,
     ) -> GrepResult:
         path = normalize_path(path)
-        kwargs = {
-            "glob_filter": glob_filter,
-            "case_sensitive": case_sensitive,
-            "fixed_string": fixed_string,
-            "invert": invert,
-            "word_match": word_match,
-            "context_lines": context_lines,
-            "max_results": max_results,
-            "max_results_per_file": max_results_per_file,
-            "count_only": count_only,
-            "files_only": files_only,
-        }
 
         if path == "/":
             all_matches: list[GrepMatch] = []
@@ -305,20 +293,27 @@ class VFS:
 
             # Don't pass count_only to backends — we need actual matches
             # to aggregate correctly. We apply count_only at VFS level.
-            mount_kwargs_base = {**kwargs, "count_only": False}
 
             for mount in self._registry.list_visible_mounts():
                 remaining = max_results - len(all_matches) if max_results > 0 else max_results
                 if max_results > 0 and remaining <= 0:
                     truncated = True
                     break
-                mount_kwargs = {**mount_kwargs_base, "max_results": remaining}
                 async with self._session_for(mount) as sess:
                     result = await mount.backend.grep(
                         pattern,
                         "/",
                         session=sess,
-                        **mount_kwargs,
+                        glob_filter=glob_filter,
+                        case_sensitive=case_sensitive,
+                        fixed_string=fixed_string,
+                        invert=invert,
+                        word_match=word_match,
+                        context_lines=context_lines,
+                        max_results=remaining,
+                        max_results_per_file=max_results_per_file,
+                        count_only=False,
+                        files_only=files_only,
                     )
                 if result.success:
                     for m in result.matches:
@@ -360,7 +355,16 @@ class VFS:
                 pattern,
                 rel_path,
                 session=sess,
-                **kwargs,
+                glob_filter=glob_filter,
+                case_sensitive=case_sensitive,
+                fixed_string=fixed_string,
+                invert=invert,
+                word_match=word_match,
+                context_lines=context_lines,
+                max_results=max_results,
+                max_results_per_file=max_results_per_file,
+                count_only=count_only,
+                files_only=files_only,
             )
         result.path = self._prefix_path(result.path, mount.mount_path) or path
         for m in result.matches:

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from grover.fs.protocol import StorageBackend
+    from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
 
 logger = logging.getLogger(__name__)
@@ -116,8 +117,8 @@ class GroverAsync:
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
         dialect: str = "sqlite",
-        file_model: type | None = None,
-        file_version_model: type | None = None,
+        file_model: type[FileBase] | None = None,
+        file_version_model: type[FileVersionBase] | None = None,
         db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
@@ -642,6 +643,7 @@ class GroverAsync:
             meta_mount = self._registry._mounts.get("/.grover")
             if meta_mount is not None:
                 async with self._vfs._session_for(meta_mount) as session:
+                    assert session is not None
                     await self._graph.to_sql(session)
 
         if self._search_index is not None and self._meta_data_dir is not None:

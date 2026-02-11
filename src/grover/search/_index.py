@@ -63,9 +63,7 @@ class SearchIndex:
     def _ensure_index(self) -> Index:
         """Lazily create the usearch Index on first use."""
         if self._index is None:
-            self._index = Index(
-                ndim=self._provider.dimensions, metric="cos", dtype="f32"
-            )
+            self._index = Index(ndim=self._provider.dimensions, metric="cos", dtype="f32")
         return self._index
 
     # ------------------------------------------------------------------
@@ -112,9 +110,7 @@ class SearchIndex:
                 self.remove(entry.path)
 
         texts = [e.content for e in entries]
-        vectors = np.array(
-            self._provider.embed_batch(texts), dtype=np.float32
-        )
+        vectors = np.array(self._provider.embed_batch(texts), dtype=np.float32)
 
         keys: list[int] = []
         for i, entry in enumerate(entries):
@@ -146,9 +142,7 @@ class SearchIndex:
         """Remove *path* **and** all entries whose ``parent_path`` matches."""
         self.remove(path)
         children = [
-            meta["path"]
-            for meta in self._key_to_meta.values()
-            if meta.get("parent_path") == path
+            meta["path"] for meta in self._key_to_meta.values() if meta.get("parent_path") == path
         ]
         for child_path in children:
             self.remove(child_path)
@@ -168,9 +162,7 @@ class SearchIndex:
             matches = self._ensure_index().search(vector, effective_k)
 
         results: list[SearchResult] = []
-        for key, distance in zip(
-            matches.keys.tolist(), matches.distances.tolist(), strict=True
-        ):
+        for key, distance in zip(matches.keys.tolist(), matches.distances.tolist(), strict=True):
             meta = self._key_to_meta.get(int(key))
             if meta is None:
                 continue
@@ -239,15 +231,11 @@ class SearchIndex:
             sidecar = json.load(f)
 
         self._next_key = sidecar["next_key"]
-        self._key_to_meta = {
-            int(k): v for k, v in sidecar["key_to_meta"].items()
-        }
+        self._key_to_meta = {int(k): v for k, v in sidecar["key_to_meta"].items()}
         self._path_to_keys = dict(sidecar["path_to_keys"])
 
     @classmethod
-    def from_directory(
-        cls, directory: str, provider: EmbeddingProvider
-    ) -> SearchIndex:
+    def from_directory(cls, directory: str, provider: EmbeddingProvider) -> SearchIndex:
         """Load an existing index from *directory*."""
         instance = cls(provider)
         instance.load(directory)

@@ -54,7 +54,6 @@ class TestUpsertFile:
                     "path": "/hello.txt",
                     "name": "hello.txt",
                     "is_directory": False,
-
                     "current_version": 1,
                 },
                 conflict_keys=["path"],
@@ -62,9 +61,7 @@ class TestUpsertFile:
             await session.commit()
             assert rowcount >= 0
 
-            result = await session.execute(
-                select(File).where(File.path == "/hello.txt")
-            )
+            result = await session.execute(select(File).where(File.path == "/hello.txt"))
             file = result.scalar_one_or_none()
             assert file is not None
             assert file.name == "hello.txt"
@@ -87,7 +84,6 @@ class TestUpsertFile:
                     "path": "/hello.txt",
                     "name": "hello.txt",
                     "is_directory": False,
-
                     "current_version": 1,
                 },
                 conflict_keys=["path"],
@@ -104,16 +100,13 @@ class TestUpsertFile:
                     "path": "/hello.txt",
                     "name": "hello_updated.txt",
                     "is_directory": False,
-
                     "current_version": 2,
                 },
                 conflict_keys=["path"],
             )
             await session.commit()
 
-            result = await session.execute(
-                select(File).where(File.path == "/hello.txt")
-            )
+            result = await session.execute(select(File).where(File.path == "/hello.txt"))
             file = result.scalar_one_or_none()
             assert file is not None
             assert file.name == "hello_updated.txt"
@@ -195,9 +188,15 @@ class TestUpsertSqlitePgBranches:
         async with factory() as session:
             # Insert initial row
             await upsert_file(
-                session, "sqlite",
-                values={"id": "u1", "path": "/up.txt", "name": "up.txt",
-                        "is_directory": False, "current_version": 1},
+                session,
+                "sqlite",
+                values={
+                    "id": "u1",
+                    "path": "/up.txt",
+                    "name": "up.txt",
+                    "is_directory": False,
+                    "current_version": 1,
+                },
                 conflict_keys=["path"],
             )
             await session.commit()
@@ -205,9 +204,15 @@ class TestUpsertSqlitePgBranches:
         async with factory() as session:
             # Upsert with update_keys=["name"] — only name should update
             await upsert_file(
-                session, "sqlite",
-                values={"id": "u2", "path": "/up.txt", "name": "updated.txt",
-                        "is_directory": False, "current_version": 99},
+                session,
+                "sqlite",
+                values={
+                    "id": "u2",
+                    "path": "/up.txt",
+                    "name": "updated.txt",
+                    "is_directory": False,
+                    "current_version": 99,
+                },
                 conflict_keys=["path"],
                 update_keys=["name"],
             )
@@ -229,9 +234,15 @@ class TestUpsertSqlitePgBranches:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             await upsert_file(
-                session, "sqlite",
-                values={"id": "dn1", "path": "/dn.txt", "name": "original.txt",
-                        "is_directory": False, "current_version": 1},
+                session,
+                "sqlite",
+                values={
+                    "id": "dn1",
+                    "path": "/dn.txt",
+                    "name": "original.txt",
+                    "is_directory": False,
+                    "current_version": 1,
+                },
                 conflict_keys=["path"],
             )
             await session.commit()
@@ -239,7 +250,8 @@ class TestUpsertSqlitePgBranches:
         async with factory() as session:
             # All value keys are in conflict_keys → on_conflict_do_nothing
             await upsert_file(
-                session, "sqlite",
+                session,
+                "sqlite",
                 values={"path": "/dn.txt"},
                 conflict_keys=["path"],
             )
@@ -261,9 +273,15 @@ class TestUpsertSqlitePgBranches:
             # SQLite doesn't really support schemas, but the code path
             # should still execute without error (schema_translate_map)
             rowcount = await upsert_file(
-                session, "sqlite",
-                values={"id": "s1", "path": "/schema.txt", "name": "schema.txt",
-                        "is_directory": False, "current_version": 1},
+                session,
+                "sqlite",
+                values={
+                    "id": "s1",
+                    "path": "/schema.txt",
+                    "name": "schema.txt",
+                    "is_directory": False,
+                    "current_version": 1,
+                },
                 conflict_keys=["path"],
                 schema="main",
             )
@@ -282,9 +300,15 @@ class TestUpsertSqlitePgBranches:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             rowcount = await upsert_file(
-                session, "sqlite",
-                values={"id": "w1", "path": "/wiki.txt", "name": "wiki.txt",
-                        "is_directory": False, "current_version": 1},
+                session,
+                "sqlite",
+                values={
+                    "id": "w1",
+                    "path": "/wiki.txt",
+                    "name": "wiki.txt",
+                    "is_directory": False,
+                    "current_version": 1,
+                },
                 conflict_keys=["path"],
                 model=WikiFile,
             )

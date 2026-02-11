@@ -82,7 +82,7 @@ class TrashService:
         model = self._file_model
         result = await session.execute(
             select(model).where(
-                model.original_path == path,  # type: ignore[arg-type]
+                model.original_path == path,
                 model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
             )
         )

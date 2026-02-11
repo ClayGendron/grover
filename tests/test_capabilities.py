@@ -55,8 +55,12 @@ class MinimalBackend:
         pass
 
     async def read(
-        self, path: str, offset: int = 0, limit: int = 2000,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
+        *,
+        session: AsyncSession | None = None,
     ) -> ReadResult:
         content = self._files.get(path)
         if content is None:
@@ -64,16 +68,26 @@ class MinimalBackend:
         return ReadResult(success=True, message="OK", content=content, file_path=path)
 
     async def write(
-        self, path: str, content: str, created_by: str = "agent",
-        *, overwrite: bool = True, session: AsyncSession | None = None,
+        self,
+        path: str,
+        content: str,
+        created_by: str = "agent",
+        *,
+        overwrite: bool = True,
+        session: AsyncSession | None = None,
     ) -> WriteResult:
         self._files[path] = content
         return WriteResult(success=True, message="OK", file_path=path)
 
     async def edit(
-        self, path: str, old_string: str, new_string: str,
-        replace_all: bool = False, created_by: str = "agent",
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        created_by: str = "agent",
+        *,
+        session: AsyncSession | None = None,
     ) -> EditResult:
         content = self._files.get(path)
         if content is None:
@@ -82,8 +96,11 @@ class MinimalBackend:
         return EditResult(success=True, message="OK", file_path=path)
 
     async def delete(
-        self, path: str, permanent: bool = False,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        permanent: bool = False,
+        *,
+        session: AsyncSession | None = None,
     ) -> DeleteResult:
         if path in self._files:
             del self._files[path]
@@ -91,14 +108,20 @@ class MinimalBackend:
         return DeleteResult(success=False, message=f"Not found: {path}")
 
     async def mkdir(
-        self, path: str, parents: bool = True,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        parents: bool = True,
+        *,
+        session: AsyncSession | None = None,
     ) -> MkdirResult:
         return MkdirResult(success=True, message="OK", path=path)
 
     async def move(
-        self, src: str, dest: str,
-        *, session: AsyncSession | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> MoveResult:
         content = self._files.pop(src, None)
         if content is None:
@@ -107,8 +130,11 @@ class MinimalBackend:
         return MoveResult(success=True, message="OK", old_path=src, new_path=dest)
 
     async def copy(
-        self, src: str, dest: str,
-        *, session: AsyncSession | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> WriteResult:
         content = self._files.get(src)
         if content is None:
@@ -117,13 +143,18 @@ class MinimalBackend:
         return WriteResult(success=True, message="OK", file_path=dest)
 
     async def glob(
-        self, pattern: str, path: str = "/",
-        *, session: AsyncSession | None = None,
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
     ) -> GlobResult:
         return GlobResult(success=True, message="OK")
 
     async def grep(
-        self, pattern: str, path: str = "/",
+        self,
+        pattern: str,
+        path: str = "/",
         *,
         glob_filter: str | None = None,
         case_sensitive: bool = True,
@@ -140,40 +171,51 @@ class MinimalBackend:
         return GrepResult(success=True, message="OK")
 
     async def tree(
-        self, path: str = "/",
-        *, max_depth: int | None = None,
+        self,
+        path: str = "/",
+        *,
+        max_depth: int | None = None,
         session: AsyncSession | None = None,
     ) -> TreeResult:
         return TreeResult(success=True, message="OK")
 
     async def list_dir(
-        self, path: str = "/",
-        *, session: AsyncSession | None = None,
+        self,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
     ) -> ListResult:
         entries = []
         prefix = path.rstrip("/") + "/"
         seen = set()
         for p in self._files:
             if p.startswith(prefix):
-                rest = p[len(prefix):]
+                rest = p[len(prefix) :]
                 name = rest.split("/")[0]
                 if name not in seen:
                     seen.add(name)
-                    entries.append(FileInfo(
-                        path=prefix + name, name=name,
-                        is_directory="/" in rest,
-                    ))
+                    entries.append(
+                        FileInfo(
+                            path=prefix + name,
+                            name=name,
+                            is_directory="/" in rest,
+                        )
+                    )
         return ListResult(success=True, message="OK", entries=entries, path=path)
 
     async def exists(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> bool:
         return path in self._files
 
     async def get_info(
-        self, path: str,
-        *, session: AsyncSession | None = None,
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> FileInfo | None:
         if path not in self._files:
             return None
@@ -230,12 +272,14 @@ def minimal_vfs():
     """VFS with a single MinimalBackend at /mem (no session_factory)."""
     backend = MinimalBackend()
     registry = MountRegistry()
-    registry.add_mount(MountConfig(
-        mount_path="/mem",
-        backend=backend,
-        session_factory=None,
-        mount_type="memory",
-    ))
+    registry.add_mount(
+        MountConfig(
+            mount_path="/mem",
+            backend=backend,
+            session_factory=None,
+            mount_type="memory",
+        )
+    )
     return VFS(registry)
 
 
@@ -314,22 +358,28 @@ class TestMixedMounts:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-        factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         dfs = DatabaseFileSystem(dialect="sqlite")
 
         minimal = MinimalBackend()
 
         registry = MountRegistry()
-        registry.add_mount(MountConfig(
-            mount_path="/db", backend=dfs,
-            session_factory=factory, mount_type="vfs",
-        ))
-        registry.add_mount(MountConfig(
-            mount_path="/mem", backend=minimal,
-            session_factory=None, mount_type="memory",
-        ))
+        registry.add_mount(
+            MountConfig(
+                mount_path="/db",
+                backend=dfs,
+                session_factory=factory,
+                mount_type="vfs",
+            )
+        )
+        registry.add_mount(
+            MountConfig(
+                mount_path="/mem",
+                backend=minimal,
+                session_factory=None,
+                mount_type="memory",
+            )
+        )
 
         vfs = VFS(registry)
         yield vfs
@@ -368,8 +418,13 @@ class _FailingBackend(MinimalBackend):
     """Backend that raises on write to test rollback."""
 
     async def write(
-        self, path: str, content: str, created_by: str = "agent",
-        *, overwrite: bool = True, session: AsyncSession | None = None,
+        self,
+        path: str,
+        content: str,
+        created_by: str = "agent",
+        *,
+        overwrite: bool = True,
+        session: AsyncSession | None = None,
     ) -> WriteResult:
         raise RuntimeError("Simulated backend failure")
 
@@ -384,26 +439,29 @@ class TestVFSSessionRollback:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-        factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         dfs = DatabaseFileSystem(dialect="sqlite")
 
         registry = MountRegistry()
-        registry.add_mount(MountConfig(
-            mount_path="/db", backend=dfs,
-            session_factory=factory, mount_type="vfs",
-        ))
+        registry.add_mount(
+            MountConfig(
+                mount_path="/db",
+                backend=dfs,
+                session_factory=factory,
+                mount_type="vfs",
+            )
+        )
         vfs = VFS(registry)
         yield vfs, factory
         await vfs.close()
         await engine.dispose()
 
     async def test_backend_exception_triggers_rollback(
-        self, rollback_vfs: tuple[VFS, async_sessionmaker],
+        self,
+        rollback_vfs: tuple[VFS, async_sessionmaker],
     ) -> None:
         """Write succeeds, then a forced failure rolls back — original intact."""
-        vfs, factory = rollback_vfs
+        vfs, _factory = rollback_vfs
 
         # Successful write — committed
         result = await vfs.write("/db/test.txt", "original")
@@ -435,10 +493,14 @@ class TestVFSSessionRollback:
         """VFS propagates backend exceptions (not swallowed)."""
         backend = _FailingBackend()
         registry = MountRegistry()
-        registry.add_mount(MountConfig(
-            mount_path="/fail", backend=backend,
-            session_factory=None, mount_type="memory",
-        ))
+        registry.add_mount(
+            MountConfig(
+                mount_path="/fail",
+                backend=backend,
+                session_factory=None,
+                mount_type="memory",
+            )
+        )
         vfs = VFS(registry)
 
         with pytest.raises(RuntimeError, match="Simulated backend failure"):

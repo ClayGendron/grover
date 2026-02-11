@@ -296,7 +296,7 @@ async def delete_file(
         if file.is_directory:
             result = await session.execute(
                 select(model).where(
-                    model.path.startswith(path + "/"),  # type: ignore[union-attr]
+                    model.path.startswith(path + "/"),
                 )
             )
             for child in result.scalars().all():
@@ -312,7 +312,7 @@ async def delete_file(
         if file.is_directory:
             children_result = await session.execute(
                 select(model).where(
-                    model.path.startswith(path + "/"),  # type: ignore[union-attr]
+                    model.path.startswith(path + "/"),
                     model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                 )
             )
@@ -443,7 +443,7 @@ async def move_file(
         model = file_model
         result = await session.execute(
             select(model).where(
-                model.path.startswith(src + "/"),  # type: ignore[union-attr]
+                model.path.startswith(src + "/"),
             )
         )
         children = result.scalars().all()
@@ -538,7 +538,7 @@ async def list_dir_db(
         result = await session.execute(
             select(model).where(
                 model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                model.parent_path == path,  # type: ignore[arg-type]
+                model.parent_path == path,
             )
         )
     entries = [MetadataService.file_to_info(f) for f in result.scalars().all()]

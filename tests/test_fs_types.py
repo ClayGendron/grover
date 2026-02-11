@@ -120,18 +120,14 @@ class TestDeleteResult:
         assert r.total_deleted is None
 
     def test_permanent(self):
-        r = DeleteResult(
-            success=True, message="Deleted", permanent=True, total_deleted=3
-        )
+        r = DeleteResult(success=True, message="Deleted", permanent=True, total_deleted=3)
         assert r.permanent is True
         assert r.total_deleted == 3
 
 
 class TestMkdirResult:
     def test_created(self):
-        r = MkdirResult(
-            success=True, message="Created", path="/a/b", created_dirs=["/a", "/a/b"]
-        )
+        r = MkdirResult(success=True, message="Created", path="/a/b", created_dirs=["/a", "/a/b"])
         assert r.path == "/a/b"
         assert len(r.created_dirs) == 2
 
@@ -158,9 +154,7 @@ class TestListResult:
 
 class TestMoveResult:
     def test_success(self):
-        r = MoveResult(
-            success=True, message="Moved", old_path="/a.py", new_path="/b.py"
-        )
+        r = MoveResult(success=True, message="Moved", old_path="/a.py", new_path="/b.py")
         assert r.old_path == "/a.py"
         assert r.new_path == "/b.py"
 

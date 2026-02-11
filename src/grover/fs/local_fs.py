@@ -95,8 +95,8 @@ class LocalFileSystem:
     ) -> None:
         from grover.models.files import File, FileVersion
 
-        fm: type[FileBase] = file_model or File  # type: ignore[assignment]
-        fvm: type[FileVersionBase] = file_version_model or FileVersion  # type: ignore[assignment]
+        fm: type[FileBase] = file_model or File
+        fvm: type[FileVersionBase] = file_version_model or FileVersion
 
         self.dialect = "sqlite"
         self.schema = schema
@@ -1134,8 +1134,8 @@ class LocalFileSystem:
                 model = self._file_model
                 children_result = await sess.execute(
                     select(model).where(
-                        model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
-                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                        model.path.startswith(restored_path + "/"),
+                        model.deleted_at.is_(None),  # type: ignore[possibly-missing-attribute]
                     )
                 )
                 for child in children_result.scalars().all():

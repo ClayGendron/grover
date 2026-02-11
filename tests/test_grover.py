@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Iterator
 from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import pytest
 
@@ -185,7 +187,7 @@ class TestGroverGraph:
         assert len(deps) >= 1
 
     def test_contains_returns_chunks(self, grover: Grover):
-        code = 'def foo():\n    pass\n\ndef bar():\n    pass\n'
+        code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
         chunks = grover.contains("/project/funcs.py")
         assert len(chunks) >= 2
@@ -231,25 +233,23 @@ class TestGroverSearch:
 class TestGroverIndex:
     def test_index_scans_files(self, grover: Grover, workspace: Path):
         # Write files directly to disk so index() discovers them
-        (workspace / "one.py").write_text('def one():\n    return 1\n')
-        (workspace / "two.py").write_text('def two():\n    return 2\n')
+        (workspace / "one.py").write_text("def one():\n    return 1\n")
+        (workspace / "two.py").write_text("def two():\n    return 2\n")
         stats = grover.index()
         assert stats["files_scanned"] >= 2
 
     def test_index_creates_chunks(self, grover: Grover, workspace: Path):
-        (workspace / "funcs.py").write_text(
-            'def alpha():\n    pass\n\ndef beta():\n    pass\n'
-        )
+        (workspace / "funcs.py").write_text("def alpha():\n    pass\n\ndef beta():\n    pass\n")
         stats = grover.index()
         assert stats["chunks_created"] >= 2
 
     def test_index_builds_graph(self, grover: Grover, workspace: Path):
-        (workspace / "main.py").write_text('def main():\n    pass\n')
+        (workspace / "main.py").write_text("def main():\n    pass\n")
         grover.index()
         assert grover.graph.has_node("/project/main.py")
 
     def test_index_returns_stats(self, grover: Grover, workspace: Path):
-        (workspace / "a.py").write_text('def a():\n    pass\n')
+        (workspace / "a.py").write_text("def a():\n    pass\n")
         stats = grover.index()
         assert "files_scanned" in stats
         assert "chunks_created" in stats
@@ -260,7 +260,7 @@ class TestGroverIndex:
         grover_dir = workspace / ".grover" / "chunks"
         grover_dir.mkdir(parents=True)
         (grover_dir / "stale.txt").write_text("stale chunk")
-        (workspace / "real.py").write_text('def real():\n    pass\n')
+        (workspace / "real.py").write_text("def real():\n    pass\n")
 
         grover.index()
         # The .grover file should NOT be indexed
@@ -276,7 +276,7 @@ class TestGroverIndex:
 
 class TestGroverEventHandlers:
     def test_write_updates_graph(self, grover: Grover):
-        grover.write("/project/mod.py", 'def work():\n    pass\n')
+        grover.write("/project/mod.py", "def work():\n    pass\n")
         assert grover.graph.has_node("/project/mod.py")
 
     def test_write_updates_search(self, grover: Grover):
@@ -288,7 +288,7 @@ class TestGroverEventHandlers:
         assert len(results) >= 1
 
     def test_delete_removes_from_graph(self, grover: Grover):
-        grover.write("/project/gone.py", 'def gone():\n    pass\n')
+        grover.write("/project/gone.py", "def gone():\n    pass\n")
         assert grover.graph.has_node("/project/gone.py")
         grover.delete("/project/gone.py")
         assert not grover.graph.has_node("/project/gone.py")
@@ -296,7 +296,7 @@ class TestGroverEventHandlers:
     def test_delete_removes_from_search(self, grover: Grover):
         grover.write(
             "/project/vanish.py",
-            'def vanishing_function():\n    pass\n',
+            "def vanishing_function():\n    pass\n",
         )
         # Verify it's in search
         assert grover._async._search_index is not None
@@ -317,7 +317,7 @@ class TestGroverEventHandlers:
 
 class TestGroverPersistence:
     def test_save_persists_graph(self, grover: Grover, workspace: Path):
-        grover.write("/project/persist.py", 'def persist():\n    pass\n')
+        grover.write("/project/persist.py", "def persist():\n    pass\n")
         grover.save()
 
         # Verify DB has edges
@@ -345,7 +345,7 @@ class TestGroverPersistence:
             embedding_provider=FakeProvider(),
         )
         g1.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
-        g1.write("/project/keep.py", 'def keep():\n    pass\n')
+        g1.write("/project/keep.py", "def keep():\n    pass\n")
         g1.save()
         g1.close()
 

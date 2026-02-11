@@ -56,8 +56,12 @@ class InMemoryBackend:
         self.close_calls += 1
 
     async def read(
-        self, path: str, offset: int = 0, limit: int = 2000,
-        *, session: object | None = None,
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
+        *,
+        session: object | None = None,
     ) -> ReadResult:
         content = self._files.get(path)
         if content is None:
@@ -65,36 +69,52 @@ class InMemoryBackend:
         return ReadResult(success=True, message="OK", content=content, file_path=path)
 
     async def list_dir(
-        self, path: str = "/",
-        *, session: object | None = None,
+        self,
+        path: str = "/",
+        *,
+        session: object | None = None,
     ) -> ListResult:
         return ListResult(success=True, message="OK", entries=[], path=path)
 
     async def exists(
-        self, path: str,
-        *, session: object | None = None,
+        self,
+        path: str,
+        *,
+        session: object | None = None,
     ) -> bool:
         return path in self._files
 
     async def get_info(
-        self, path: str,
-        *, session: object | None = None,
+        self,
+        path: str,
+        *,
+        session: object | None = None,
     ) -> FileInfo | None:
         if path not in self._files:
             return None
         return FileInfo(path=path, name=path.rsplit("/", 1)[-1], is_directory=False)
 
     async def write(
-        self, path: str, content: str, created_by: str = "agent",
-        *, overwrite: bool = True, session: object | None = None,
+        self,
+        path: str,
+        content: str,
+        created_by: str = "agent",
+        *,
+        overwrite: bool = True,
+        session: object | None = None,
     ) -> WriteResult:
         self._files[path] = content
         return WriteResult(success=True, message="OK", file_path=path)
 
     async def edit(
-        self, path: str, old_string: str, new_string: str,
-        replace_all: bool = False, created_by: str = "agent",
-        *, session: object | None = None,
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        created_by: str = "agent",
+        *,
+        session: object | None = None,
     ) -> EditResult:
         content = self._files.get(path)
         if content is None:
@@ -103,8 +123,11 @@ class InMemoryBackend:
         return EditResult(success=True, message="OK", file_path=path)
 
     async def delete(
-        self, path: str, permanent: bool = False,
-        *, session: object | None = None,
+        self,
+        path: str,
+        permanent: bool = False,
+        *,
+        session: object | None = None,
     ) -> DeleteResult:
         if path not in self._files:
             return DeleteResult(success=False, message=f"Not found: {path}")
@@ -112,14 +135,20 @@ class InMemoryBackend:
         return DeleteResult(success=True, message="OK", file_path=path, permanent=permanent)
 
     async def mkdir(
-        self, path: str, parents: bool = True,
-        *, session: object | None = None,
+        self,
+        path: str,
+        parents: bool = True,
+        *,
+        session: object | None = None,
     ) -> MkdirResult:
         return MkdirResult(success=True, message="OK", path=path)
 
     async def move(
-        self, src: str, dest: str,
-        *, session: object | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: object | None = None,
     ) -> MoveResult:
         content = self._files.pop(src, None)
         if content is None:
@@ -128,8 +157,11 @@ class InMemoryBackend:
         return MoveResult(success=True, message="OK", old_path=src, new_path=dest)
 
     async def copy(
-        self, src: str, dest: str,
-        *, session: object | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        session: object | None = None,
     ) -> WriteResult:
         content = self._files.get(src)
         if content is None:

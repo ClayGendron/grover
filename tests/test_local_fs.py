@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+    from pathlib import Path
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 from grover.fs.local_fs import LocalFileSystem
 
@@ -423,9 +424,7 @@ class TestWALPragma:
 
         # Query the database to verify WAL mode
         async with factory() as session:
-            result = await session.execute(
-                __import__("sqlalchemy").text("PRAGMA journal_mode")
-            )
+            result = await session.execute(__import__("sqlalchemy").text("PRAGMA journal_mode"))
             mode = result.scalar()
             assert mode == "wal"
         await fs.close()
@@ -435,9 +434,7 @@ class TestWALPragma:
         fs, factory = await _make_local_fs(tmp_path)
 
         async with factory() as session:
-            result = await session.execute(
-                __import__("sqlalchemy").text("PRAGMA busy_timeout")
-            )
+            result = await session.execute(__import__("sqlalchemy").text("PRAGMA busy_timeout"))
             timeout = result.scalar()
             assert timeout == 5000
         await fs.close()
@@ -447,9 +444,7 @@ class TestWALPragma:
         fs, factory = await _make_local_fs(tmp_path)
 
         async with factory() as session:
-            result = await session.execute(
-                __import__("sqlalchemy").text("PRAGMA synchronous")
-            )
+            result = await session.execute(__import__("sqlalchemy").text("PRAGMA synchronous"))
             level = result.scalar()
             # FULL = 2
             assert level == 2

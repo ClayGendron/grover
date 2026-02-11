@@ -123,9 +123,7 @@ class TestVersioning:
             for version_num in range(1, len(contents) + 1):
                 vc = await fs.get_version_content("/f.py", version_num, session=session)
                 assert vc.success, f"Version {version_num} failed: {vc.message}"
-                assert vc.content == contents[version_num - 1], (
-                    f"Version {version_num} mismatch"
-                )
+                assert vc.content == contents[version_num - 1], f"Version {version_num} mismatch"
         await engine.dispose()
 
     async def test_snapshot_interval(self):
@@ -629,9 +627,7 @@ class TestHashValidation:
             await session.flush()
 
             # Corrupt the stored content_hash for version 1
-            result = await session.execute(
-                select(FileVersion).where(FileVersion.version == 1)
-            )
+            result = await session.execute(select(FileVersion).where(FileVersion.version == 1))
             ver = result.scalar_one()
             ver.content_hash = "0000000000000000000000000000000000000000000000000000000000000000"
             await session.flush()
@@ -822,9 +818,7 @@ class TestVersionReconstructionAcrossSnapshots:
             for version_num in range(1, len(contents) + 1):
                 vc = await fs.get_version_content("/f.py", version_num, session=session)
                 assert vc.success, f"Version {version_num} failed: {vc.message}"
-                assert vc.content == contents[version_num - 1], (
-                    f"Version {version_num} mismatch"
-                )
+                assert vc.content == contents[version_num - 1], f"Version {version_num} mismatch"
         await engine.dispose()
 
 
