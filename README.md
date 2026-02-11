@@ -1,14 +1,22 @@
-# grover
+[![PyPI version](https://img.shields.io/pypi/v/grover)](https://pypi.org/project/grover/)
+[![Python](https://img.shields.io/pypi/pyversions/grover)](https://pypi.org/project/grover/)
+[![License](https://img.shields.io/github/license/ClayGendron/grover)](https://github.com/ClayGendron/grover/blob/main/LICENSE)
 
-Safe files, knowledge graphs, and semantic search for AI agents.
+# Grover
 
-## Features
+**The agentic filesystem.** Safe file operations, knowledge graphs, and semantic search — unified for AI agents.
 
-- **Filesystem** — mount-based virtual filesystem with local and database backends, automatic versioning, soft-delete trash, and cross-mount operations
-- **Knowledge graph** — dependency, impact, and containment queries powered by rustworkx
-- **Semantic search** — HNSW vector index (usearch) with pluggable embedding providers
-- **Code analysis** — built-in Python AST analyzer; JavaScript, TypeScript, and Go via tree-sitter
-- **Async-first** — full async API (`GroverAsync`) with a sync wrapper (`Grover`)
+> **Alpha** — Grover is under active development. The core API is functional and tested, but expect breaking changes before 1.0.
+
+Grover gives AI agents a single toolkit for working with codebases and documents:
+
+- **Versioned filesystem** — mount local directories or databases, write safely with automatic versioning, and recover mistakes with soft-delete trash and rollback.
+- **Knowledge graph** — dependency, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Code is automatically analyzed (Python via AST; JS/TS/Go via tree-sitter) and wired into the graph.
+- **Semantic search** — HNSW vector index via [usearch](https://github.com/unum-cloud/usearch) with pluggable embedding providers. Search by meaning, not just keywords.
+
+All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically.
+
+The name comes from **grove** (a connected cluster of trees) + **rover** (an agent that explores). Grover treats your codebase as a grove of interconnected files and lets agents navigate it safely.
 
 ## Installation
 
@@ -20,115 +28,152 @@ Optional extras:
 
 ```bash
 pip install grover[search]       # sentence-transformers + usearch
-pip install grover[treesitter]   # JS/TS/Go analyzers
+pip install grover[treesitter]   # JS/TS/Go code analyzers
 pip install grover[postgres]     # PostgreSQL backend
 pip install grover[mssql]        # MSSQL backend
 pip install grover[all]          # search + treesitter + postgres
 ```
 
-## Quick start
+Requires Python 3.11+.
 
-### Sync API
+## Quick start
 
 ```python
 from grover import Grover
 from grover.fs import LocalFileSystem
 
-g = Grover(data_dir="/tmp/grover-demo")
+# Create a Grover instance (state is stored in .grover/)
+g = Grover()
 
-# Mount a local directory
+# Mount a local project directory
 backend = LocalFileSystem(workspace_dir="/path/to/project")
 g.mount("/project", backend)
 
-# Use a context manager for transaction mode (auto-commits on success)
-with g:
-    # Write files — automatically versioned
-    g.write("/project/hello.py", "def greet(name):\n    return f'Hello, {name}!'\n")
-    g.write("/project/main.py", "from hello import greet\nprint(greet('world'))\n")
+# Write files — every write is automatically versioned
+g.write("/project/hello.py", "def greet(name):\n    return f'Hello, {name}!'\n")
+g.write("/project/main.py", "from hello import greet\nprint(greet('world'))\n")
 
-# Read files
+# Read, edit, delete
 content = g.read("/project/hello.py")
-
-# Edit files (find-and-replace)
 g.edit("/project/hello.py", "Hello", "Hi")
+g.delete("/project/main.py")  # soft-delete — recoverable from trash
 
-# List directory contents
-entries = g.list_dir("/project")
-
-# Check existence
-g.exists("/project/hello.py")  # → True
-
-# Delete files (soft-delete to trash)
-g.delete("/project/main.py")
-
-# Knowledge graph queries (return list[Ref])
-g.dependencies("/project/main.py")   # → nodes that main.py depends on
-g.dependents("/project/hello.py")    # → nodes that depend on hello.py
-g.impacts("/project/hello.py")       # → transitive reverse reachability
-g.contains("/project/hello.py")      # → chunks (functions, classes)
-g.path_between("/project/main.py", "/project/hello.py")  # → shortest path or None
-
-# Bulk-index an existing project (analyze files, build graph + search index)
+# Index the project (analyze code, build graph + search index)
 stats = g.index()
-print(stats)  # {"files_scanned": 42, "chunks_created": 187, "edges_added": 95}
+# {"files_scanned": 42, "chunks_created": 187, "edges_added": 95}
 
-# Semantic search (requires search extra + embedding provider)
+# Knowledge graph queries
+g.dependencies("/project/main.py")   # what does main.py depend on?
+g.dependents("/project/hello.py")    # what depends on hello.py?
+g.impacts("/project/hello.py")       # transitive impact analysis
+g.contains("/project/hello.py")      # functions and classes inside
+
+# Semantic search (requires the search extra)
 results = g.search("greeting function", k=5)
 for r in results:
-    print(r.ref.path, r.score, r.content)
+    print(r.ref.path, r.score)
 
-# Persist graph and search index
+# Persist and clean up
 g.save()
-
-# Clean up
 g.close()
 ```
 
-### Async API
+A full async API is also available:
 
 ```python
 from grover import GroverAsync
-from grover.fs import LocalFileSystem
 
-g = GroverAsync(data_dir="/tmp/grover-demo")
-
-backend = LocalFileSystem(workspace_dir="/path/to/project")
+g = GroverAsync()
 await g.mount("/project", backend)
-
-async with g:
-    await g.write("/project/hello.py", "def greet(): ...")
-
-content = await g.read("/project/hello.py")
-stats = await g.index()
+await g.write("/project/hello.py", "...")
 await g.save()
 await g.close()
 ```
 
-## API reference
+## Architecture
 
-### Grover / GroverAsync
+Grover is composed of three layers that share a common identity model — every node in the graph and every entry in the search index is a file path.
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `mount(path, backend, *, mount_type, permission, label, hidden)` | `None` | Mount a storage backend at a virtual path |
-| `unmount(path)` | `None` | Remove a mount |
-| `read(path)` | `ReadResult` | Read file content |
-| `write(path, content)` | `bool` | Write file (creates or updates) |
-| `edit(path, old, new)` | `bool` | Find-and-replace within a file |
-| `delete(path)` | `bool` | Soft-delete a file |
-| `list_dir(path="/")` | `list[dict]` | List directory entries |
-| `exists(path)` | `bool` | Check if a path exists |
-| `dependencies(path)` | `list[Ref]` | Nodes this file depends on |
-| `dependents(path)` | `list[Ref]` | Nodes that depend on this file |
-| `impacts(path, max_depth=3)` | `list[Ref]` | Transitive reverse reachability |
-| `path_between(source, target)` | `list[Ref] \| None` | Shortest path between two nodes |
-| `contains(path)` | `list[Ref]` | Chunks contained in this file |
-| `search(query, k=10)` | `list[SearchResult]` | Semantic similarity search |
-| `index(mount_path=None)` | `dict[str, int]` | Analyze files, build graph and search index |
-| `save()` | `None` | Persist graph and search index to disk |
-| `close()` | `None` | Shut down subsystems |
+```mermaid
+graph TD
+    A["Grover (sync) / GroverAsync"]
+    A --> B["VFS — Virtual Filesystem"]
+    A --> C["Graph — Knowledge Graph"]
+    A --> D["SearchIndex — Vector Search"]
+    A --> E["EventBus"]
 
-### Key types
+    B --> F["LocalFileSystem<br/><i>disk + SQLite</i>"]
+    B --> G["DatabaseFileSystem<br/><i>PostgreSQL · MSSQL · SQLite</i>"]
+
+    C --> H["rustworkx DiGraph"]
+    C --> I["Analyzers<br/><i>Python · JS/TS · Go</i>"]
+
+    D --> J["usearch HNSW Index"]
+    D --> K["Embedding Providers<br/><i>sentence-transformers · custom</i>"]
+
+    E -.->|FILE_WRITTEN| C
+    E -.->|FILE_WRITTEN| D
+    E -.->|FILE_DELETED| C
+    E -.->|FILE_DELETED| D
+```
+
+**VFS** routes operations to the right backend based on mount paths. Multiple backends can be mounted simultaneously.
+
+**Graph** maintains an in-memory directed graph of file dependencies. Code analyzers automatically extract imports, function definitions, and class hierarchies. You can also add manual edges.
+
+**SearchIndex** embeds file chunks into vectors and serves similarity queries. The default provider uses `all-MiniLM-L6-v2` (80 MB, runs on CPU, no API key needed).
+
+**EventBus** keeps everything consistent — when a file is written or deleted, the graph and search index update automatically.
+
+## Backends
+
+Grover supports two storage backends through a common protocol:
+
+**LocalFileSystem** — for desktop development and code editing. Files live on disk where your IDE, git, and other tools can see them. Metadata and version history are stored in a local SQLite database. This is the default for local projects.
+
+**DatabaseFileSystem** — for web applications and shared knowledge bases. All content lives in the database (PostgreSQL, MSSQL, or SQLite). There are no physical files. This is ideal for multi-tenant platforms, enterprise document stores, or any environment where state should be centralized.
+
+Both backends support versioning and trash. You can mount them side by side:
+
+```python
+from grover.fs import LocalFileSystem, DatabaseFileSystem
+
+g = Grover()
+
+# Local code on disk
+g.mount("/code", LocalFileSystem(workspace_dir="./my-project"))
+
+# Shared docs in PostgreSQL
+g.mount("/docs", DatabaseFileSystem(dialect="postgresql"))
+```
+
+## What's in `.grover/`
+
+When you use Grover, a `.grover/` directory is created to store internal state:
+
+| Path | Contents |
+|------|----------|
+| `grover.db` | SQLite database with file metadata, version history, and graph edges |
+| `chunks/` | Extracted code chunks (functions, classes) as individual files |
+| `search.usearch` | The HNSW vector index for semantic search |
+| `search_meta.json` | Metadata mapping for the search index |
+
+This directory is excluded from indexing automatically. You'll typically want to add `.grover/` to your `.gitignore`.
+
+## API overview
+
+The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
+
+| Category | Methods |
+|----------|---------|
+| **Filesystem** | `read`, `write`, `edit`, `delete`, `list_dir`, `exists` |
+| **Versioning** | `list_versions`, `get_version_content`, `restore_version` |
+| **Trash** | `list_trash`, `restore_from_trash`, `empty_trash` |
+| **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains` |
+| **Search** | `search` |
+| **Lifecycle** | `mount`, `unmount`, `index`, `save`, `close` |
+
+Key types:
 
 ```python
 from grover import Ref, SearchResult, file_ref
@@ -136,52 +181,28 @@ from grover import Ref, SearchResult, file_ref
 # Ref — immutable reference to a file or chunk
 Ref(path="/project/hello.py", version=2, line_start=1, line_end=5)
 
-# file_ref — shorthand constructor
-file_ref("/project/hello.py", version=2)
-
-# SearchResult
-result.ref      # Ref
-result.score    # float (cosine similarity, 0–1)
-result.content  # str (the matched text)
+# SearchResult — a search hit with similarity score
+result.ref       # Ref
+result.score     # float (cosine similarity, 0–1)
+result.content   # str
 ```
 
-### Filesystem layer
+## Roadmap
 
-```python
-from grover.fs import (
-    LocalFileSystem,       # Local disk + SQLite versioning
-    DatabaseFileSystem,    # Pure-database storage
-    UnifiedFileSystem,     # Mount-routing layer
-    MountConfig,           # Mount configuration dataclass
-    Permission,            # READ_WRITE | READ_ONLY
-)
-```
+Grover is in its first release cycle. Here's what's coming:
 
-### Graph
+- **MCP server** — expose Grover as a Model Context Protocol server for Claude Code, Cursor, and other MCP-compatible agents
+- **CLI** — `grover init`, `grover status`, `grover search`, `grover rollback`
+- **Framework integrations** — LangGraph tools, Aider plugin, fsspec adapter
+- **More language analyzers** — Rust, Java, C#
+- **More embedding providers** — OpenAI, Cohere, Voyage
 
-```python
-from grover.graph import Graph
+See the [implementation plan](grover_implementation_plan.md) for the full roadmap.
 
-graph = g.graph  # access via Grover instance
-graph.add_node("/project/foo.py")
-graph.add_edge("/project/main.py", "/project/foo.py", "imports")
-graph.nodes()       # list[str]
-graph.edges()       # list[tuple[str, str, dict]]
-graph.node_count    # int
-graph.edge_count    # int
-graph.is_dag()      # bool
-```
+## Contributing
 
-### Search
-
-```python
-from grover.search import (
-    SearchIndex,
-    EmbeddingProvider,              # protocol for custom providers
-    SentenceTransformerProvider,    # default provider (requires search extra)
-)
-```
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, workflow, and guidelines.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE)
