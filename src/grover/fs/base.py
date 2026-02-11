@@ -60,8 +60,9 @@ FV = TypeVar("FV", bound=FileVersionBase)
 class BaseFileSystem(ABC, Generic[F, FV]):
     """Base file system with shared logic for both backends.
 
+    Sessions are always injected by VFS via the ``session`` kwarg.
+
     Subclasses must implement:
-    - _get_session(): Get database session
     - _read_content(path, session): Read file content from storage
     - _write_content(path, content, session): Write content to storage
     - _delete_content(path, session): Delete content from storage
@@ -93,16 +94,6 @@ class BaseFileSystem(ABC, Generic[F, FV]):
     # =========================================================================
     # Abstract Methods - Subclasses must implement
     # =========================================================================
-
-    @abstractmethod
-    async def _get_session(self) -> AsyncSession:
-        """Return a database session for the current operation.
-
-        LocalFileSystem creates a new session from its async session factory.
-        DatabaseFileSystem raises RuntimeError (sessions must be provided
-        per-operation via the ``session`` kwarg).
-        """
-        ...
 
     @abstractmethod
     async def _read_content(self, path: str, session: AsyncSession) -> str | None:
@@ -143,33 +134,6 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         DB column), not the file metadata record.
         """
         ...
-
-    @abstractmethod
-    async def _commit(self, session: AsyncSession) -> None:
-        """Commit or flush the given session.
-
-        LocalFileSystem calls ``session.commit()`` since it owns the session
-        lifecycle. DatabaseFileSystem calls ``session.flush()`` to defer the
-        real commit to the outer transaction boundary.
-        """
-        ...
-
-    # =========================================================================
-    # Session Resolution
-    # =========================================================================
-
-    async def _resolve_session(
-        self, session: AsyncSession | None,
-    ) -> tuple[AsyncSession, bool]:
-        """Return ``(session, owns_it)``.
-
-        If the caller provided a session we reuse it and do NOT
-        commit / close it (``owns_it=False``).  Otherwise we create a
-        fresh one via ``_get_session()`` (``owns_it=True``).
-        """
-        if session is not None:
-            return session, False
-        return await self._get_session(), True
 
     # =========================================================================
     # Shared Helper Methods
@@ -314,7 +278,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         offset: int = 0,
         limit: int = DEFAULT_READ_LIMIT,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> ReadResult:
         """Read file content with pagination."""
         valid, error = validate_path(path)
@@ -326,35 +290,22 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         if is_trash_path(path):
             return ReadResult(success=False, message=f"Cannot read from trash: {path}")
 
-        _session, owns = await self._resolve_session(session)
+        file = await self._get_file(session, path)
 
-        try:
-            file = await self._get_file(_session, path)
+        if not file:
+            return ReadResult(success=False, message=f"File not found: {path}")
 
-            if not file:
-                return ReadResult(success=False, message=f"File not found: {path}")
+        if file.is_directory:
+            return ReadResult(
+                success=False,
+                message=f"Path is a directory, not a file: {path}",
+            )
 
-            if file.is_directory:
-                return ReadResult(
-                    success=False,
-                    message=f"Path is a directory, not a file: {path}",
-                )
+        content = await self._read_content(path, session)
+        if content is None:
+            return ReadResult(success=False, message=f"File content not found: {path}")
 
-            content = await self._read_content(path, _session)
-            if content is None:
-                return ReadResult(success=False, message=f"File content not found: {path}")
-
-            return self._paginate_content(content, path, offset, limit)
-
-        except Exception as e:
-            logger.error("Read failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return self._paginate_content(content, path, offset, limit)
 
     # =========================================================================
     # Core Operations: Write
@@ -367,7 +318,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         created_by: str = "agent",
         *,
         overwrite: bool = True,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> WriteResult:
         """Write file content."""
         valid, error = validate_path(path)
@@ -390,95 +341,78 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         content_hash = hashlib.sha256(content_bytes).hexdigest()
         size_bytes = len(content_bytes)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            existing = await self._get_file(_session, path, include_deleted=True)
+        existing = await self._get_file(session, path, include_deleted=True)
 
-            if existing:
-                if existing.is_directory:
-                    return WriteResult(success=False, message=f"Path is a directory: {path}")
+        if existing:
+            if existing.is_directory:
+                return WriteResult(success=False, message=f"Path is a directory: {path}")
 
-                if not overwrite and not existing.deleted_at:
-                    return WriteResult(
-                        success=False,
-                        message=f"File already exists: {path}",
-                    )
-
-                # Handle soft-deleted files
-                if existing.deleted_at:
-                    existing.deleted_at = None
-                    existing.path = existing.original_path or path
-                    existing.original_path = None
-
-                # Update metadata (increment version first so _save_version uses new number)
-                existing.current_version += 1
-                existing.content_hash = content_hash
-                existing.size_bytes = size_bytes
-                existing.updated_at = datetime.now(UTC)
-
-                # Save version after incrementing
-                old_content = await self._read_content(path, _session)
-                if old_content is not None:
-                    await self._save_version(
-                        _session, existing, old_content, content, created_by,
-                    )
-
-                # Write content first, then commit. If disk write fails the
-                # except block rolls back the version record. An orphaned file
-                # on disk (commit fails after write) is inert; phantom metadata
-                # (commit succeeds but write fails) breaks reads. See docs/internals/fs.md.
-                await self._write_content(path, content, _session)
-                if owns:
-                    await self._commit(_session)
-                else:
-                    await _session.flush()
-                created = False
-                version = existing.current_version
-            else:
-                await self._ensure_parent_dirs(_session, path)
-
-                new_file = self._file_model(
-                    path=path,
-                    name=name,
-                    parent_path=split_path(path)[0],
-                    content_hash=content_hash,
-                    size_bytes=size_bytes,
-                    mime_type=guess_mime_type(name),
+            if not overwrite and not existing.deleted_at:
+                return WriteResult(
+                    success=False,
+                    message=f"File already exists: {path}",
                 )
-                _session.add(new_file)
 
-                # Save initial snapshot (version 1)
+            # Handle soft-deleted files
+            if existing.deleted_at:
+                existing.deleted_at = None
+                existing.path = existing.original_path or path
+                existing.original_path = None
+
+            # Update metadata (increment version first so _save_version uses new number)
+            existing.current_version += 1
+            existing.content_hash = content_hash
+            existing.size_bytes = size_bytes
+            existing.updated_at = datetime.now(UTC)
+
+            # Save version after incrementing
+            old_content = await self._read_content(path, session)
+            if old_content is not None:
                 await self._save_version(
-                    _session, new_file, "", content, created_by,
+                    session, existing, old_content, content, created_by,
                 )
 
-                # Write content first, then commit — see comment above.
-                await self._write_content(path, content, _session)
-                if owns:
-                    await self._commit(_session)
-                else:
-                    await _session.flush()
+            # Write content first, then flush. If disk write fails the
+            # exception propagates to VFS which rolls back the session.
+            # An orphaned file on disk (commit fails after write) is inert;
+            # phantom metadata (commit succeeds but write fails) breaks reads.
+            # See docs/internals/fs.md.
+            await self._write_content(path, content, session)
+            await session.flush()
+            created = False
+            version = existing.current_version
+        else:
+            await self._ensure_parent_dirs(session, path)
 
-                created = True
-                version = 1
+            new_file = self._file_model(
+                path=path,
+                name=name,
+                parent_path=split_path(path)[0],
+                content_hash=content_hash,
+                size_bytes=size_bytes,
+                mime_type=guess_mime_type(name),
+            )
+            session.add(new_file)
 
-            return WriteResult(
-                success=True,
-                message=f"{'Created' if created else 'Updated'}: {path} (v{version})",
-                file_path=path,
-                created=created,
-                version=version,
+            # Save initial snapshot (version 1)
+            await self._save_version(
+                session, new_file, "", content, created_by,
             )
 
-        except Exception as e:
-            logger.error("Write failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
+            # Write content first, then flush — see comment above.
+            await self._write_content(path, content, session)
+            await session.flush()
 
-        finally:
-            if owns:
-                await _session.close()
+            created = True
+            version = 1
+
+        return WriteResult(
+            success=True,
+            message=f"{'Created' if created else 'Updated'}: {path} (v{version})",
+            file_path=path,
+            created=created,
+            version=version,
+        )
 
     # =========================================================================
     # Core Operations: Edit
@@ -492,7 +426,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         replace_all: bool = False,
         created_by: str = "agent",
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> EditResult:
         """Edit file using smart replacement."""
         valid, error = validate_path(path)
@@ -501,65 +435,50 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, path)
+        file = await self._get_file(session, path)
 
-            if not file:
-                return EditResult(success=False, message=f"File not found: {path}")
+        if not file:
+            return EditResult(success=False, message=f"File not found: {path}")
 
-            if file.is_directory:
-                return EditResult(success=False, message=f"Cannot edit directory: {path}")
+        if file.is_directory:
+            return EditResult(success=False, message=f"Cannot edit directory: {path}")
 
-            content = await self._read_content(path, _session)
-            if content is None:
-                return EditResult(success=False, message=f"File content not found: {path}")
+        content = await self._read_content(path, session)
+        if content is None:
+            return EditResult(success=False, message=f"File content not found: {path}")
 
-            result = replace(content, old_string, new_string, replace_all)
+        result = replace(content, old_string, new_string, replace_all)
 
-            if not result.success:
-                return EditResult(
-                    success=False,
-                    message=result.error or "Edit failed",
-                    file_path=path,
-                )
-
-            new_content = result.content
-            assert new_content is not None
-
-            # Update metadata
-            new_content_bytes = new_content.encode()
-            file.current_version += 1
-            file.content_hash = hashlib.sha256(new_content_bytes).hexdigest()
-            file.size_bytes = len(new_content_bytes)
-            file.updated_at = datetime.now(UTC)
-
-            # Save version after incrementing
-            await self._save_version(_session, file, content, new_content, created_by)
-
-            # Write content first, then commit — see write() comment.
-            await self._write_content(path, new_content, _session)
-            if owns:
-                await self._commit(_session)
-            else:
-                await _session.flush()
-
+        if not result.success:
             return EditResult(
-                success=True,
-                message=f"Edit applied to {path} (v{file.current_version})",
+                success=False,
+                message=result.error or "Edit failed",
                 file_path=path,
-                version=file.current_version,
             )
 
-        except Exception as e:
-            logger.error("Edit failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
+        new_content = result.content
+        assert new_content is not None
 
-        finally:
-            if owns:
-                await _session.close()
+        # Update metadata
+        new_content_bytes = new_content.encode()
+        file.current_version += 1
+        file.content_hash = hashlib.sha256(new_content_bytes).hexdigest()
+        file.size_bytes = len(new_content_bytes)
+        file.updated_at = datetime.now(UTC)
+
+        # Save version after incrementing
+        await self._save_version(session, file, content, new_content, created_by)
+
+        # Write content first, then flush — see write() comment.
+        await self._write_content(path, new_content, session)
+        await session.flush()
+
+        return EditResult(
+            success=True,
+            message=f"Edit applied to {path} (v{file.current_version})",
+            file_path=path,
+            version=file.current_version,
+        )
 
     # =========================================================================
     # Core Operations: Delete
@@ -570,7 +489,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         path: str,
         permanent: bool = False,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> DeleteResult:
         """Delete a file or directory."""
         valid, error = validate_path(path)
@@ -579,68 +498,53 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, path)
+        file = await self._get_file(session, path)
 
-            if not file:
-                return DeleteResult(success=False, message=f"File not found: {path}")
+        if not file:
+            return DeleteResult(success=False, message=f"File not found: {path}")
 
-            model = self._file_model
-            if permanent:
-                if file.is_directory:
-                    result = await _session.execute(
-                        select(model).where(
-                            model.path.startswith(path + "/"),  # type: ignore[union-attr]
-                        )
+        model = self._file_model
+        if permanent:
+            if file.is_directory:
+                result = await session.execute(
+                    select(model).where(
+                        model.path.startswith(path + "/"),  # type: ignore[union-attr]
                     )
-                    for child in result.scalars().all():
-                        await self._delete_versions(_session, child.id)
-                        await self._delete_content(child.path, _session)
-                        await _session.delete(child)
+                )
+                for child in result.scalars().all():
+                    await self._delete_versions(session, child.id)
+                    await self._delete_content(child.path, session)
+                    await session.delete(child)
 
-                await self._delete_versions(_session, file.id)
-                await self._delete_content(path, _session)
-                await _session.delete(file)
-            else:
-                now = datetime.now(UTC)
-                if file.is_directory:
-                    children_result = await _session.execute(
-                        select(model).where(
-                            model.path.startswith(path + "/"),  # type: ignore[union-attr]
-                            model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                        )
+            await self._delete_versions(session, file.id)
+            await self._delete_content(path, session)
+            await session.delete(file)
+        else:
+            now = datetime.now(UTC)
+            if file.is_directory:
+                children_result = await session.execute(
+                    select(model).where(
+                        model.path.startswith(path + "/"),  # type: ignore[union-attr]
+                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                     )
-                    for child in children_result.scalars().all():
-                        child.original_path = child.path
-                        child.path = to_trash_path(child.path, child.id)
-                        child.deleted_at = now
+                )
+                for child in children_result.scalars().all():
+                    child.original_path = child.path
+                    child.path = to_trash_path(child.path, child.id)
+                    child.deleted_at = now
 
-                file.original_path = file.path
-                file.path = to_trash_path(file.path, file.id)
-                file.deleted_at = now
+            file.original_path = file.path
+            file.path = to_trash_path(file.path, file.id)
+            file.deleted_at = now
 
-            if owns:
-                await self._commit(_session)
-            else:
-                await _session.flush()
+        await session.flush()
 
-            return DeleteResult(
-                success=True,
-                message=f"{'Permanently deleted' if permanent else 'Moved to trash'}: {path}",
-                file_path=path,
-                permanent=permanent,
-            )
-
-        except Exception as e:
-            logger.error("Delete failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return DeleteResult(
+            success=True,
+            message=f"{'Permanently deleted' if permanent else 'Moved to trash'}: {path}",
+            file_path=path,
+            permanent=permanent,
+        )
 
     # =========================================================================
     # Directory Operations
@@ -651,7 +555,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         path: str,
         parents: bool = True,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> MkdirResult:
         """Create a directory using dialect-aware upsert."""
         valid, error = validate_path(path)
@@ -660,142 +564,115 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            existing = await self._get_file(_session, path)
-            if existing:
-                if existing.is_directory:
-                    return MkdirResult(
-                        success=True,
-                        message=f"Directory already exists: {path}",
-                        path=path,
-                        created_dirs=[],
-                    )
-                return MkdirResult(success=False, message=f"Path exists as file: {path}")
-
-            dirs_to_create: list[str] = []
-            current = path
-
-            while current != "/":
-                existing = await self._get_file(_session, current)
-                if existing:
-                    if not existing.is_directory:
-                        return MkdirResult(
-                            success=False,
-                            message=f"Path exists as file: {current}",
-                        )
-                    break
-                dirs_to_create.insert(0, current)
-                if not parents and len(dirs_to_create) > 1:
-                    return MkdirResult(
-                        success=False,
-                        message=f"Parent directory does not exist: {split_path(current)[0]}",
-                    )
-                current = split_path(current)[0]
-
-            created_dirs: list[str] = []
-            for dir_path in dirs_to_create:
-                parent, name = split_path(dir_path)
-                rowcount = await upsert_file(
-                    _session,
-                    self.dialect,
-                    values={
-                        "id": str(uuid.uuid4()),
-                        "path": dir_path,
-                        "name": name,
-                        "parent_path": parent,
-                        "is_directory": True,
-                        "current_version": 1,
-                        "created_at": datetime.now(UTC),
-                        "updated_at": datetime.now(UTC),
-                    },
-                    conflict_keys=["path"],
-                    model=self._file_model,
-                    schema=self.schema,
-                )
-                if rowcount > 0:
-                    created_dirs.append(dir_path)
-
-            if owns:
-                await self._commit(_session)
-            else:
-                await _session.flush()
-
-            if created_dirs:
+        existing = await self._get_file(session, path)
+        if existing:
+            if existing.is_directory:
                 return MkdirResult(
                     success=True,
-                    message=f"Created directory: {path}",
+                    message=f"Directory already exists: {path}",
                     path=path,
-                    created_dirs=created_dirs,
+                    created_dirs=[],
                 )
+            return MkdirResult(success=False, message=f"Path exists as file: {path}")
+
+        dirs_to_create: list[str] = []
+        current = path
+
+        while current != "/":
+            existing = await self._get_file(session, current)
+            if existing:
+                if not existing.is_directory:
+                    return MkdirResult(
+                        success=False,
+                        message=f"Path exists as file: {current}",
+                    )
+                break
+            dirs_to_create.insert(0, current)
+            if not parents and len(dirs_to_create) > 1:
+                return MkdirResult(
+                    success=False,
+                    message=f"Parent directory does not exist: {split_path(current)[0]}",
+                )
+            current = split_path(current)[0]
+
+        created_dirs: list[str] = []
+        for dir_path in dirs_to_create:
+            parent, name = split_path(dir_path)
+            rowcount = await upsert_file(
+                session,
+                self.dialect,
+                values={
+                    "id": str(uuid.uuid4()),
+                    "path": dir_path,
+                    "name": name,
+                    "parent_path": parent,
+                    "is_directory": True,
+                    "current_version": 1,
+                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                },
+                conflict_keys=["path"],
+                model=self._file_model,
+                schema=self.schema,
+            )
+            if rowcount > 0:
+                created_dirs.append(dir_path)
+
+        await session.flush()
+
+        if created_dirs:
             return MkdirResult(
                 success=True,
-                message=f"Directory already exists: {path}",
+                message=f"Created directory: {path}",
                 path=path,
-                created_dirs=[],
+                created_dirs=created_dirs,
             )
-
-        except Exception as e:
-            logger.error("Mkdir failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return MkdirResult(
+            success=True,
+            message=f"Directory already exists: {path}",
+            path=path,
+            created_dirs=[],
+        )
 
     async def list_dir(
         self,
         path: str = "/",
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> ListResult:
         """List files and directories at the given path."""
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            if path != "/":
-                dir_file = await self._get_file(_session, path)
-                if not dir_file:
-                    return ListResult(success=False, message=f"Directory not found: {path}")
-                if not dir_file.is_directory:
-                    return ListResult(success=False, message=f"Not a directory: {path}")
+        if path != "/":
+            dir_file = await self._get_file(session, path)
+            if not dir_file:
+                return ListResult(success=False, message=f"Directory not found: {path}")
+            if not dir_file.is_directory:
+                return ListResult(success=False, message=f"Not a directory: {path}")
 
-            model = self._file_model
-            if path == "/":
-                result = await _session.execute(
-                    select(model).where(
-                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                        model.parent_path.in_(["", "/"]),  # type: ignore[union-attr]
-                    )
+        model = self._file_model
+        if path == "/":
+            result = await session.execute(
+                select(model).where(
+                    model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                    model.parent_path.in_(["", "/"]),  # type: ignore[union-attr]
                 )
-            else:
-                result = await _session.execute(
-                    select(model).where(
-                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                        model.parent_path == path,  # type: ignore[arg-type]
-                    )
-                )
-            entries = [self._file_to_info(f) for f in result.scalars().all()]
-
-            return ListResult(
-                success=True,
-                message=f"Listed {len(entries)} items in {path}",
-                entries=entries,
-                path=path,
             )
+        else:
+            result = await session.execute(
+                select(model).where(
+                    model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                    model.parent_path == path,  # type: ignore[arg-type]
+                )
+            )
+        entries = [self._file_to_info(f) for f in result.scalars().all()]
 
-        except Exception as e:
-            logger.error("List dir failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return ListResult(
+            success=True,
+            message=f"Listed {len(entries)} items in {path}",
+            entries=entries,
+            path=path,
+        )
 
     def _file_to_info(self, f: FileBase) -> FileInfo:
         """Convert a file record to FileInfo."""
@@ -819,7 +696,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         src: str,
         dest: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> MoveResult:
         """Move a file or directory."""
         valid, error = validate_path(src)
@@ -841,115 +718,62 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 new_path=dest,
             )
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            src_file = await self._get_file(_session, src)
-            if not src_file:
-                return MoveResult(success=False, message=f"Source not found: {src}")
+        src_file = await self._get_file(session, src)
+        if not src_file:
+            return MoveResult(success=False, message=f"Source not found: {src}")
 
-            if src_file.is_directory and dest.startswith(src + "/"):
+        if src_file.is_directory and dest.startswith(src + "/"):
+            return MoveResult(
+                success=False,
+                message=f"Cannot move directory into itself: {dest} is inside {src}",
+            )
+
+        dest_file = await self._get_file(session, dest)
+        if dest_file:
+            if dest_file.is_directory:
                 return MoveResult(
                     success=False,
-                    message=f"Cannot move directory into itself: {dest} is inside {src}",
+                    message=f"Destination is a directory: {dest}",
                 )
-
-            dest_file = await self._get_file(_session, dest)
-            if dest_file:
-                if dest_file.is_directory:
-                    return MoveResult(
-                        success=False,
-                        message=f"Destination is a directory: {dest}",
-                    )
-                if src_file.is_directory:
-                    return MoveResult(
-                        success=False,
-                        message=f"Cannot move directory over file: {dest}",
-                    )
-
-                # Atomic move: all changes in the current session
-                content = await self._read_content(src, _session) or ""
-                old_dest_content = await self._read_content(dest, _session) or ""
-
-                # Update dest metadata with source content
-                content_bytes = content.encode()
-                dest_file.current_version += 1
-                dest_file.content_hash = hashlib.sha256(content_bytes).hexdigest()
-                dest_file.size_bytes = len(content_bytes)
-                dest_file.updated_at = datetime.now(UTC)
-
-                # Save version for dest (records the overwrite in dest's history)
-                await self._save_version(
-                    _session, dest_file, old_dest_content, content, "move",
-                )
-
-                # Write content to dest storage
-                await self._write_content(dest, content, _session)
-
-                # Soft-delete src (history retained, recoverable from trash)
-                now = datetime.now(UTC)
-                src_file.original_path = src_file.path
-                src_file.path = to_trash_path(src_file.path, src_file.id)
-                src_file.deleted_at = now
-
-                # Single commit — all changes are atomic
-                if owns:
-                    await self._commit(_session)
-                else:
-                    await _session.flush()
-
-                # Clean up src content from storage (best-effort, after commit)
-                try:
-                    await self._delete_content(src, _session)
-                except Exception:
-                    logger.warning("Failed to clean up old content at %s", src)
-
-                return MoveResult(
-                    success=True,
-                    message=f"Moved {src} to {dest}",
-                    old_path=src,
-                    new_path=dest,
-                )
-
-            old_paths: list[str] = [src]
-
             if src_file.is_directory:
-                model = self._file_model
-                result = await _session.execute(
-                    select(model).where(
-                        model.path.startswith(src + "/"),  # type: ignore[union-attr]
-                    )
+                return MoveResult(
+                    success=False,
+                    message=f"Cannot move directory over file: {dest}",
                 )
-                children = result.scalars().all()
 
-                for desc in children:
-                    old_paths.append(desc.path)
-                    new_path = dest + desc.path[len(src):]
-                    content = await self._read_content(desc.path, _session)
-                    if content is not None:
-                        await self._write_content(new_path, content, _session)
-                    desc.path = new_path
-                    desc.name = split_path(new_path)[1]
-                    desc.parent_path = split_path(new_path)[0]
+            # Atomic move: all changes in the current session
+            content = await self._read_content(src, session) or ""
+            old_dest_content = await self._read_content(dest, session) or ""
 
-            content = await self._read_content(src, _session)
-            if content is not None:
-                await self._write_content(dest, content, _session)
+            # Update dest metadata with source content
+            content_bytes = content.encode()
+            dest_file.current_version += 1
+            dest_file.content_hash = hashlib.sha256(content_bytes).hexdigest()
+            dest_file.size_bytes = len(content_bytes)
+            dest_file.updated_at = datetime.now(UTC)
 
-            src_file.path = dest
-            src_file.name = split_path(dest)[1]
-            src_file.parent_path = split_path(dest)[0]
-            src_file.updated_at = datetime.now(UTC)
+            # Save version for dest (records the overwrite in dest's history)
+            await self._save_version(
+                session, dest_file, old_dest_content, content, "move",
+            )
 
-            if owns:
-                await self._commit(_session)
-            else:
-                await _session.flush()
+            # Write content to dest storage
+            await self._write_content(dest, content, session)
 
-            for old_path in old_paths:
-                try:
-                    await self._delete_content(old_path, _session)
-                except Exception:
-                    logger.warning("Failed to clean up old content at %s", old_path)
+            # Soft-delete src (history retained, recoverable from trash)
+            now = datetime.now(UTC)
+            src_file.original_path = src_file.path
+            src_file.path = to_trash_path(src_file.path, src_file.id)
+            src_file.deleted_at = now
+
+            # Single flush — all changes are atomic
+            await session.flush()
+
+            # Clean up src content from storage (best-effort, after flush)
+            try:
+                await self._delete_content(src, session)
+            except Exception:
+                logger.warning("Failed to clean up old content at %s", src)
 
             return MoveResult(
                 success=True,
@@ -958,46 +782,71 @@ class BaseFileSystem(ABC, Generic[F, FV]):
                 new_path=dest,
             )
 
-        except Exception as e:
-            logger.error("Move failed for %s -> %s: %s", src, dest, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
+        old_paths: list[str] = [src]
 
-        finally:
-            if owns:
-                await _session.close()
+        if src_file.is_directory:
+            model = self._file_model
+            result = await session.execute(
+                select(model).where(
+                    model.path.startswith(src + "/"),  # type: ignore[union-attr]
+                )
+            )
+            children = result.scalars().all()
+
+            for desc in children:
+                old_paths.append(desc.path)
+                new_path = dest + desc.path[len(src):]
+                content = await self._read_content(desc.path, session)
+                if content is not None:
+                    await self._write_content(new_path, content, session)
+                desc.path = new_path
+                desc.name = split_path(new_path)[1]
+                desc.parent_path = split_path(new_path)[0]
+
+        content = await self._read_content(src, session)
+        if content is not None:
+            await self._write_content(dest, content, session)
+
+        src_file.path = dest
+        src_file.name = split_path(dest)[1]
+        src_file.parent_path = split_path(dest)[0]
+        src_file.updated_at = datetime.now(UTC)
+
+        await session.flush()
+
+        for old_path in old_paths:
+            try:
+                await self._delete_content(old_path, session)
+            except Exception:
+                logger.warning("Failed to clean up old content at %s", old_path)
+
+        return MoveResult(
+            success=True,
+            message=f"Moved {src} to {dest}",
+            old_path=src,
+            new_path=dest,
+        )
 
     async def copy(
         self,
         src: str,
         dest: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> WriteResult:
         """Copy a file."""
         src = normalize_path(src)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            src_file = await self._get_file(_session, src)
-            if not src_file:
-                return WriteResult(success=False, message=f"Source not found: {src}")
+        src_file = await self._get_file(session, src)
+        if not src_file:
+            return WriteResult(success=False, message=f"Source not found: {src}")
 
-            if src_file.is_directory:
-                return WriteResult(success=False, message="Directory copy not yet implemented")
+        if src_file.is_directory:
+            return WriteResult(success=False, message="Directory copy not yet implemented")
 
-            content = await self._read_content(src, _session)
-            if content is None:
-                return WriteResult(success=False, message=f"Source content not found: {src}")
-        except Exception as e:
-            logger.error("Copy failed for %s: %s", src, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-        finally:
-            if owns:
-                await _session.close()
+        content = await self._read_content(src, session)
+        if content is None:
+            return WriteResult(success=False, message=f"Source content not found: {src}")
 
         return await self.write(dest, content, created_by="copy", session=session)
 
@@ -1005,7 +854,7 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> bool:
         """Check if a file or directory exists."""
         valid, _ = validate_path(path)
@@ -1016,20 +865,14 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         if path == "/":
             return True
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, path)
-            return file is not None
-
-        finally:
-            if owns:
-                await _session.close()
+        file = await self._get_file(session, path)
+        return file is not None
 
     async def get_info(
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> FileInfo | None:
         """Get metadata for a file or directory."""
         valid, _ = validate_path(path)
@@ -1038,16 +881,10 @@ class BaseFileSystem(ABC, Generic[F, FV]):
 
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, path)
-            if not file:
-                return None
-            return self._file_to_info(file)
-
-        finally:
-            if owns:
-                await _session.close()
+        file = await self._get_file(session, path)
+        if not file:
+            return None
+        return self._file_to_info(file)
 
     # =========================================================================
     # Version Control
@@ -1057,52 +894,40 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> list[VersionInfo]:
         """List all saved versions for a file."""
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, path)
-            if not file:
-                return []
+        file = await self._get_file(session, path)
+        if not file:
+            return []
 
-            fv_model = self._file_version_model
-            result = await _session.execute(
-                select(fv_model)
-                .where(fv_model.file_id == file.id)  # type: ignore[arg-type]
-                .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
+        fv_model = self._file_version_model
+        result = await session.execute(
+            select(fv_model)
+            .where(fv_model.file_id == file.id)  # type: ignore[arg-type]
+            .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
+        )
+        versions = result.scalars().all()
+
+        return [
+            VersionInfo(
+                version=v.version,
+                content_hash=v.content_hash,
+                size_bytes=v.size_bytes,
+                created_at=v.created_at,
+                created_by=v.created_by,
             )
-            versions = result.scalars().all()
-
-            return [
-                VersionInfo(
-                    version=v.version,
-                    content_hash=v.content_hash,
-                    size_bytes=v.size_bytes,
-                    created_at=v.created_at,
-                    created_by=v.created_by,
-                )
-                for v in versions
-            ]
-
-        except Exception as e:
-            logger.error("List versions failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+            for v in versions
+        ]
 
     async def restore_version(
         self,
         path: str,
         version: int,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> RestoreResult:
         """Restore file to a previous version."""
         path = normalize_path(path)
@@ -1131,78 +956,64 @@ class BaseFileSystem(ABC, Generic[F, FV]):
         path: str,
         version: int,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> str | None:
         """Get the content of a specific version using diff reconstruction."""
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, path)
-            if not file:
-                return None
+        file = await self._get_file(session, path)
+        if not file:
+            return None
 
-            fv_model = self._file_version_model
+        fv_model = self._file_version_model
 
-            # Find the nearest snapshot at or before the target version
-            snapshot_result = await _session.execute(
-                select(fv_model)
-                .where(
-                    fv_model.file_id == file.id,  # type: ignore[arg-type]
-                    fv_model.version <= version,  # type: ignore[arg-type]
-                    fv_model.is_snapshot.is_(True),  # type: ignore[unresolved-attribute]
-                )
-                .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
-                .limit(1)
+        # Find the nearest snapshot at or before the target version
+        snapshot_result = await session.execute(
+            select(fv_model)
+            .where(
+                fv_model.file_id == file.id,  # type: ignore[arg-type]
+                fv_model.version <= version,  # type: ignore[arg-type]
+                fv_model.is_snapshot.is_(True),  # type: ignore[unresolved-attribute]
             )
-            snapshot = snapshot_result.scalar_one_or_none()
-            if not snapshot:
-                return None
+            .order_by(fv_model.version.desc())  # type: ignore[unresolved-attribute]
+            .limit(1)
+        )
+        snapshot = snapshot_result.scalar_one_or_none()
+        if not snapshot:
+            return None
 
-            # Collect all versions from snapshot through target
-            chain_result = await _session.execute(
-                select(fv_model)
-                .where(
-                    fv_model.file_id == file.id,  # type: ignore[arg-type]
-                    fv_model.version >= snapshot.version,  # type: ignore[arg-type]
-                    fv_model.version <= version,  # type: ignore[arg-type]
-                )
-                .order_by(fv_model.version.asc())  # type: ignore[unresolved-attribute]
+        # Collect all versions from snapshot through target
+        chain_result = await session.execute(
+            select(fv_model)
+            .where(
+                fv_model.file_id == file.id,  # type: ignore[arg-type]
+                fv_model.version >= snapshot.version,  # type: ignore[arg-type]
+                fv_model.version <= version,  # type: ignore[arg-type]
             )
-            chain = chain_result.scalars().all()
+            .order_by(fv_model.version.asc())  # type: ignore[unresolved-attribute]
+        )
+        chain = chain_result.scalars().all()
 
-            if not chain:
-                return None
+        if not chain:
+            return None
 
-            # The exact target version must exist in the chain
-            if chain[-1].version != version:
-                return None
+        # The exact target version must exist in the chain
+        if chain[-1].version != version:
+            return None
 
-            entries = [(v.is_snapshot, v.content) for v in chain]
-            content = reconstruct_version(entries)
+        entries = [(v.is_snapshot, v.content) for v in chain]
+        content = reconstruct_version(entries)
 
-            # Verify SHA256 against the target version's stored hash
-            expected_hash = chain[-1].content_hash
-            actual_hash = hashlib.sha256(content.encode()).hexdigest()
-            if actual_hash != expected_hash:
-                raise ConsistencyError(
-                    f"Version {version} of {path}: content hash mismatch "
-                    f"(expected {expected_hash[:12]}…, got {actual_hash[:12]}…)"
-                )
-
-            return content
-
-        except Exception as e:
-            logger.error(
-                "Get version content failed for %s v%s: %s", path, version, e, exc_info=True
+        # Verify SHA256 against the target version's stored hash
+        expected_hash = chain[-1].content_hash
+        actual_hash = hashlib.sha256(content.encode()).hexdigest()
+        if actual_hash != expected_hash:
+            raise ConsistencyError(
+                f"Version {version} of {path}: content hash mismatch "
+                f"(expected {expected_hash[:12]}…, got {actual_hash[:12]}…)"
             )
-            if owns:
-                await _session.rollback()
-            raise
 
-        finally:
-            if owns:
-                await _session.close()
+        return content
 
     # =========================================================================
     # Trash Operations
@@ -1211,175 +1022,133 @@ class BaseFileSystem(ABC, Generic[F, FV]):
     async def list_trash(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> ListResult:
         """List all soft-deleted files."""
-        _session, owns = await self._resolve_session(session)
-        try:
-            model = self._file_model
-            result = await _session.execute(
-                select(model).where(
-                    model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
-                )
+        model = self._file_model
+        result = await session.execute(
+            select(model).where(
+                model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
             )
-            files = result.scalars().all()
+        )
+        files = result.scalars().all()
 
-            entries = [
-                FileInfo(
-                    path=f.original_path or f.path,
-                    name=f.name,
-                    is_directory=f.is_directory,
-                    size_bytes=f.size_bytes,
-                    version=f.current_version,
-                    created_at=f.created_at,
-                    updated_at=f.deleted_at,
-                )
-                for f in files
-            ]
-
-            return ListResult(
-                success=True,
-                message=f"Found {len(entries)} items in trash",
-                entries=entries,
-                path="/__trash__",
+        entries = [
+            FileInfo(
+                path=f.original_path or f.path,
+                name=f.name,
+                is_directory=f.is_directory,
+                size_bytes=f.size_bytes,
+                version=f.current_version,
+                created_at=f.created_at,
+                updated_at=f.deleted_at,
             )
+            for f in files
+        ]
 
-        except Exception as e:
-            logger.error("List trash failed: %s", e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return ListResult(
+            success=True,
+            message=f"Found {len(entries)} items in trash",
+            entries=entries,
+            path="/__trash__",
+        )
 
     async def restore_from_trash(
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> RestoreResult:
         """Restore a file from trash."""
         path = normalize_path(path)
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            model = self._file_model
-            result = await _session.execute(
+        model = self._file_model
+        result = await session.execute(
+            select(model).where(
+                model.original_path == path,  # type: ignore[arg-type]
+                model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+            )
+        )
+        file = result.scalar_one_or_none()
+
+        if not file:
+            return RestoreResult(success=False, message=f"File not in trash: {path}")
+
+        original = file.original_path or path
+
+        # If path is occupied, overwrite the occupant (git restore semantics).
+        # The occupant's content is preserved in its version history.
+        existing = await self._get_file(session, original)
+        if existing and existing.id != file.id:
+            await self._delete_versions(session, existing.id)
+            await session.delete(existing)
+            await session.flush()  # flush delete before path reassignment
+
+        file.path = original
+        file.original_path = None
+        file.deleted_at = None
+        file.updated_at = datetime.now(UTC)
+
+        if file.is_directory:
+            children_result = await session.execute(
                 select(model).where(
-                    model.original_path == path,  # type: ignore[arg-type]
+                    model.original_path.startswith(path + "/"),  # type: ignore[union-attr]
                     model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
                 )
             )
-            file = result.scalar_one_or_none()
+            children = children_result.scalars().all()
 
-            if not file:
-                return RestoreResult(success=False, message=f"File not in trash: {path}")
+            # Remove occupants at children's original paths
+            had_occupants = False
+            for child in children:
+                child_original = child.original_path or child.path
+                child_existing = await self._get_file(session, child_original)
+                if child_existing and child_existing.id != child.id:
+                    await self._delete_versions(session, child_existing.id)
+                    await session.delete(child_existing)
+                    had_occupants = True
+            if had_occupants:
+                await session.flush()  # flush deletes before path reassignment
 
-            original = file.original_path or path
+            for child in children:
+                child.path = child.original_path or child.path
+                child.original_path = None
+                child.deleted_at = None
+                child.updated_at = datetime.now(UTC)
 
-            # If path is occupied, overwrite the occupant (git restore semantics).
-            # The occupant's content is preserved in its version history.
-            existing = await self._get_file(_session, original)
-            if existing and existing.id != file.id:
-                await self._delete_versions(_session, existing.id)
-                await _session.delete(existing)
-                await _session.flush()  # flush delete before path reassignment
+        await session.flush()
 
-            file.path = original
-            file.original_path = None
-            file.deleted_at = None
-            file.updated_at = datetime.now(UTC)
-
-            if file.is_directory:
-                children_result = await _session.execute(
-                    select(model).where(
-                        model.original_path.startswith(path + "/"),  # type: ignore[union-attr]
-                        model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
-                    )
-                )
-                children = children_result.scalars().all()
-
-                # Remove occupants at children's original paths
-                had_occupants = False
-                for child in children:
-                    child_original = child.original_path or child.path
-                    child_existing = await self._get_file(_session, child_original)
-                    if child_existing and child_existing.id != child.id:
-                        await self._delete_versions(_session, child_existing.id)
-                        await _session.delete(child_existing)
-                        had_occupants = True
-                if had_occupants:
-                    await _session.flush()  # flush deletes before path reassignment
-
-                for child in children:
-                    child.path = child.original_path or child.path
-                    child.original_path = None
-                    child.deleted_at = None
-                    child.updated_at = datetime.now(UTC)
-
-            if owns:
-                await self._commit(_session)
-            else:
-                await _session.flush()
-
-            return RestoreResult(
-                success=True,
-                message=f"Restored from trash: {path}",
-                file_path=path,
-            )
-
-        except Exception as e:
-            logger.error("Restore from trash failed for %s: %s", path, e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return RestoreResult(
+            success=True,
+            message=f"Restored from trash: {path}",
+            file_path=path,
+        )
 
     async def empty_trash(
         self,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> DeleteResult:
         """Permanently delete all files in trash."""
-        _session, owns = await self._resolve_session(session)
-        try:
-            model = self._file_model
-            result = await _session.execute(
-                select(model).where(
-                    model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
-                )
+        model = self._file_model
+        result = await session.execute(
+            select(model).where(
+                model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
             )
-            files = result.scalars().all()
+        )
+        files = result.scalars().all()
 
-            count = len(files)
-            for file in files:
-                await self._delete_versions(_session, file.id)
-                await self._delete_content(file.original_path or file.path, _session)
-                await _session.delete(file)
+        count = len(files)
+        for file in files:
+            await self._delete_versions(session, file.id)
+            await self._delete_content(file.original_path or file.path, session)
+            await session.delete(file)
 
-            if owns:
-                await self._commit(_session)
-            else:
-                await _session.flush()
+        await session.flush()
 
-            return DeleteResult(
-                success=True,
-                message=f"Permanently deleted {count} items from trash",
-                permanent=True,
-                total_deleted=count,
-            )
-
-        except Exception as e:
-            logger.error("Empty trash failed: %s", e, exc_info=True)
-            if owns:
-                await _session.rollback()
-            raise
-
-        finally:
-            if owns:
-                await _session.close()
+        return DeleteResult(
+            success=True,
+            message=f"Permanently deleted {count} items from trash",
+            permanent=True,
+            total_deleted=count,
+        )

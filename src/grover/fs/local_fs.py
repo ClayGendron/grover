@@ -144,14 +144,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Abstract Method Implementations
     # =========================================================================
 
-    async def _get_session(self) -> AsyncSession:
-        """Return a new database session for the current operation."""
-        await self._ensure_db()
-        return self._session_factory()  # type: ignore[misc]
-
-    async def _commit(self, session: AsyncSession) -> None:
-        await session.commit()
-
     def _resolve_path_sync(self, virtual_path: str) -> Path:
         """Convert virtual path to an actual disk path within the workspace.
 
@@ -272,7 +264,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         offset: int = 0,
         limit: int = 2000,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> ReadResult:
         """Read file with binary check and similar file suggestions."""
         valid, error = validate_path(path)
@@ -307,13 +299,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         if await asyncio.to_thread(actual_path.is_dir):
             return ReadResult(success=False, message=f"Path is a directory, not a file: {path}")
 
-        # Need a session for _read_content
-        _session, owns = await self._resolve_session(session)
-        try:
-            content = await self._read_content(path, _session)
-        finally:
-            if owns:
-                await _session.close()
+        content = await self._read_content(path, session)
 
         if content is None:
             return ReadResult(success=False, message=f"Could not read file: {path}")
@@ -329,7 +315,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         path: str,
         permanent: bool = False,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> DeleteResult:
         """Delete file, backing up content to the database first.
 
@@ -340,21 +326,11 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         norm = normalize_path(path)
 
         # Read content from disk before anything else
-        _session, owns = await self._resolve_session(session)
-        try:
-            content = await self._read_content(norm, _session)
-        finally:
-            if owns:
-                await _session.close()
+        content = await self._read_content(norm, session)
 
         # Ensure a DB record exists so super().delete() can soft-delete it
         if content is not None:
-            _session2, owns2 = await self._resolve_session(session)
-            try:
-                file = await self._get_file(_session2, norm)
-            finally:
-                if owns2:
-                    await _session2.close()
+            file = await self._get_file(session, norm)
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
                 await super().write(norm, content, created_by="backup", session=session)
@@ -363,13 +339,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         # Remove from disk regardless of soft/permanent
         if result.success:
-            # Need a dummy session for _delete_content (ignored by LocalFS disk ops)
-            _session3, owns3 = await self._resolve_session(session)
-            try:
-                await self._delete_content(norm, _session3)
-            finally:
-                if owns3:
-                    await _session3.close()
+            await self._delete_content(norm, session)
 
         return result
 
@@ -381,7 +351,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         self,
         path: str,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> RestoreResult:
         """Restore a file from trash, writing content back to disk."""
         result = await super().restore_from_trash(path, session=session)
@@ -389,57 +359,31 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             return result
 
         restored_path = result.file_path or path
-        _session, owns = await self._resolve_session(session)
-        try:
-            file = await self._get_file(_session, restored_path)
-            if file:
-                if file.is_directory:
-                    # Restore children's disk content
-                    model = self._file_model
-                    from sqlmodel import select
-                    children_result = await _session.execute(
-                        select(model).where(
-                            model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
-                            model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                        )
-                    )
-                    # Collect child info before closing session
-                    child_files = [
-                        (child.path, child.current_version)
-                        for child in children_result.scalars().all()
-                        if not child.is_directory
-                    ]
-                else:
-                    child_files = []
-        finally:
-            if owns:
-                await _session.close()
-
+        file = await self._get_file(session, restored_path)
         if file:
             if file.is_directory:
-                for child_path, child_version in child_files:
-                    child_content = await self.get_version_content(
-                        child_path, child_version, session=session,
+                # Restore children's disk content
+                model = self._file_model
+                from sqlmodel import select
+                children_result = await session.execute(
+                    select(model).where(
+                        model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
+                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                     )
-                    if child_content is not None:
-                        # Need a session for _write_content (ignored by LocalFS disk ops)
-                        _s, _o = await self._resolve_session(session)
-                        try:
-                            await self._write_content(child_path, child_content, _s)
-                        finally:
-                            if _o:
-                                await _s.close()
+                )
+                for child in children_result.scalars().all():
+                    if not child.is_directory:
+                        child_content = await self.get_version_content(
+                            child.path, child.current_version, session=session,
+                        )
+                        if child_content is not None:
+                            await self._write_content(child.path, child_content, session)
             else:
                 content = await self.get_version_content(
                     restored_path, file.current_version, session=session,
                 )
                 if content is not None:
-                    _s, _o = await self._resolve_session(session)
-                    try:
-                        await self._write_content(restored_path, content, _s)
-                    finally:
-                        if _o:
-                            await _s.close()
+                    await self._write_content(restored_path, content, session)
 
         return result
 
@@ -452,7 +396,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         path: str,
         parents: bool = True,
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> MkdirResult:
         """Create directory in database and on disk."""
         result = await super().mkdir(path, parents, session=session)
@@ -471,7 +415,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         self,
         path: str = "/",
         *,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> ListResult:
         """List directory, including files only on disk."""
         path = normalize_path(path)
@@ -492,44 +436,35 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         entries: list[FileInfo] = []
         disk_items = await asyncio.to_thread(lambda: list(actual_path.iterdir()))
 
-        _session, owns = await self._resolve_session(session)
-        try:
-            for item in disk_items:
-                if item.name.startswith("."):
-                    continue
+        for item in disk_items:
+            if item.name.startswith("."):
+                continue
 
-                item_path = f"{path}/{item.name}" if path != "/" else f"/{item.name}"
-                item_path = normalize_path(item_path)
+            item_path = f"{path}/{item.name}" if path != "/" else f"/{item.name}"
+            item_path = normalize_path(item_path)
 
-                file = await self._get_file(_session, item_path)
+            file = await self._get_file(session, item_path)
 
-                entries.append(
-                    FileInfo(
-                        path=item_path,
-                        name=item.name,
-                        is_directory=item.is_dir(),
-                        size_bytes=(
-                            file.size_bytes
-                            if file
-                            else (item.stat().st_size if item.is_file() else None)
-                        ),
-                        mime_type=file.mime_type if file else None,
-                        version=file.current_version if file else 1,
-                        created_at=file.created_at if file else None,
-                        updated_at=file.updated_at if file else None,
-                    )
+            entries.append(
+                FileInfo(
+                    path=item_path,
+                    name=item.name,
+                    is_directory=item.is_dir(),
+                    size_bytes=(
+                        file.size_bytes
+                        if file
+                        else (item.stat().st_size if item.is_file() else None)
+                    ),
+                    mime_type=file.mime_type if file else None,
+                    version=file.current_version if file else 1,
+                    created_at=file.created_at if file else None,
+                    updated_at=file.updated_at if file else None,
                 )
-
-            return ListResult(
-                success=True,
-                message=f"Listed {len(entries)} items in {path}",
-                entries=entries,
-                path=path,
             )
-        except Exception:
-            if owns:
-                await _session.rollback()
-            raise
-        finally:
-            if owns:
-                await _session.close()
+
+        return ListResult(
+            success=True,
+            message=f"Listed {len(entries)} items in {path}",
+            entries=entries,
+            path=path,
+        )

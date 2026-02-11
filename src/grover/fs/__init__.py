@@ -24,10 +24,11 @@ from grover.fs.types import (
     VersionInfo,
     WriteResult,
 )
-from grover.fs.unified import UnifiedFileSystem
 from grover.fs.utils import format_read_output
+from grover.fs.vfs import VFS
 
 __all__ = [
+    "VFS",
     "ConsistencyError",
     "DatabaseFileSystem",
     "DeleteResult",
@@ -47,7 +48,6 @@ __all__ = [
     "RestoreResult",
     "StorageBackend",
     "StorageError",
-    "UnifiedFileSystem",
     "VersionInfo",
     "WriteResult",
     "format_read_output",

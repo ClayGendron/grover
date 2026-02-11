@@ -35,7 +35,7 @@ class WikiFileVersion(FileVersionBase, table=True):
 # ---------------------------------------------------------------------------
 
 
-async def _make_custom_fs() -> tuple[DatabaseFileSystem, object]:
+async def _make_custom_fs() -> tuple[DatabaseFileSystem, object, object]:
     """Create a DatabaseFileSystem backed by custom models."""
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
@@ -43,23 +43,22 @@ async def _make_custom_fs() -> tuple[DatabaseFileSystem, object]:
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     fs = DatabaseFileSystem(
-        session_factory=factory,
         dialect="sqlite",
         file_model=WikiFile,
         file_version_model=WikiFileVersion,
     )
-    return fs, engine
+    return fs, factory, engine
 
 
-async def _make_default_fs() -> tuple[DatabaseFileSystem, object]:
+async def _make_default_fs() -> tuple[DatabaseFileSystem, object, object]:
     """Create a DatabaseFileSystem with default models."""
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    fs = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
-    return fs, engine
+    fs = DatabaseFileSystem(dialect="sqlite")
+    return fs, factory, engine
 
 
 # ---------------------------------------------------------------------------
@@ -108,65 +107,65 @@ class TestModelInheritance:
 
 class TestCustomModelFilesystem:
     async def test_file_model_property(self):
-        fs, engine = await _make_custom_fs()
+        fs, _factory, engine = await _make_custom_fs()
         assert fs.file_model is WikiFile
         assert fs.file_version_model is WikiFileVersion
         await engine.dispose()
 
     async def test_default_model_property(self):
-        fs, engine = await _make_default_fs()
+        fs, _factory, engine = await _make_default_fs()
         assert fs.file_model is File
         await engine.dispose()
 
     async def test_write_and_read(self):
-        fs, engine = await _make_custom_fs()
-        async with fs:
-            result = await fs.write("/wiki/page.md", "# Hello World\n")
+        fs, factory, engine = await _make_custom_fs()
+        async with factory() as session:
+            result = await fs.write("/wiki/page.md", "# Hello World\n", session=session)
             assert result.success is True
             assert result.created is True
 
-            read = await fs.read("/wiki/page.md")
+            read = await fs.read("/wiki/page.md", session=session)
             assert read.success is True
             assert "Hello World" in read.content
         await engine.dispose()
 
     async def test_edit(self):
-        fs, engine = await _make_custom_fs()
-        async with fs:
-            await fs.write("/page.md", "old content\n")
-            result = await fs.edit("/page.md", "old", "new")
+        fs, factory, engine = await _make_custom_fs()
+        async with factory() as session:
+            await fs.write("/page.md", "old content\n", session=session)
+            result = await fs.edit("/page.md", "old", "new", session=session)
             assert result.success is True
             assert result.version == 2
 
-            read = await fs.read("/page.md")
+            read = await fs.read("/page.md", session=session)
             assert "new content" in read.content
         await engine.dispose()
 
     async def test_delete_and_trash(self):
-        fs, engine = await _make_custom_fs()
-        async with fs:
-            await fs.write("/page.md", "content\n")
-            result = await fs.delete("/page.md")
+        fs, factory, engine = await _make_custom_fs()
+        async with factory() as session:
+            await fs.write("/page.md", "content\n", session=session)
+            result = await fs.delete("/page.md", session=session)
             assert result.success is True
 
-            read = await fs.read("/page.md")
+            read = await fs.read("/page.md", session=session)
             assert read.success is False
 
-            trash = await fs.list_trash()
+            trash = await fs.list_trash(session=session)
             assert len(trash.entries) == 1
         await engine.dispose()
 
     async def test_versioning(self):
-        fs, engine = await _make_custom_fs()
-        async with fs:
-            await fs.write("/page.md", "v1\n")
-            await fs.edit("/page.md", "v1", "v2")
-            await fs.edit("/page.md", "v2", "v3")
+        fs, factory, engine = await _make_custom_fs()
+        async with factory() as session:
+            await fs.write("/page.md", "v1\n", session=session)
+            await fs.edit("/page.md", "v1", "v2", session=session)
+            await fs.edit("/page.md", "v2", "v3", session=session)
 
-            versions = await fs.list_versions("/page.md")
+            versions = await fs.list_versions("/page.md", session=session)
             assert len(versions) >= 1
 
-            v1_content = await fs.get_version_content("/page.md", 1)
+            v1_content = await fs.get_version_content("/page.md", 1, session=session)
             assert v1_content == "v1\n"
         await engine.dispose()
 
@@ -178,13 +177,13 @@ class TestCustomModelFilesystem:
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         fs = DatabaseFileSystem(
-            session_factory=factory,
             dialect="sqlite",
             file_model=WikiFile,
             file_version_model=WikiFileVersion,
         )
-        async with fs:
-            await fs.write("/page.md", "wiki content\n")
+        async with factory() as session:
+            await fs.write("/page.md", "wiki content\n", session=session)
+            await session.commit()
 
         # Query the custom table directly
         async with factory() as session:

@@ -12,7 +12,7 @@ from sqlmodel import SQLModel
 from grover.events import EventBus, EventType, FileEvent
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
-from grover.fs.unified import UnifiedFileSystem
+from grover.fs.vfs import VFS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -232,10 +232,10 @@ class TestEventBusEmit:
 
 
 class TestEventBusIntegration:
-    """EventBus wired through UnifiedFileSystem with a local filesystem backend."""
+    """EventBus wired through VFS with a local filesystem backend."""
 
     @pytest.fixture
-    async def setup(self, tmp_path: Path) -> tuple[UnifiedFileSystem, EventBus, list[FileEvent]]:
+    async def setup(self, tmp_path: Path) -> tuple[VFS, EventBus, list[FileEvent]]:
         bus = EventBus()
         collected: list[FileEvent] = []
 
@@ -249,17 +249,23 @@ class TestEventBusIntegration:
             workspace_dir=tmp_path,
             data_dir=tmp_path / ".grover_test",
         )
+        await backend._ensure_db()
         registry = MountRegistry()
         registry.add_mount(
-            MountConfig(mount_path="/local", backend=backend, mount_type="local")
+            MountConfig(
+                mount_path="/local",
+                backend=backend,
+                session_factory=backend._session_factory,
+                mount_type="local",
+            )
         )
-        ufs = UnifiedFileSystem(registry, event_bus=bus)
+        ufs = VFS(registry, event_bus=bus)
 
         async with ufs:
             yield ufs, bus, collected
 
     async def test_write_emits_file_written(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
         result = await ufs.write("/local/hello.txt", "hello world")
@@ -271,7 +277,7 @@ class TestEventBusIntegration:
         assert ev.content == "hello world"
 
     async def test_edit_emits_file_written(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
         await ufs.write("/local/hello.txt", "hello world")
@@ -286,7 +292,7 @@ class TestEventBusIntegration:
         assert ev.content is None
 
     async def test_delete_emits_file_deleted(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
         await ufs.write("/local/hello.txt", "hello")
@@ -300,7 +306,7 @@ class TestEventBusIntegration:
         assert ev.path == "/local/hello.txt"
 
     async def test_move_emits_file_moved(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
         await ufs.write("/local/a.txt", "content")
@@ -315,7 +321,7 @@ class TestEventBusIntegration:
         assert ev.old_path == "/local/a.txt"
 
     async def test_copy_emits_file_written(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
         await ufs.write("/local/a.txt", "content")
@@ -329,7 +335,7 @@ class TestEventBusIntegration:
         assert ev.path == "/local/b.txt"
 
     async def test_failed_operation_does_not_emit(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
         result = await ufs.delete("/local/nonexistent.txt", permanent=True)
@@ -341,11 +347,17 @@ class TestEventBusIntegration:
             workspace_dir=tmp_path,
             data_dir=tmp_path / ".grover_test2",
         )
+        await backend._ensure_db()
         registry = MountRegistry()
         registry.add_mount(
-            MountConfig(mount_path="/local", backend=backend, mount_type="local")
+            MountConfig(
+                mount_path="/local",
+                backend=backend,
+                session_factory=backend._session_factory,
+                mount_type="local",
+            )
         )
-        ufs = UnifiedFileSystem(registry)
+        ufs = VFS(registry)
 
         async with ufs:
             result = await ufs.write("/local/hello.txt", "hello")
@@ -361,7 +373,7 @@ class TestEventBusVFSIntegration:
     """EventBus with DatabaseFileSystem for restore_version/restore_from_trash."""
 
     @pytest.fixture
-    async def setup(self) -> tuple[UnifiedFileSystem, EventBus, list[FileEvent]]:
+    async def setup(self) -> tuple[VFS, EventBus, list[FileEvent]]:
         from grover.fs.database_fs import DatabaseFileSystem
 
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
@@ -371,7 +383,7 @@ class TestEventBusVFSIntegration:
         factory = async_sessionmaker(
             engine, class_=AsyncSession, expire_on_commit=False
         )
-        fs = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
+        fs = DatabaseFileSystem(dialect="sqlite")
 
         bus = EventBus()
         collected: list[FileEvent] = []
@@ -384,9 +396,11 @@ class TestEventBusVFSIntegration:
 
         registry = MountRegistry()
         registry.add_mount(
-            MountConfig(mount_path="/vfs", backend=fs, mount_type="vfs")
+            MountConfig(
+                mount_path="/vfs", backend=fs, session_factory=factory, mount_type="vfs",
+            )
         )
-        ufs = UnifiedFileSystem(registry, event_bus=bus)
+        ufs = VFS(registry, event_bus=bus)
 
         async with ufs:
             yield ufs, bus, collected
@@ -394,7 +408,7 @@ class TestEventBusVFSIntegration:
         await engine.dispose()
 
     async def test_restore_version_emits_file_restored(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
 
@@ -410,7 +424,7 @@ class TestEventBusVFSIntegration:
         assert ev.path == "/vfs/hello.txt"
 
     async def test_restore_from_trash_emits_file_restored(
-        self, setup: tuple[UnifiedFileSystem, EventBus, list[FileEvent]]
+        self, setup: tuple[VFS, EventBus, list[FileEvent]]
     ) -> None:
         ufs, _, collected = setup
 

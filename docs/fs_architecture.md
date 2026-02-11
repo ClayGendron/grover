@@ -6,8 +6,8 @@
 graph TD
     Caller["Caller (Grover facade)"]
 
-    subgraph UnifiedFileSystem
-        UFS["UnifiedFileSystem"]
+    subgraph VFS
+        UFS["VFS"]
         UFS_perm["_check_writable()"]
         UFS_route["resolve path → mount + rel_path"]
         UFS_session["_session_for(mount)"]
@@ -32,7 +32,6 @@ graph TD
             BFS_dir["mkdir / list_dir / move / copy"]
             BFS_ver["_save_version / list_versions / get_version_content / restore_version"]
             BFS_trash["list_trash / restore_from_trash / empty_trash"]
-            BFS_session["_get_session / _commit"]
         end
 
         subgraph LocalFileSystem
@@ -40,7 +39,7 @@ graph TD
             LFS_disk["_resolve_path → disk I/O"]
             LFS_db["SQLite at ~/.grover/{slug}/"]
             LFS_override["overrides: read, delete, list_dir, mkdir, restore_from_trash"]
-            LFS_session["session-injected via UFS (or standalone)"]
+            LFS_session["session injected by VFS"]
         end
 
         subgraph DatabaseFileSystem
@@ -91,8 +90,6 @@ graph TD
     BFS --> BFS_dir
     BFS --> BFS_ver
     BFS --> BFS_trash
-    BFS --> BFS_session
-
     BFS_crud --> Utils
     BFS_crud --> Types
     BFS_ver --> GF
@@ -105,14 +102,14 @@ graph TD
     LFS --> LFS_session
 ```
 
-**DB mounts** are created via `engine=` or `session_factory=` on `GroverAsync.mount()`. The engine form auto-creates a session factory, detects the SQL dialect, and ensures tables exist. This produces a stateless `DatabaseFileSystem` instance (immutable config only — dialect, file model, schema) paired with a `session_factory` stored on `MountConfig`. UFS creates sessions from the factory per-operation and passes them to DFS via `session=`.
+**DB mounts** are created via `engine=` or `session_factory=` on `GroverAsync.mount()`. The engine form auto-creates a session factory, detects the SQL dialect, and ensures tables exist. This produces a stateless `DatabaseFileSystem` instance (immutable config only — dialect, file model, schema) paired with a `session_factory` stored on `MountConfig`. VFS creates sessions from the factory per-operation and passes them to DFS via `session=`.
 
 ## Request Flow: `write("/project/hello.py", content)` — Local Mount
 
 ```mermaid
 sequenceDiagram
     participant C as Caller
-    participant UFS as UnifiedFileSystem
+    participant UFS as VFS
     participant MR as MountRegistry
     participant P as Permission
     participant EB as EventBus
@@ -130,7 +127,6 @@ sequenceDiagram
 
     UFS->>UFS: _session_for(mount) → creates session from mount.session_factory
     UFS->>LFS: write("/hello.py", content, session=session)
-    LFS->>BFS: _resolve_session(session) → (session, owns=False)
 
     Note over BFS: validate_path + normalize_path (NFC)
     Note over BFS: is_text_file check
@@ -149,7 +145,7 @@ sequenceDiagram
 
     BFS->>LFS: _write_content("/hello.py", content, session)
     LFS->>Disk: atomic write (tmpfile + rename)
-    BFS->>DB: session.flush() (owns=False, so flush not commit)
+    BFS->>DB: session.flush()
 
     LFS-->>UFS: WriteResult(success=True)
 
@@ -166,7 +162,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant C as Caller
-    participant UFS as UnifiedFileSystem
+    participant UFS as VFS
     participant MR as MountRegistry
     participant P as Permission
     participant EB as EventBus
@@ -183,7 +179,6 @@ sequenceDiagram
 
     UFS->>UFS: _session_for(mount) → creates session from mount.session_factory
     UFS->>DFS: write("/hello.py", content, session=session)
-    DFS->>BFS: _resolve_session(session) → (session, owns=False)
 
     Note over BFS: validate_path + normalize_path (NFC)
     Note over BFS: is_text_file check
@@ -200,7 +195,7 @@ sequenceDiagram
     end
 
     BFS->>DFS: _write_content → UPDATE File.content
-    BFS->>DB: session.flush() (owns=False, so flush not commit)
+    BFS->>DB: session.flush()
 
     DFS-->>UFS: WriteResult(success=True)
 
@@ -214,12 +209,12 @@ sequenceDiagram
 
 ## Session Lifecycle
 
-Sessions are managed at two levels: **UFS** (outer) and **backend** (inner).
+Sessions are managed by VFS and injected into backends.
 
 ```mermaid
 sequenceDiagram
     participant Caller
-    participant UFS as UnifiedFileSystem
+    participant UFS as VFS
     participant MC as MountConfig
     participant Backend as Backend (LFS / DFS)
 
@@ -229,23 +224,22 @@ sequenceDiagram
     Note over UFS: All mounts have session_factory set
     UFS->>MC: session_factory() → new session
     UFS->>Backend: write(path, content, session=session)
-    Backend->>Backend: _resolve_session(session) → session, owns=False
-    Note over Backend: Backend uses injected session as-is
+    Note over Backend: Backend uses injected session
     Backend->>Backend: do work → _write_content → session.flush()
-    UFS->>UFS: session.commit() (on _session_for exit)
 
     Backend-->>UFS: WriteResult
+    UFS->>UFS: session.commit() (on _session_for exit)
     UFS-->>Caller: WriteResult
 ```
 
 ### Transaction Mode
 
-In transaction mode (`async with grover:`), UFS reuses sessions per mount across operations for all mount types (local and DB). The commit happens on context-manager exit rather than after each operation.
+In transaction mode (`async with grover:`), VFS reuses sessions per mount across operations for all mount types (local and DB). The commit happens on context-manager exit rather than after each operation.
 
 ```mermaid
 sequenceDiagram
     participant App
-    participant UFS as UnifiedFileSystem
+    participant UFS as VFS
     participant Backend as Backend (LFS / DFS)
 
     App->>UFS: begin_transaction()

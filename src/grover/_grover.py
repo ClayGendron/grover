@@ -11,7 +11,11 @@ from grover.fs.permissions import Permission
 from grover.fs.types import ReadResult
 
 if TYPE_CHECKING:
-    from grover.fs.unified import UnifiedFileSystem
+    from collections.abc import Callable
+
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+    from grover.fs.vfs import VFS
     from grover.graph._graph import Graph
     from grover.ref import Ref
     from grover.search._index import SearchResult
@@ -99,8 +103,14 @@ class Grover:
     def mount(
         self,
         path: str,
-        backend: Any,
+        backend: Any = None,
         *,
+        engine: AsyncEngine | None = None,
+        session_factory: Callable[..., AsyncSession] | None = None,
+        dialect: str = "sqlite",
+        file_model: type | None = None,
+        file_version_model: type | None = None,
+        db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
@@ -111,6 +121,12 @@ class Grover:
             self._async.mount(
                 path,
                 backend,
+                engine=engine,
+                session_factory=session_factory,
+                dialect=dialect,
+                file_model=file_model,
+                file_version_model=file_version_model,
+                db_schema=db_schema,
                 mount_type=mount_type,
                 permission=permission,
                 label=label,
@@ -199,8 +215,8 @@ class Grover:
     # ------------------------------------------------------------------
 
     @property
-    def fs(self) -> UnifiedFileSystem:
-        """The underlying ``UnifiedFileSystem`` (for advanced async use)."""
+    def fs(self) -> VFS:
+        """The underlying ``VFS`` (for advanced async use)."""
         return self._async.fs
 
     @property

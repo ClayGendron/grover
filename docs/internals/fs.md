@@ -10,7 +10,6 @@ For the high-level architecture diagram and component relationships, see [fs_arc
 
 - [Write Order of Operations](#write-order-of-operations)
 - [Session Lifecycle](#session-lifecycle)
-- [Session Ownership](#session-ownership)
 - [Version Snapshotting](#version-snapshotting)
 - [Soft Delete and Trash](#soft-delete-and-trash)
 - [LocalFileSystem vs DatabaseFileSystem](#localfilesystem-vs-databasefilesystem)
@@ -27,12 +26,13 @@ All mutating operations (`write`, `edit`) follow the same sequence:
 ```
 1. Save version record to session  (not yet committed)
 2. Write content to storage         (_write_content)
-3. Commit the session               (_commit)
+3. Flush the session                (session.flush)
+4. VFS commits on _session_for exit (session.commit)
 ```
 
-If step 2 fails, the `except` block calls `session.rollback()`, which discards the version record from step 1. The database is clean.
+If step 2 fails, the VFS context manager calls `session.rollback()`, which discards the version record from step 1. The database is clean.
 
-If step 3 fails after step 2 succeeds, the content exists in storage but the database has no record of it. This is an **orphan file** — invisible to the system and harmless.
+If step 4 fails after step 2 succeeds, the content exists in storage but the database has no record of it. This is an **orphan file** — invisible to the system and harmless.
 
 ### Why Not Commit First?
 
@@ -60,7 +60,7 @@ An orphan file on disk is strictly better than phantom metadata because:
 
 **LocalFileSystem**: Content is written to disk via atomic temp-file + rename. The commit then persists the version record and metadata to SQLite. If the disk write fails, the rollback removes the version record. If the SQLite commit fails, the disk file exists but is invisible — no user impact.
 
-**DatabaseFileSystem**: `_write_content()` updates the `File.content` column on the same session object. Both the content update and the version record are part of the same transaction, so the ordering between `_write_content` and `_commit` is immaterial — they commit or roll back together atomically.
+**DatabaseFileSystem**: `_write_content()` updates the `File.content` column on the same session object. Both the content update and the version record are part of the same transaction, so they commit or roll back together atomically when VFS exits `_session_for()`.
 
 ### History
 
@@ -68,91 +68,38 @@ This ordering has been the intended design since the initial filesystem implemen
 
 ### Code Locations
 
-The pattern in `base.py` uses `_resolve_session` to determine ownership and conditionally commit or flush:
+All mutating methods in `base.py` follow the same pattern — write content, then flush:
 
 ```python
-# write() — existing file path (base.py ~line 442)
-await self._write_content(path, content, _session)
-if owns:
-    await self._commit(_session)
-else:
-    await _session.flush()
-
-# write() — new file path (base.py ~line 468)
-await self._write_content(path, content, _session)
-if owns:
-    await self._commit(_session)
-else:
-    await _session.flush()
-
-# edit() (base.py ~line 553)
-await self._write_content(path, new_content, _session)
-if owns:
-    await self._commit(_session)
-else:
-    await _session.flush()
+# write() and edit() (base.py)
+await self._write_content(path, content, session)
+await session.flush()
 ```
 
-When `owns=True` (session created internally), `_commit` calls `session.commit()` and the `finally` block calls `session.close()`. When `owns=False` (session injected by UFS), only `session.flush()` is called — the outer `_session_for()` context manager handles commit/close.
+Sessions are always injected by VFS via `_session_for(mount)`. The VFS context manager handles commit on success and rollback on error. Backends only call `session.flush()` to make changes visible within the transaction.
 
 ---
 
 ## Session Lifecycle
 
-Sessions are managed at two levels:
+Sessions are managed by VFS and injected into backends.
 
-### Level 1: UFS `_session_for(mount)`
+### VFS `_session_for(mount)`
 
-`UnifiedFileSystem._session_for(mount)` is an async context manager that provides sessions to backend operations for **all mounts** (both local and DB). Every mount registered via `GroverAsync.mount()` has a `session_factory` on its `MountConfig`, so UFS manages sessions uniformly.
+`VFS._session_for(mount)` is an async context manager that provides sessions to backend operations for **all mounts** (both local and DB). Every mount registered via `GroverAsync.mount()` has a `session_factory` on its `MountConfig`, so VFS manages sessions uniformly.
 
 | Mode | Behavior |
 |------|----------|
 | **Per-operation** (default) | Creates session from `mount.session_factory()` → yields → `session.commit()` → `session.close()`. On error: `session.rollback()` → `session.close()`. |
 | **Transaction** (`async with grover:`) | Reuses a single session per mount path (stored in `_txn_sessions`). Yields the shared session without committing. Commit/rollback happens on context manager exit via `commit_transaction()` / `rollback_transaction()`. |
 
-### Level 2: Backend `_resolve_session(session)`
+### Backend Session Usage
 
-Every public method in `BaseFileSystem` calls `_resolve_session(session)` which returns `(session, owns_it)`:
+All backend methods require a `session: AsyncSession` parameter (keyword-only). Backends never create, commit, or close sessions — they only call `session.flush()` after mutations to make changes visible within the transaction. VFS handles the full session lifecycle (create → inject → commit/rollback → close).
 
-```python
-_session, owns = await self._resolve_session(session)
-try:
-    # ... do work ...
-    if owns:
-        await self._commit(_session)
-    else:
-        await _session.flush()
-except Exception:
-    if owns:
-        await _session.rollback()
-    raise
-finally:
-    if owns:
-        await _session.close()
-```
+**LocalFileSystem**: Uses the injected session for all metadata and version operations. Disk I/O is independent of the session.
 
-- **Caller provided a session** (`session is not None`): `owns_it=False`. The backend flushes but never commits or closes — the caller (UFS) controls the lifecycle.
-- **No session provided** (`session is None`): `owns_it=True`. The backend creates its own session via `_get_session()` and is responsible for commit and close.
-
-### LocalFileSystem Sessions
-
-| Method | Behavior |
-|--------|----------|
-| `_get_session()` | New session from `_session_factory()` |
-| `_commit(session)` | `session.commit()` |
-
-When used through UFS (the normal path), LFS receives an injected session via `session=` so `_resolve_session` returns `owns=False` — meaning `_commit` is never called and UFS controls the full session lifecycle. When LFS is used standalone (`session=None`), it creates its own session and manages it via the `owns=True` path (commit + close).
-
-### DatabaseFileSystem Sessions
-
-DFS is **stateless** — it holds no session factory, no cached session, and no mutable state.
-
-| Method | Behavior |
-|--------|----------|
-| `_get_session()` | Raises `RuntimeError` — sessions must always be injected via `session=` |
-| `_commit(session)` | `session.flush()` — never commits (UFS controls the commit boundary) |
-
-DFS relies entirely on UFS to provide sessions. Since `_resolve_session(session)` always receives a non-`None` session from UFS, `owns_it` is always `False`, meaning DFS never commits or closes sessions.
+**DatabaseFileSystem**: Stateless — holds no session factory, no cached session, and no mutable state. All DB operations use the injected session.
 
 ### SQLite Configuration (LocalFileSystem)
 
@@ -164,51 +111,6 @@ The SQLite engine is configured with these pragmas on every connection:
 | `synchronous` | `FULL` | fsync on every commit for durability |
 | `busy_timeout` | `5000` | Wait 5 seconds on lock contention before raising `SQLITE_BUSY` |
 | `foreign_keys` | `ON` | Enforce foreign key constraints |
-
----
-
-## Session Ownership
-
-The `_resolve_session` pattern in `BaseFileSystem` enables a clean separation of concerns:
-
-```python
-async def _resolve_session(self, session: AsyncSession | None) -> tuple[AsyncSession, bool]:
-    if session is not None:
-        return session, False   # caller owns it — don't commit/close
-    return await self._get_session(), True  # we own it — commit/close
-```
-
-This allows every backend method to work in two modes without branching:
-
-- **Standalone** (called directly, `session=None`): the backend creates, commits, and closes its own session. This is the typical path for `LocalFileSystem`.
-- **Managed** (called via UFS with `session=sess`): the backend uses the injected session and only flushes. UFS handles the commit and close.
-
-### Web Application Pattern
-
-For web apps with one DB session per request:
-
-```python
-async def handle_request(request):
-    async with sessionmaker() as session:
-        grover = GroverAsync()
-        await grover.mount("/data", engine=engine)
-        # All operations within this request share the UFS-managed session
-        await grover.write("/data/file.py", content)
-        await grover.write("/data/other.py", content)
-        # Committed together on _session_for exit (per-operation mode)
-```
-
-### Mount API
-
-```python
-# Engine form (preferred) — auto-detects dialect, creates sessionmaker, ensures tables
-await grover.mount("/data", engine=create_async_engine("postgresql+asyncpg://..."))
-
-# Session factory form — bring your own sessionmaker
-await grover.mount("/data", session_factory=my_sessionmaker)
-```
-
-Both forms create a stateless `DatabaseFileSystem` and store the `session_factory` on `MountConfig`.
 
 ---
 
@@ -311,10 +213,7 @@ On restore (`restore_from_trash`), the content is written back to disk from the 
 | **Metadata storage** | SQLite at `~/.grover/{slug}/` | External DB (PostgreSQL, MSSQL, etc.) |
 | **`File.content` column** | Always `NULL` | Contains actual file text |
 | **Instance state** | Workspace dir, SQLite engine, session factory | Dialect, file model, file version model (immutable) |
-| **Session ownership** | Session-injected via UFS (or standalone) | Stateless — sessions injected via `session=` kwarg |
-| **`_get_session()`** | New session from factory (standalone use only) | Raises `RuntimeError` |
-| **`_commit()`** | `session.commit()` (standalone use only) | `session.flush()` always (never commits) |
-| **Session close** | `session.close()` via base class (standalone use only) | N/A (never owns sessions) |
+| **Session handling** | Session injected by VFS, flush only | Session injected by VFS, flush only |
 | **Atomic writes** | Temp file + fsync + rename | Standard DB transaction |
 | **IDE/git visibility** | Files are real on disk | No physical files |
 | **`list_dir()` behavior** | Merges DB records with disk scan | DB records only |

@@ -153,7 +153,7 @@ class TestGroverFilesystem:
         assert grover.exists("/project/yes.txt")
 
     def test_fs_property(self, grover: Grover):
-        assert grover.fs is grover._async._ufs
+        assert grover.fs is grover._async._vfs
 
 
 # ==================================================================
@@ -193,9 +193,8 @@ class TestGroverTransaction:
             async_sessionmaker,
             create_async_engine,
         )
-        from sqlmodel import SQLModel, select
+        from sqlmodel import select
 
-        from grover.fs.database_fs import DatabaseFileSystem
         from grover.models.files import File
 
         db_path = tmp_path / "rollback_test.db"
@@ -211,16 +210,14 @@ class TestGroverTransaction:
             engine, class_=AsyncSession, expire_on_commit=False,
         )
 
-        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
         g = Grover(data_dir=str(tmp_path / "grover_data"))
-        g.mount("/app", db)
+        g.mount("/app", session_factory=factory, dialect="sqlite")
 
-        with pytest.raises(RuntimeError, match="boom"):
-            with g:
-                g.write("/app/doomed.txt", "this should vanish")
-                # Readable during the transaction
-                assert g.read("/app/doomed.txt").content == "this should vanish"
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"), g:
+            g.write("/app/doomed.txt", "this should vanish")
+            # Readable during the transaction
+            assert g.read("/app/doomed.txt").content == "this should vanish"
+            raise RuntimeError("boom")
 
         # The file should NOT exist after rollback
         async def _check() -> None:

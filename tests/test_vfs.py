@@ -1,4 +1,4 @@
-"""Tests for UnifiedFileSystem — routing, permissions, cross-mount ops."""
+"""Tests for VFS — routing, permissions, cross-mount ops."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
-from grover.fs.unified import UnifiedFileSystem
+from grover.fs.vfs import VFS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,7 +35,7 @@ async def _make_local_setup(
     *,
     second_mount: bool = False,
     ro_mount: bool = False,
-) -> tuple[UnifiedFileSystem, EventBus, list[FileEvent], MountRegistry]:
+) -> tuple[VFS, EventBus, list[FileEvent], MountRegistry]:
     """Build registry with /local (and optionally /other or /ro) mounts."""
     bus = EventBus()
     collected: list[FileEvent] = []
@@ -96,7 +96,7 @@ async def _make_local_setup(
             )
         )
 
-    ufs = UnifiedFileSystem(registry, event_bus=bus)
+    ufs = VFS(registry, event_bus=bus)
     return ufs, bus, collected, registry
 
 
@@ -191,7 +191,7 @@ class TestPermissionChecks:
                 permission=Permission.READ_ONLY,
             )
         )
-        ufs = UnifiedFileSystem(registry)
+        ufs = VFS(registry)
         async with ufs:
             result = await ufs.restore_version("/vfs/file.txt", 1)
             assert result.success is False
@@ -361,7 +361,7 @@ class TestContextManager:
             data_dir=tmp_path / ".grover_manual",
         )
         registry = MountRegistry()
-        ufs = UnifiedFileSystem(registry)
+        ufs = VFS(registry)
 
         await ufs.enter_backend(backend)
         assert backend in ufs._entered_backends
@@ -388,7 +388,7 @@ class TestVersionOperations:
         registry.add_mount(MountConfig(
             mount_path="/vfs", backend=db, session_factory=factory, mount_type="vfs",
         ))
-        ufs = UnifiedFileSystem(registry)
+        ufs = VFS(registry)
         async with ufs:
             yield ufs
         await engine.dispose()

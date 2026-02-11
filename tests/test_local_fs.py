@@ -3,24 +3,38 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from grover.fs.local_fs import LocalFileSystem
 
-if TYPE_CHECKING:
-    pass
 
-
-async def _make_local_fs(tmp_path: Path) -> LocalFileSystem:
+async def _make_local_fs(tmp_path: Path) -> tuple[LocalFileSystem, AsyncSession]:
     """Create a LocalFileSystem with isolated workspace and data dirs."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     data = tmp_path / "data"
     fs = LocalFileSystem(workspace_dir=workspace, data_dir=data)
-    return fs
+    await fs._ensure_db()
+    return fs, fs._session_factory
+
+
+@asynccontextmanager
+async def _session(factory) -> AsyncGenerator[AsyncSession]:
+    """Mimic VFS _session_for: create → yield → commit/rollback → close."""
+    session = factory()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +44,7 @@ async def _make_local_fs(tmp_path: Path) -> LocalFileSystem:
 
 class TestPathSecurity:
     async def test_symlink_rejected(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
         # Create a real file outside workspace
@@ -41,24 +55,28 @@ class TestPathSecurity:
         link = workspace / "link.txt"
         link.symlink_to(target)
 
-        result = await fs.read("/link.txt")
+        async with _session(factory) as session:
+            result = await fs.read("/link.txt", session=session)
         assert result.success is False
         assert "ymlink" in result.message or "not found" in result.message.lower()
         await fs.close()
 
     async def test_path_traversal_rejected(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
 
-        result = await fs.read("/../../etc/passwd")
+        async with _session(factory) as session:
+            result = await fs.read("/../../etc/passwd", session=session)
         assert result.success is False
         await fs.close()
 
     async def test_dotdot_normalized(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
 
         # Write a file, then read via a path with ..
-        await fs.write("/bar.py", "content\n")
-        result = await fs.read("/foo/../bar.py")
+        async with _session(factory) as session:
+            await fs.write("/bar.py", "content\n", session=session)
+        async with _session(factory) as session:
+            result = await fs.read("/foo/../bar.py", session=session)
         assert result.success is True
         assert "content" in result.content
         await fs.close()
@@ -71,14 +89,15 @@ class TestPathSecurity:
 
 class TestBinaryFileHandling:
     async def test_read_binary_file_rejected(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
         # Write a PNG-like binary file directly to disk
         png_file = workspace / "image.png"
         png_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-        result = await fs.read("/image.png")
+        async with _session(factory) as session:
+            result = await fs.read("/image.png", session=session)
         assert result.success is False
         assert "binary" in result.message.lower()
         await fs.close()
@@ -91,25 +110,27 @@ class TestBinaryFileHandling:
 
 class TestDiskSync:
     async def test_list_dir_includes_disk_only_files(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
         # Create file directly on disk (no FS write)
         (workspace / "disk_only.py").write_text("# disk only\n")
 
-        result = await fs.list_dir("/")
+        async with _session(factory) as session:
+            result = await fs.list_dir("/", session=session)
         names = [e.name for e in result.entries]
         assert "disk_only.py" in names
         await fs.close()
 
     async def test_list_dir_hides_dotfiles(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
         (workspace / ".gitignore").write_text("*.pyc\n")
         (workspace / "visible.py").write_text("# visible\n")
 
-        result = await fs.list_dir("/")
+        async with _session(factory) as session:
+            result = await fs.list_dir("/", session=session)
         names = [e.name for e in result.entries]
         assert ".gitignore" not in names
         assert "visible.py" in names
@@ -123,18 +144,20 @@ class TestDiskSync:
 
 class TestDeleteBackup:
     async def test_delete_backs_up_disk_only_file(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
         # Create file directly on disk
         (workspace / "ephemeral.py").write_text("content\n")
 
         # Delete via FS — should create DB record first, then soft-delete
-        result = await fs.delete("/ephemeral.py")
+        async with _session(factory) as session:
+            result = await fs.delete("/ephemeral.py", session=session)
         assert result.success is True
 
         # File should be in trash (backed up to DB)
-        trash = await fs.list_trash()
+        async with _session(factory) as session:
+            trash = await fs.list_trash(session=session)
         paths = [e.path for e in trash.entries]
         assert "/ephemeral.py" in paths
         await fs.close()
@@ -147,10 +170,11 @@ class TestDeleteBackup:
 
 class TestAtomicWrites:
     async def test_write_creates_file_on_disk(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
-        await fs.write("/hello.py", "print('hello')\n")
+        async with _session(factory) as session:
+            await fs.write("/hello.py", "print('hello')\n", session=session)
 
         disk_file = workspace / "hello.py"
         assert disk_file.exists()
@@ -158,10 +182,11 @@ class TestAtomicWrites:
         await fs.close()
 
     async def test_write_content_atomic(self, tmp_path: Path):
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
-        await fs.write("/atomic.py", "content\n")
+        async with _session(factory) as session:
+            await fs.write("/atomic.py", "content\n", session=session)
 
         # Verify no .tmp_ files left behind
         tmp_files = list(workspace.glob(".tmp_*"))
@@ -179,7 +204,7 @@ class TestConcurrentInit:
         """C4: Concurrent _ensure_db calls should not create multiple engines."""
         import asyncio
 
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
 
         # Launch multiple concurrent _ensure_db calls
         await asyncio.gather(
@@ -193,7 +218,8 @@ class TestConcurrentInit:
         assert fs._session_factory is not None
 
         # FS should still work correctly after concurrent init
-        result = await fs.write("/test.py", "hello\n")
+        async with _session(factory) as session:
+            result = await fs.write("/test.py", "hello\n", session=session)
         assert result.success is True
         await fs.close()
 
@@ -206,19 +232,22 @@ class TestConcurrentInit:
 class TestTrashRestoreDisk:
     async def test_restore_from_trash_writes_to_disk(self, tmp_path: Path):
         """C5: Restoring from trash should write content back to disk."""
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
         # Write file (creates on disk + DB)
-        await fs.write("/restore_me.py", "precious content\n")
+        async with _session(factory) as session:
+            await fs.write("/restore_me.py", "precious content\n", session=session)
         assert (workspace / "restore_me.py").exists()
 
         # Delete (removes from disk, soft-deletes in DB)
-        await fs.delete("/restore_me.py")
+        async with _session(factory) as session:
+            await fs.delete("/restore_me.py", session=session)
         assert not (workspace / "restore_me.py").exists()
 
         # Restore from trash
-        result = await fs.restore_from_trash("/restore_me.py")
+        async with _session(factory) as session:
+            result = await fs.restore_from_trash("/restore_me.py", session=session)
         assert result.success is True
 
         # File should be back on disk with correct content
@@ -227,23 +256,28 @@ class TestTrashRestoreDisk:
         assert disk_path.read_text() == "precious content\n"
 
         # Should also be readable through the FS
-        read = await fs.read("/restore_me.py")
+        async with _session(factory) as session:
+            read = await fs.read("/restore_me.py", session=session)
         assert read.success is True
         assert "precious content" in read.content
         await fs.close()
 
     async def test_restore_edited_file_from_trash(self, tmp_path: Path):
         """C5: Restoring a multi-version file gets the latest version."""
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
-        await fs.write("/multi.py", "version 1\n")
-        await fs.edit("/multi.py", "version 1", "version 2")
+        async with _session(factory) as session:
+            await fs.write("/multi.py", "version 1\n", session=session)
+        async with _session(factory) as session:
+            await fs.edit("/multi.py", "version 1", "version 2", session=session)
 
-        await fs.delete("/multi.py")
+        async with _session(factory) as session:
+            await fs.delete("/multi.py", session=session)
         assert not (workspace / "multi.py").exists()
 
-        result = await fs.restore_from_trash("/multi.py")
+        async with _session(factory) as session:
+            result = await fs.restore_from_trash("/multi.py", session=session)
         assert result.success is True
 
         disk_content = (workspace / "multi.py").read_text()
@@ -261,10 +295,11 @@ class TestConcurrentWrites:
         """H1: Two concurrent writes should not interleave on the same session."""
         import asyncio
 
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
 
         async def write_file(name: str, content: str):
-            result = await fs.write(f"/{name}.py", content)
+            async with _session(factory) as session:
+                result = await fs.write(f"/{name}.py", content, session=session)
             assert result.success is True
             return result
 
@@ -279,7 +314,8 @@ class TestConcurrentWrites:
 
         # Verify all files exist and have correct content
         for name, expected in [("a", "content_a\n"), ("b", "content_b\n"), ("c", "content_c\n")]:
-            read = await fs.read(f"/{name}.py")
+            async with _session(factory) as session:
+                read = await fs.read(f"/{name}.py", session=session)
             assert read.success is True
             assert read.content == expected
         await fs.close()
@@ -288,14 +324,17 @@ class TestConcurrentWrites:
         """H1: Concurrent reads and writes should not interfere."""
         import asyncio
 
-        fs = await _make_local_fs(tmp_path)
-        await fs.write("/shared.py", "initial\n")
+        fs, factory = await _make_local_fs(tmp_path)
+        async with _session(factory) as session:
+            await fs.write("/shared.py", "initial\n", session=session)
 
         async def read_file():
-            return await fs.read("/shared.py")
+            async with _session(factory) as session:
+                return await fs.read("/shared.py", session=session)
 
         async def write_file():
-            return await fs.write("/other.py", "other\n")
+            async with _session(factory) as session:
+                return await fs.write("/other.py", "other\n", session=session)
 
         results = await asyncio.gather(
             read_file(),
@@ -317,21 +356,25 @@ class TestConcurrentWrites:
 class TestDirectoryTrashDisk:
     async def test_soft_delete_directory_removes_children_from_disk(self, tmp_path: Path):
         """H3: Soft-deleting a directory also trashes children."""
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
-        await fs.write("/mydir/child.py", "child content\n")
+        async with _session(factory) as session:
+            await fs.write("/mydir/child.py", "child content\n", session=session)
         assert (workspace / "mydir" / "child.py").exists()
 
-        result = await fs.delete("/mydir")
+        async with _session(factory) as session:
+            result = await fs.delete("/mydir", session=session)
         assert result.success is True
 
         # Child should not be readable
-        read = await fs.read("/mydir/child.py")
+        async with _session(factory) as session:
+            read = await fs.read("/mydir/child.py", session=session)
         assert read.success is False
 
         # Both parent and child should be in trash
-        trash = await fs.list_trash()
+        async with _session(factory) as session:
+            trash = await fs.list_trash(session=session)
         paths = [e.path for e in trash.entries]
         assert "/mydir" in paths
         assert "/mydir/child.py" in paths
@@ -339,17 +382,21 @@ class TestDirectoryTrashDisk:
 
     async def test_restore_directory_restores_children_to_disk(self, tmp_path: Path):
         """H3: Restoring a directory from trash restores children's disk content."""
-        fs = await _make_local_fs(tmp_path)
+        fs, factory = await _make_local_fs(tmp_path)
         workspace = fs.workspace_dir
 
-        await fs.write("/mydir/child.py", "child content\n")
-        await fs.write("/mydir/deep/nested.py", "nested content\n")
-        await fs.delete("/mydir")
+        async with _session(factory) as session:
+            await fs.write("/mydir/child.py", "child content\n", session=session)
+        async with _session(factory) as session:
+            await fs.write("/mydir/deep/nested.py", "nested content\n", session=session)
+        async with _session(factory) as session:
+            await fs.delete("/mydir", session=session)
 
         # Files gone from disk
         assert not (workspace / "mydir" / "child.py").exists()
 
-        result = await fs.restore_from_trash("/mydir")
+        async with _session(factory) as session:
+            result = await fs.restore_from_trash("/mydir", session=session)
         assert result.success is True
 
         # Children should be back on disk
@@ -357,7 +404,8 @@ class TestDirectoryTrashDisk:
         assert (workspace / "mydir" / "deep" / "nested.py").read_text() == "nested content\n"
 
         # And readable through the FS
-        read = await fs.read("/mydir/child.py")
+        async with _session(factory) as session:
+            read = await fs.read("/mydir/child.py", session=session)
         assert read.success is True
         assert "child content" in read.content
         await fs.close()
@@ -371,11 +419,10 @@ class TestDirectoryTrashDisk:
 class TestWALPragma:
     async def test_wal_mode_active(self, tmp_path: Path):
         """H7: WAL mode should be active after initialization."""
-        fs = await _make_local_fs(tmp_path)
-        await fs._ensure_db()
+        fs, factory = await _make_local_fs(tmp_path)
 
         # Query the database to verify WAL mode
-        async with fs._session_factory() as session:
+        async with factory() as session:
             result = await session.execute(
                 __import__("sqlalchemy").text("PRAGMA journal_mode")
             )
@@ -385,10 +432,9 @@ class TestWALPragma:
 
     async def test_busy_timeout_set(self, tmp_path: Path):
         """H7: busy_timeout should be set to 5000ms."""
-        fs = await _make_local_fs(tmp_path)
-        await fs._ensure_db()
+        fs, factory = await _make_local_fs(tmp_path)
 
-        async with fs._session_factory() as session:
+        async with factory() as session:
             result = await session.execute(
                 __import__("sqlalchemy").text("PRAGMA busy_timeout")
             )
@@ -398,10 +444,9 @@ class TestWALPragma:
 
     async def test_synchronous_full(self, tmp_path: Path):
         """H8: synchronous should be FULL (value 2)."""
-        fs = await _make_local_fs(tmp_path)
-        await fs._ensure_db()
+        fs, factory = await _make_local_fs(tmp_path)
 
-        async with fs._session_factory() as session:
+        async with factory() as session:
             result = await session.execute(
                 __import__("sqlalchemy").text("PRAGMA synchronous")
             )

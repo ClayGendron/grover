@@ -206,17 +206,17 @@ class TestGroverAsyncTransaction:
         assert (await grover.read("/project/after_tx.txt")).content == "after transaction"
 
     @pytest.mark.asyncio
-    async def test_transaction_sets_ufs_flag(self, workspace: Path, tmp_path: Path):
-        """``async with g:`` sets ``_in_transaction`` on the UFS."""
+    async def test_transaction_sets_vfs_flag(self, workspace: Path, tmp_path: Path):
+        """``async with g:`` sets ``_in_transaction`` on the VFS."""
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         local = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
         await g.mount("/app", local)
 
-        assert g._ufs._in_transaction is False
+        assert g._vfs._in_transaction is False
         async with g:
-            assert g._ufs._in_transaction is True
-        assert g._ufs._in_transaction is False
+            assert g._vfs._in_transaction is True
+        assert g._vfs._in_transaction is False
         await g.close()
 
     @pytest.mark.asyncio
@@ -574,7 +574,7 @@ class TestGroverAsyncPersistence:
 class TestGroverAsyncProperties:
     @pytest.mark.asyncio
     async def test_fs_property(self, grover: GroverAsync):
-        assert grover.fs is grover._ufs
+        assert grover.fs is grover._vfs
 
     @pytest.mark.asyncio
     async def test_graph_property(self, grover: GroverAsync):

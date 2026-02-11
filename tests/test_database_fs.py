@@ -1,4 +1,4 @@
-"""Tests for DatabaseFileSystem — session lifecycle, transactions, context manager."""
+"""Tests for DatabaseFileSystem — stateless, session-injected."""
 
 from __future__ import annotations
 
@@ -13,134 +13,105 @@ from grover.fs.database_fs import DatabaseFileSystem
 
 
 async def _make_db_fs():
-    """Create a DatabaseFileSystem with in-memory SQLite."""
+    """Create a stateless DatabaseFileSystem + session factory."""
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
-    return db, engine
+    db = DatabaseFileSystem(dialect="sqlite")
+    return db, factory, engine
 
 
 # =========================================================================
-# Session Lifecycle
+# Stateless Construction
 # =========================================================================
 
 
-class TestSessionLifecycle:
-    async def test_session_created_on_first_op(self):
-        db, engine = await _make_db_fs()
-        assert db._session is None
-        async with db:
-            await db.write("/hello.txt", "hello")
-            assert db._session is not None
+class TestStatelessConstruction:
+    async def test_no_session_state(self):
+        db, _factory, engine = await _make_db_fs()
+        # DFS should have no session-related attributes
+        assert not hasattr(db, "_session")
+        assert not hasattr(db, "session_factory")
+        assert not hasattr(db, "_txn_session")
         await engine.dispose()
 
-    async def test_session_reused_across_ops(self):
-        db, engine = await _make_db_fs()
+    async def test_context_manager_is_noop(self):
+        db, _factory, engine = await _make_db_fs()
         async with db:
-            await db.write("/a.txt", "a")
-            session_a = db._session
-            await db.write("/b.txt", "b")
-            session_b = db._session
-            assert session_a is session_b
+            pass  # Should not raise
         await engine.dispose()
 
-    async def test_close_clears_session(self):
-        db, engine = await _make_db_fs()
-        await db.write("/x.txt", "x")
-        assert db._session is not None
-        await db.close()
-        assert db._session is None
+    async def test_close_is_noop(self):
+        db, _factory, engine = await _make_db_fs()
+        await db.close()  # Should not raise
         await engine.dispose()
 
 
 # =========================================================================
-# Transaction vs Commit
+# Session Injection
 # =========================================================================
 
 
-class TestTransactionBehavior:
-    async def test_commit_flushes_in_transaction(self):
-        db, engine = await _make_db_fs()
-        db.in_transaction = True
-        async with db:
-            await db.write("/flushed.txt", "data")
-            session = db._session
-            assert session is not None
-            # In transaction mode, _commit flushes but does not commit.
-            # The session should still have the data available for reading.
-            result = await db.read("/flushed.txt")
+class TestSessionInjection:
+    async def test_write_read_with_session(self):
+        db, factory, engine = await _make_db_fs()
+        async with factory() as session:
+            result = await db.write("/hello.txt", "hello", session=session)
             assert result.success
-            assert result.content == "data"
+            read = await db.read("/hello.txt", session=session)
+            assert read.success
+            assert read.content == "hello"
         await engine.dispose()
 
-    async def test_commit_commits_outside_transaction(self):
-        db, engine = await _make_db_fs()
-        assert db.in_transaction is False
-        await db.write("/committed.txt", "data")
-        # Data should persist: read it back through a fresh session
-        result = await db.read("/committed.txt")
-        assert result.success
-        assert result.content == "data"
-        await db.close()
+    async def test_write_without_session_raises(self):
+        import pytest
+
+        db, _factory, engine = await _make_db_fs()
+        with pytest.raises(TypeError):
+            await db.write("/hello.txt", "hello")
+        await engine.dispose()
+
+    async def test_read_without_session_raises(self):
+        import pytest
+
+        db, _factory, engine = await _make_db_fs()
+        with pytest.raises(TypeError):
+            await db.read("/hello.txt")
         await engine.dispose()
 
 
 # =========================================================================
-# Context Manager
+# Flush Behavior (DFS flushes, never commits)
 # =========================================================================
 
 
-class TestContextManagerBehavior:
-    async def test_aexit_commits_on_success(self):
-        db, engine = await _make_db_fs()
-        async with db:
-            await db.write("/persisted.txt", "persisted")
-        # After context exit, session should be None
-        assert db._session is None
-        # Re-open and verify data persisted
-        db2 = DatabaseFileSystem(
-            session_factory=async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False),
-            dialect="sqlite",
-        )
-        result = await db2.read("/persisted.txt")
-        assert result.success
-        assert result.content == "persisted"
-        await db2.close()
+class TestFlushBehavior:
+    async def test_flush_without_commit(self):
+        """DFS flushes within session but never commits."""
+        db, factory, engine = await _make_db_fs()
+        async with factory() as session:
+            await db.write("/flushed.txt", "data", session=session)
+            # Data visible in same session (flushed)
+            read = await db.read("/flushed.txt", session=session)
+            assert read.success
+            assert read.content == "data"
+            # Don't commit — session will rollback on close
+        # Data should NOT persist without explicit commit
+        async with factory() as session:
+            read = await db.read("/flushed.txt", session=session)
+            assert not read.success
         await engine.dispose()
 
-    async def test_aexit_rollback_on_exception(self):
-        db, engine = await _make_db_fs()
-        # Use in_transaction so writes are flushed (not committed)
-        db.in_transaction = True
-        try:
-            async with db:
-                await db.write("/doomed.txt", "doomed")
-                # Data should be readable within the transaction
-                result = await db.read("/doomed.txt")
-                assert result.success
-                raise RuntimeError("boom")
-        except RuntimeError:
-            pass
-        # After rollback, session should be cleared
-        assert db._session is None
-        # Verify data did NOT persist after rollback
-        db2 = DatabaseFileSystem(
-            session_factory=async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False),
-            dialect="sqlite",
-        )
-        result = await db2.read("/doomed.txt")
-        assert not result.success
-        await db2.close()
-        await engine.dispose()
-
-    async def test_aexit_clears_session(self):
-        db, engine = await _make_db_fs()
-        async with db:
-            await db.write("/temp.txt", "temp")
-            assert db._session is not None
-        assert db._session is None
+    async def test_data_persists_with_explicit_commit(self):
+        db, factory, engine = await _make_db_fs()
+        async with factory() as session:
+            await db.write("/committed.txt", "data", session=session)
+            await session.commit()
+        async with factory() as session:
+            read = await db.read("/committed.txt", session=session)
+            assert read.success
+            assert read.content == "data"
         await engine.dispose()
 
 
@@ -151,24 +122,50 @@ class TestContextManagerBehavior:
 
 class TestContentFiltering:
     async def test_read_deleted_file_returns_failure(self):
-        db, engine = await _make_db_fs()
-        async with db:
-            await db.write("/alive.txt", "alive")
-            # Verify it can be read
-            result = await db.read("/alive.txt")
+        db, factory, engine = await _make_db_fs()
+        async with factory() as session:
+            await db.write("/alive.txt", "alive", session=session)
+            result = await db.read("/alive.txt", session=session)
             assert result.success
-            # Soft-delete it
-            await db.delete("/alive.txt", permanent=False)
-            # Now read should fail
-            result = await db.read("/alive.txt")
+            await db.delete("/alive.txt", permanent=False, session=session)
+            result = await db.read("/alive.txt", session=session)
             assert not result.success
         await engine.dispose()
 
     async def test_content_exists_false_for_deleted(self):
-        db, engine = await _make_db_fs()
-        async with db:
-            await db.write("/soon_gone.txt", "content")
-            assert await db._content_exists("/soon_gone.txt") is True
-            await db.delete("/soon_gone.txt", permanent=False)
-            assert await db._content_exists("/soon_gone.txt") is False
+        db, factory, engine = await _make_db_fs()
+        async with factory() as session:
+            await db.write("/soon_gone.txt", "content", session=session)
+            assert await db._content_exists("/soon_gone.txt", session) is True
+            await db.delete("/soon_gone.txt", permanent=False, session=session)
+            assert await db._content_exists("/soon_gone.txt", session) is False
+        await engine.dispose()
+
+
+# =========================================================================
+# Concurrency Safety
+# =========================================================================
+
+
+class TestConcurrencySafety:
+    async def test_dfs_has_no_instance_state(self):
+        """DFS should have no mutable session state — safe for concurrent use."""
+        db, factory, engine = await _make_db_fs()
+        s1 = factory()
+        s2 = factory()
+        try:
+            # Writing via s1 should not pollute DFS instance state
+            await db.write("/s1.txt", "from s1", session=s1)
+            # DFS should still have no session-related attributes
+            assert not hasattr(db, "_session")
+            assert not hasattr(db, "session_factory")
+            assert not hasattr(db, "_txn_session")
+            # s2 can independently write without conflict
+            await db.write("/s2.txt", "from s2", session=s2)
+            read = await db.read("/s2.txt", session=s2)
+            assert read.success
+            assert read.content == "from s2"
+        finally:
+            await s1.close()
+            await s2.close()
         await engine.dispose()

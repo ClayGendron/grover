@@ -46,14 +46,6 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Abstract Method Implementations
     # =========================================================================
 
-    async def _get_session(self) -> AsyncSession:
-        raise RuntimeError(
-            "DatabaseFileSystem requires session= on each operation"
-        )
-
-    async def _commit(self, session: AsyncSession) -> None:
-        await session.flush()
-
     async def close(self) -> None:
         """No-op — DFS has no resources to release."""
 
