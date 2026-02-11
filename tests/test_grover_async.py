@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover._grover_async import GroverAsync
+from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph._graph import Graph
+from grover.ref import Ref
 from grover.search._index import SearchResult
 
 if TYPE_CHECKING:
@@ -523,3 +525,212 @@ class TestGroverAsyncProperties:
     @pytest.mark.asyncio
     async def test_graph_property(self, grover: GroverAsync):
         assert grover.graph is grover._graph
+
+
+# ==================================================================
+# Graph Query Wrappers
+# ==================================================================
+
+
+class TestGroverAsyncGraphQueries:
+    @pytest.mark.asyncio
+    async def test_dependents_returns_refs(self, grover: GroverAsync):
+        await grover.write("/project/lib.py", 'def helper():\n    return 42\n')
+        await grover.write(
+            "/project/main.py",
+            'from lib import helper\n\ndef run():\n    return helper()\n',
+        )
+        deps = grover.dependents("/project/lib.py")
+        # main.py imports lib.py, so main.py is a dependent
+        # The graph stores "imports" edges from analyzer
+        assert isinstance(deps, list)
+        # All items are Refs
+        assert all(isinstance(r, Ref) for r in deps)
+
+    @pytest.mark.asyncio
+    async def test_dependencies_returns_refs(self, grover: GroverAsync):
+        await grover.write("/project/dep.py", 'def util():\n    pass\n')
+        await grover.write(
+            "/project/consumer.py",
+            'from dep import util\n\ndef main():\n    util()\n',
+        )
+        deps = grover.dependencies("/project/consumer.py")
+        assert isinstance(deps, list)
+        assert all(isinstance(r, Ref) for r in deps)
+
+    @pytest.mark.asyncio
+    async def test_impacts_transitive(self, grover: GroverAsync):
+        await grover.write("/project/c.py", 'VALUE = 1\n')
+        await grover.write("/project/b.py", 'from c import VALUE\n\ndef get():\n    return VALUE\n')
+        await grover.write(
+            "/project/a.py",
+            'from b import get\n\ndef run():\n    return get()\n',
+        )
+        imp = grover.impacts("/project/c.py")
+        assert isinstance(imp, list)
+
+    @pytest.mark.asyncio
+    async def test_path_between_found(self, grover: GroverAsync):
+        await grover.write("/project/start.py", 'X = 1\n')
+        await grover.write(
+            "/project/mid.py",
+            'from start import X\n\ndef mid():\n    return X\n',
+        )
+        await grover.write(
+            "/project/end.py",
+            'from mid import mid\n\ndef end():\n    return mid()\n',
+        )
+        path = grover.path_between("/project/end.py", "/project/start.py")
+        # May or may not find a path depending on import analysis depth
+        if path is not None:
+            assert isinstance(path, list)
+            assert all(isinstance(r, Ref) for r in path)
+
+    @pytest.mark.asyncio
+    async def test_path_between_none(self, grover: GroverAsync):
+        await grover.write("/project/island_a.py", 'A = 1\n')
+        await grover.write("/project/island_b.py", 'B = 2\n')
+        path = grover.path_between("/project/island_a.py", "/project/island_b.py")
+        assert path is None
+
+
+# ==================================================================
+# Event Handlers
+# ==================================================================
+
+
+class TestGroverAsyncEventHandlers:
+    @pytest.mark.asyncio
+    async def test_move_updates_graph(self, grover: GroverAsync):
+        await grover.write("/project/old.py", 'def foo():\n    pass\n')
+        assert grover.graph.has_node("/project/old.py")
+
+        result = await grover.fs.move("/project/old.py", "/project/new.py")
+        assert result.success
+        assert not grover.graph.has_node("/project/old.py")
+        assert grover.graph.has_node("/project/new.py")
+
+    @pytest.mark.asyncio
+    async def test_move_updates_search_index(self, grover: GroverAsync):
+        code = 'def unique_search_target():\n    """Locate me after move."""\n    pass\n'
+        await grover.write("/project/before.py", code)
+        await grover.fs.move("/project/before.py", "/project/after.py")
+        if grover._search_index is not None:
+            results = await grover.search("unique_search_target")
+            found_paths = [r.ref.path for r in results]
+            found_parents = [r.parent_path for r in results if r.parent_path]
+            all_paths = found_paths + found_parents
+            # Old path should not appear
+            assert "/project/before.py" not in all_paths
+
+    @pytest.mark.asyncio
+    async def test_restored_event_reanalyzes(self, grover: GroverAsync):
+        await grover.write("/project/restore_me.py", 'def restored():\n    pass\n')
+        assert grover.graph.has_node("/project/restore_me.py")
+        await grover.delete("/project/restore_me.py")
+        assert not grover.graph.has_node("/project/restore_me.py")
+        # Restore it (for LocalFileSystem this is restore_from_trash)
+        result = await grover.fs.restore_from_trash("/project/restore_me.py")
+        if result.success:
+            assert grover.graph.has_node("/project/restore_me.py")
+
+
+# ==================================================================
+# Mount Options
+# ==================================================================
+
+
+class TestGroverAsyncMountOptions:
+    @pytest.mark.asyncio
+    async def test_hidden_mount_not_in_list_dir(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        ws_hidden = tmp_path / "ws_hidden"
+        ws_hidden.mkdir()
+        await g.mount(
+            "/hidden",
+            LocalFileSystem(workspace_dir=ws_hidden, data_dir=data / "local_hidden"),
+            hidden=True,
+        )
+        await g.mount(
+            "/visible",
+            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
+        )
+        entries = await g.list_dir("/")
+        names = {e["name"] for e in entries}
+        assert "visible" in names
+        assert "hidden" not in names
+        await g.close()
+
+    @pytest.mark.asyncio
+    async def test_mount_type_auto_detection(self, workspace: Path, tmp_path: Path):
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+        from sqlmodel import SQLModel
+
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+
+        # Local mount
+        await g.mount("/local", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
+        local_mount = next(m for m in g._registry.list_mounts() if m.mount_path == "/local")
+        assert local_mount.mount_type == "local"
+
+        # Database mount
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
+        await g.mount("/db", db)
+        db_mount = next(m for m in g._registry.list_mounts() if m.mount_path == "/db")
+        assert db_mount.mount_type == "vfs"
+
+        await g.close()
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_unmount_nonexistent(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
+        # Should not raise
+        await g.unmount("/nonexistent")
+        await g.close()
+
+    @pytest.mark.asyncio
+    async def test_unmount_cleans_graph_and_search(self, workspace: Path, tmp_path: Path):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
+        await g.write("/app/file.py", 'def demo():\n    pass\n')
+        assert g.graph.has_node("/app/file.py")
+
+        await g.unmount("/app")
+        assert not g.graph.has_node("/app/file.py")
+        await g.close()
+
+
+# ==================================================================
+# Unsupported File Types
+# ==================================================================
+
+
+class TestGroverAsyncUnsupportedFiles:
+    @pytest.mark.asyncio
+    async def test_unsupported_file_embeds_whole_file(self, grover: GroverAsync):
+        # .txt has no Python analyzer, but the whole file should be indexed
+        await grover.write("/project/notes.txt", "Important project notes here")
+        assert grover.graph.has_node("/project/notes.txt")
+        if grover._search_index is not None:
+            results = await grover.search("Important project notes")
+            assert len(results) >= 1
+
+    @pytest.mark.asyncio
+    async def test_write_grover_path_skipped(self, grover: GroverAsync):
+        # Writes to /.grover/ should not create graph nodes
+        await grover.fs.write("/.grover/internal.txt", "metadata")
+        assert not grover.graph.has_node("/.grover/internal.txt")

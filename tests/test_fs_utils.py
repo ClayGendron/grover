@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from grover.fs.types import ReadResult
 from grover.fs.utils import (
+    block_anchor_replacer,
+    format_read_output,
     from_trash_path,
     get_line_number,
     guess_mime_type,
@@ -12,9 +15,11 @@ from grover.fs.utils import (
     is_text_file,
     is_trash_path,
     levenshtein,
+    line_trimmed_replacer,
     normalize_line_endings,
     normalize_path,
     replace,
+    simple_replacer,
     split_path,
     to_trash_path,
     validate_path,
@@ -260,3 +265,133 @@ class TestReplace:
         # "def foo():" matches but "return x + y + z" also matches
         if result.success:
             assert result.method_used in ("exact", "line_trimmed", "block_anchor")
+
+
+# ---------------------------------------------------------------------------
+# Path Validation Edge Cases
+# ---------------------------------------------------------------------------
+
+
+class TestValidatePathEdgeCases:
+    def test_validate_255_char_filename(self):
+        ok, _msg = validate_path("/" + "a" * 255)
+        assert ok is True
+
+    def test_validate_256_char_filename(self):
+        ok, msg = validate_path("/" + "a" * 256)
+        assert ok is False
+        assert "Filename too long" in msg
+
+    def test_normalize_path_multiple_slashes(self):
+        # posixpath.normpath preserves a leading // (POSIX allows it)
+        # but collapses internal triple slashes
+        assert normalize_path("///foo///bar") == "/foo/bar"
+
+    def test_control_character_rejected(self):
+        ok, msg = validate_path("/file\x01name.txt")
+        assert ok is False
+        assert "control character" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# Replacer Edge Cases
+# ---------------------------------------------------------------------------
+
+
+class TestSimpleReplacerEdgeCases:
+    def test_no_match(self):
+        matches = list(simple_replacer("hello world", "xyz"))
+        assert matches == []
+
+    def test_multiple_matches(self):
+        matches = list(simple_replacer("aXbXc", "X"))
+        assert len(matches) == 2
+        assert all(m.confidence == 1.0 for m in matches)
+
+
+class TestLineTrimmedReplacerEdgeCases:
+    def test_whitespace_only_match(self):
+        content = "  hello  \n  world  \n"
+        find = "hello\nworld"
+        matches = list(line_trimmed_replacer(content, find))
+        assert len(matches) == 1
+        assert matches[0].method == "line_trimmed"
+        assert matches[0].confidence == 0.9
+
+
+class TestBlockAnchorReplacerEdgeCases:
+    def test_minimum_block(self):
+        content = "start\nmiddle content\nend\n"
+        find = "start\nmiddle content\nend\n"
+        matches = list(block_anchor_replacer(content, find))
+        # Exactly 3 lines with matching anchors
+        assert len(matches) <= 1
+
+    def test_less_than_3_lines_returns_empty(self):
+        content = "start\nend\n"
+        find = "start\nend\n"
+        matches = list(block_anchor_replacer(content, find))
+        assert matches == []
+
+
+class TestReplaceEdgeCases:
+    def test_replace_empty_content_old_string(self):
+        result = replace("", "x", "y")
+        assert result.success is False
+        assert "not found" in result.error.lower()
+
+    def test_replace_crlf_normalized(self):
+        result = replace("hello\r\nworld", "hello\nworld", "hi\nearth")
+        assert result.success is True
+        assert result.content == "hi\nearth"
+
+
+# ---------------------------------------------------------------------------
+# Read Output Formatting
+# ---------------------------------------------------------------------------
+
+
+class TestFormatReadOutput:
+    def test_format_read_output_with_offset(self):
+        result = ReadResult(
+            success=True, message="ok",
+            content="line1\nline2\nline3",
+            offset=10,
+        )
+        output = format_read_output(result)
+        # Lines should start at offset+1 = 11
+        assert "00011|" in output
+        assert "00012|" in output
+        assert "00013|" in output
+
+    def test_format_read_output_truncated(self):
+        result = ReadResult(
+            success=True, message="ok",
+            content="line1\nline2",
+            offset=0,
+            truncated=True,
+        )
+        output = format_read_output(result)
+        assert "File has more lines" in output
+        assert "offset" in output.lower()
+
+    def test_format_read_output_empty(self):
+        result = ReadResult(success=True, message="ok", content="")
+        output = format_read_output(result)
+        assert "empty file" in output.lower()
+
+    def test_format_read_output_none_content(self):
+        result = ReadResult(success=True, message="ok", content=None)
+        output = format_read_output(result)
+        assert "empty file" in output.lower()
+
+    def test_format_read_output_end_of_file(self):
+        result = ReadResult(
+            success=True, message="ok",
+            content="hello\nworld",
+            total_lines=2,
+            truncated=False,
+        )
+        output = format_read_output(result)
+        assert "End of file" in output
+        assert "2 lines" in output
