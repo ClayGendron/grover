@@ -365,7 +365,9 @@ class VFS:
                 )
             return result
 
-        # Cross-mount move: read → write → delete
+        # Cross-mount move: read → write → delete (non-atomic).
+        # If write commits but delete fails, data exists in both mounts.
+        # The error message is returned to the caller; no automatic compensation.
         async with self._session_for(src_mount) as src_sess:
             read_result = await src_mount.backend.read(src_rel, session=src_sess)
         if not read_result.success:

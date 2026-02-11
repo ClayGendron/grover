@@ -173,7 +173,7 @@ Backends implement the core `StorageBackend` protocol plus optional capability p
 ### Protocol Hierarchy
 
 ```
-StorageBackend (core — 11 methods)
+StorageBackend (core — 12 methods)
     open, close, read, write, edit, delete, mkdir, move, copy, list_dir, exists, get_info
 ├── SupportsVersions (opt-in)
 │     list_versions → ListVersionsResult

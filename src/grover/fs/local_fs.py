@@ -461,13 +461,22 @@ class LocalFileSystem:
             return ListResult(success=False, message=f"Not a directory: {path}")
 
         entries: list[FileInfo] = []
-        disk_items = await asyncio.to_thread(lambda: list(actual_path.iterdir()))
 
-        for item in disk_items:
-            if item.name.startswith("."):
-                continue
+        def _scan_dir() -> list[tuple[str, bool, int | None]]:
+            """Collect (name, is_dir, size) from disk in one thread."""
+            items = []
+            for item in actual_path.iterdir():
+                if item.name.startswith("."):
+                    continue
+                is_d = item.is_dir()
+                sz = item.stat().st_size if item.is_file() else None
+                items.append((item.name, is_d, sz))
+            return items
 
-            item_path = f"{path}/{item.name}" if path != "/" else f"/{item.name}"
+        disk_items = await asyncio.to_thread(_scan_dir)
+
+        for name, is_d, disk_size in disk_items:
+            item_path = f"{path}/{name}" if path != "/" else f"/{name}"
             item_path = normalize_path(item_path)
 
             file = await self.metadata.get_file(sess, item_path)
@@ -475,13 +484,9 @@ class LocalFileSystem:
             entries.append(
                 FileInfo(
                     path=item_path,
-                    name=item.name,
-                    is_directory=item.is_dir(),
-                    size_bytes=(
-                        file.size_bytes
-                        if file
-                        else (item.stat().st_size if item.is_file() else None)
-                    ),
+                    name=name,
+                    is_directory=is_d,
+                    size_bytes=file.size_bytes if file else disk_size,
                     mime_type=file.mime_type if file else None,
                     version=file.current_version if file else 1,
                     created_at=file.created_at if file else None,
@@ -549,7 +554,7 @@ class LocalFileSystem:
         path = normalize_path(path)
         file = await self.metadata.get_file(sess, path)
         if not file:
-            return ListVersionsResult(success=True, message="File not found", versions=[])
+            return ListVersionsResult(success=False, message=f"File not found: {path}", versions=[])
         versions = await self.versioning.list_versions(sess, file)
         return ListVersionsResult(
             success=True,
@@ -689,9 +694,15 @@ class LocalFileSystem:
 
             file = await self.metadata.get_file(sess, vpath)
             if file is None:
-                # File on disk but not in DB — create record
+                # File on disk but not in DB — create DB record only
+                # (content already exists on disk, no need to rewrite)
                 content = await self._read_content(vpath, sess)
                 if content is not None:
+                    async def _noop_write(
+                        _path: str, _content: str, _session: AsyncSession,
+                    ) -> None:
+                        pass
+
                     await write_file(
                         vpath, content, "reconcile", True, sess,
                         metadata=self.metadata,
@@ -699,7 +710,7 @@ class LocalFileSystem:
                         directories=self.directories,
                         file_model=self._file_model,
                         read_content=self._read_content,
-                        write_content=self._write_content,
+                        write_content=_noop_write,
                     )
                     stats["created"] += 1
 

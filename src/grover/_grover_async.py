@@ -195,8 +195,8 @@ class GroverAsync:
 
         self._registry.add_mount(config)
 
-        # Call open() on the backend
-        if hasattr(config.backend, "open"):
+        # Call open() on the backend (skip if already opened for LFS above)
+        if not isinstance(backend, LocalFileSystem) and hasattr(config.backend, "open"):
             await config.backend.open()
 
         # Lazily initialise meta_fs on first non-hidden mount

@@ -1,4 +1,4 @@
-"""Tests for BaseFileSystem — versioning, CRUD, trash via DatabaseFileSystem."""
+"""Tests for versioning, CRUD, trash via DatabaseFileSystem."""
 
 from __future__ import annotations
 

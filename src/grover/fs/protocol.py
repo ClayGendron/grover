@@ -3,6 +3,12 @@
 Split into a core protocol and opt-in capability protocols so that
 non-SQL backends can implement just the core without being forced
 to provide versioning, trash, or reconciliation.
+
+The shared services (MetadataService, VersioningService, DirectoryService,
+TrashService) and the orchestration functions in ``operations.py`` are
+built on SQLAlchemy and are intended for SQL-backed backends only.
+Non-SQL backends implement the StorageBackend protocol directly without
+using these shared modules.
 """
 
 from __future__ import annotations

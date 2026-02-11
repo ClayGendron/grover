@@ -130,7 +130,7 @@ graph TD
 Backends implement the core `StorageBackend` protocol plus optional capability protocols:
 
 ```
-StorageBackend (core — 11 methods)
+StorageBackend (core — 12 methods)
     session: AsyncSession | None = None on all methods
 ├── SupportsVersions (opt-in — 3 methods)
 │     list_versions, get_version_content, restore_version

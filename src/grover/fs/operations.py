@@ -383,7 +383,9 @@ async def move_file(
             )
 
         # Atomic move: all changes in the current session
-        content = await read_content(src, session) or ""
+        content = await read_content(src, session)
+        if content is None:
+            return MoveResult(success=False, message=f"Source content not found: {src}")
         old_dest_content = await read_content(dest, session) or ""
 
         # Update dest metadata with source content

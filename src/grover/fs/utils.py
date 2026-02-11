@@ -599,7 +599,7 @@ def format_read_output(result: ReadResult) -> str:
     """Format a ReadResult with line numbers and ``<file>`` wrapper for LLM display.
 
     The *result* should contain raw (unformatted) content from
-    ``BaseFileSystem.read()``.  This function adds zero-padded line numbers
+    a backend's ``read()`` method.  This function adds zero-padded line numbers
     and wraps the output in ``<file>...</file>`` tags, matching the format
     that was previously embedded in ``_format_read_output``.
     """

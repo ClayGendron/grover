@@ -282,7 +282,7 @@ class DatabaseFileSystem:
         path = normalize_path(path)
         file = await self.metadata.get_file(sess, path)
         if not file:
-            return ListVersionsResult(success=True, message="File not found", versions=[])
+            return ListVersionsResult(success=False, message=f"File not found: {path}", versions=[])
         versions = await self.versioning.list_versions(sess, file)
         return ListVersionsResult(
             success=True,
