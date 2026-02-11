@@ -23,10 +23,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       - name: Install docs dependencies
-        run: uv pip install mkdocs-material
+        run: uv pip install --system mkdocs-material
 
       - name: Build docs
-        run: uv run mkdocs build
+        run: mkdocs build
 
       - uses: actions/upload-pages-artifact@v3
         with:
