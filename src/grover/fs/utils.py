@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 import posixpath
+import unicodedata
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,6 +91,7 @@ def normalize_path(path: str) -> str:
     if not path:
         return "/"
 
+    path = unicodedata.normalize("NFC", path)
     path = path.strip()
 
     if not path.startswith("/"):

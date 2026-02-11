@@ -343,6 +343,52 @@ class TestTrash:
             assert result.scalars().all() == [], "Version records should be deleted"
         await engine.dispose()
 
+    async def test_soft_delete_directory_trashes_children(self):
+        """H3: Soft-deleting a directory should also trash all children."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/mydir")
+            await fs.write("/mydir/a.py", "a\n")
+            await fs.write("/mydir/b.py", "b\n")
+
+            result = await fs.delete("/mydir")
+            assert result.success is True
+
+            # Children should be gone
+            assert await fs.exists("/mydir/a.py") is False
+            assert await fs.exists("/mydir/b.py") is False
+
+            # All three should be in trash
+            trash = await fs.list_trash()
+            paths = [e.path for e in trash.entries]
+            assert "/mydir" in paths
+            assert "/mydir/a.py" in paths
+            assert "/mydir/b.py" in paths
+        await engine.dispose()
+
+    async def test_restore_directory_restores_children(self):
+        """H3: Restoring a directory from trash also restores children."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/mydir")
+            await fs.write("/mydir/a.py", "a content\n")
+            await fs.write("/mydir/b.py", "b content\n")
+
+            await fs.delete("/mydir")
+
+            result = await fs.restore_from_trash("/mydir")
+            assert result.success is True
+
+            # Children should be back
+            assert await fs.exists("/mydir/a.py") is True
+            assert await fs.exists("/mydir/b.py") is True
+
+            read_a = await fs.read("/mydir/a.py")
+            assert "a content" in read_a.content
+            read_b = await fs.read("/mydir/b.py")
+            assert "b content" in read_b.content
+        await engine.dispose()
+
 
 # ---------------------------------------------------------------------------
 # Directory Operations
@@ -388,6 +434,45 @@ class TestDirectoryOps:
             assert "src" in names
         await engine.dispose()
 
+    async def test_list_dir_only_direct_children(self):
+        """H2: list_dir should only return direct children, not nested files."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/src")
+            await fs.write("/src/main.py", "main\n")
+            await fs.write("/src/lib/helper.py", "helper\n")
+            await fs.write("/readme.md", "# readme\n")
+
+            # Root should only list src/ and readme.md, not nested files
+            root_result = await fs.list_dir("/")
+            root_names = [e.name for e in root_result.entries]
+            assert "src" in root_names
+            assert "readme.md" in root_names
+            assert "main.py" not in root_names
+            assert "helper.py" not in root_names
+
+            # /src should list main.py and lib/, not nested helper.py
+            src_result = await fs.list_dir("/src")
+            src_names = [e.name for e in src_result.entries]
+            assert "main.py" in src_names
+            assert "lib" in src_names
+            assert "helper.py" not in src_names
+        await engine.dispose()
+
+    async def test_list_dir_excludes_deleted(self):
+        """H2: Deleted files should not appear in list_dir."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/a.py", "a\n")
+            await fs.write("/b.py", "b\n")
+            await fs.delete("/a.py")
+
+            result = await fs.list_dir("/")
+            names = [e.name for e in result.entries]
+            assert "a.py" not in names
+            assert "b.py" in names
+        await engine.dispose()
+
 
 # ---------------------------------------------------------------------------
 # Move / Copy
@@ -406,6 +491,19 @@ class TestMoveCopy:
             assert await fs.exists("/b.py") is True
         await engine.dispose()
 
+    async def test_move_empty_file_to_existing(self):
+        """Moving an empty file onto an existing file should succeed."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/empty.py", "")
+            await fs.write("/target.py", "old\n")
+
+            result = await fs.move("/empty.py", "/target.py")
+            assert result.success is True
+            assert await fs.exists("/empty.py") is False
+            assert await fs.exists("/target.py") is True
+        await engine.dispose()
+
     async def test_copy_file(self):
         fs, engine = await _make_fs()
         async with fs:
@@ -415,6 +513,84 @@ class TestMoveCopy:
 
             assert await fs.exists("/a.py") is True
             assert await fs.exists("/b.py") is True
+        await engine.dispose()
+
+    async def test_move_to_existing_file_overwrites(self):
+        """C3: Moving to an existing file overwrites the destination."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/src.py", "source content\n")
+            await fs.write("/dest.py", "old dest content\n")
+
+            result = await fs.move("/src.py", "/dest.py")
+            assert result.success is True
+
+            # Source should be gone
+            assert await fs.exists("/src.py") is False
+
+            # Dest should have source content
+            read = await fs.read("/dest.py")
+            assert read.success is True
+            assert "source content" in read.content
+        await engine.dispose()
+
+    async def test_move_to_existing_directory_rejected(self):
+        """C3: Moving to an existing directory is rejected."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/src.py", "content\n")
+            await fs.mkdir("/dest")
+
+            result = await fs.move("/src.py", "/dest")
+            assert result.success is False
+            assert "directory" in result.message.lower()
+        await engine.dispose()
+
+    async def test_move_directory_over_file_rejected(self):
+        """C3: Moving a directory over a file is rejected."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/srcdir")
+            await fs.write("/srcdir/child.py", "child\n")
+            await fs.write("/dest.py", "content\n")
+
+            result = await fs.move("/srcdir", "/dest.py")
+            assert result.success is False
+            assert "cannot move directory" in result.message.lower()
+        await engine.dispose()
+
+    async def test_move_directory_to_existing_dir_rejected(self):
+        """C3: Moving a directory to an existing directory is rejected."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/a")
+            await fs.write("/a/child.py", "from a\n")
+            await fs.mkdir("/b")
+            await fs.write("/b/child.py", "from b\n")
+
+            result = await fs.move("/a", "/b")
+            assert result.success is False
+            assert "directory" in result.message.lower()
+        await engine.dispose()
+
+    async def test_move_directory_content_preserved(self):
+        """C2: Directory move preserves all children's content."""
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/src")
+            await fs.write("/src/one.py", "file one\n")
+            await fs.write("/src/two.py", "file two\n")
+
+            result = await fs.move("/src", "/dst")
+            assert result.success is True
+
+            read1 = await fs.read("/dst/one.py")
+            assert read1.success is True
+            assert "file one" in read1.content
+
+            read2 = await fs.read("/dst/two.py")
+            assert read2.success is True
+            assert "file two" in read2.content
         await engine.dispose()
 
 
@@ -578,6 +754,67 @@ class TestEdgeCases:
             result = await fs.edit("/mydir", "old", "new")
             assert result.success is False
             assert "directory" in result.message.lower()
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Version Reconstruction Across Snapshots
+# ---------------------------------------------------------------------------
+
+
+class TestParentPath:
+    """H5: parent_path should be populated on write, mkdir, and move."""
+
+    async def test_write_sets_parent_path(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/src/main.py", "content\n")
+
+            info = await fs.get_info("/src/main.py")
+            assert info is not None
+
+            # Check parent_path via DB directly
+            session = await fs._get_session()
+            file = await fs._get_file(session, "/src/main.py")
+            assert file.parent_path == "/src"
+        await engine.dispose()
+
+    async def test_mkdir_sets_parent_path(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.mkdir("/a/b/c")
+
+            session = await fs._get_session()
+            b = await fs._get_file(session, "/a/b")
+            assert b is not None
+            assert b.parent_path == "/a"
+
+            c = await fs._get_file(session, "/a/b/c")
+            assert c is not None
+            assert c.parent_path == "/a/b"
+        await engine.dispose()
+
+    async def test_move_updates_parent_path(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/src/file.py", "content\n")
+            await fs.mkdir("/dst")
+            await fs.move("/src/file.py", "/dst/file.py")
+
+            session = await fs._get_session()
+            file = await fs._get_file(session, "/dst/file.py")
+            assert file is not None
+            assert file.parent_path == "/dst"
+        await engine.dispose()
+
+    async def test_root_file_parent_path(self):
+        fs, engine = await _make_fs()
+        async with fs:
+            await fs.write("/root_file.py", "content\n")
+
+            session = await fs._get_session()
+            file = await fs._get_file(session, "/root_file.py")
+            assert file.parent_path == "/"
         await engine.dispose()
 
 

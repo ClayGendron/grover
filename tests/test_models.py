@@ -153,6 +153,30 @@ class TestDefaultFactories:
 # ---------------------------------------------------------------------------
 
 
+class TestFileVersionUniqueConstraint:
+    """H4: Duplicate (file_id, version) should be rejected."""
+
+    def test_duplicate_file_version_rejected(self, session: Session):
+        from sqlalchemy.exc import IntegrityError
+
+        fv1 = FileVersion(file_id="abc", version=1, is_snapshot=True, content="v1")
+        session.add(fv1)
+        session.commit()
+
+        fv2 = FileVersion(file_id="abc", version=1, is_snapshot=True, content="v1dup")
+        session.add(fv2)
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+    def test_same_version_different_file_allowed(self, session: Session):
+        fv1 = FileVersion(file_id="abc", version=1, is_snapshot=True, content="v1a")
+        fv2 = FileVersion(file_id="xyz", version=1, is_snapshot=True, content="v1b")
+        session.add(fv1)
+        session.add(fv2)
+        session.commit()
+        # Should not raise
+
+
 class TestComputeDiff:
     def test_identical_content(self):
         assert compute_diff("hello\n", "hello\n") == ""
@@ -180,6 +204,50 @@ class TestComputeDiff:
 
     def test_empty_to_empty(self):
         assert compute_diff("", "") == ""
+
+
+class TestApplyDiffBoundsValidation:
+    """C6: Validate that out-of-bounds hunks raise ValueError."""
+
+    def test_hunk_source_start_too_large(self):
+        """A hunk referencing lines beyond the file should raise."""
+        base = "line1\nline2\n"
+        # Craft a diff with source_start beyond file length
+        bad_diff = (
+            "--- a\n"
+            "+++ b\n"
+            "@@ -100,1 +100,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        with pytest.raises(ValueError, match="out of bounds"):
+            apply_diff(base, bad_diff)
+
+    def test_hunk_source_length_exceeds_file(self):
+        """A hunk whose source_start + source_length exceeds file lines should raise."""
+        base = "line1\nline2\n"
+        # source_start=1, source_length=5 — valid unidiff structure but
+        # the base file only has 2 lines, so end_idx=5 > 2
+        bad_diff = (
+            "--- a\n"
+            "+++ b\n"
+            "@@ -1,5 +1,1 @@\n"
+            "-line1\n"
+            "-line2\n"
+            "-line3\n"
+            "-line4\n"
+            "-line5\n"
+            "+new\n"
+        )
+        with pytest.raises(ValueError, match="out of bounds"):
+            apply_diff(base, bad_diff)
+
+    def test_valid_diff_still_works(self):
+        """Normal diffs should not be affected by bounds checking."""
+        old = "line1\nline2\nline3\n"
+        new = "line1\nchanged\nline3\n"
+        diff = compute_diff(old, new)
+        assert apply_diff(old, diff) == new
 
 
 class TestApplyDiff:

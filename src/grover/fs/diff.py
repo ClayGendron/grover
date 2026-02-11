@@ -88,6 +88,11 @@ def apply_diff(base: str, diff: str) -> str:
         if hunk.source_start == 0 and hunk.source_length == 0:
             start_idx = 0
             end_idx = 0
+        elif start_idx < 0 or end_idx > len(result_lines):
+            raise ValueError(
+                f"Hunk out of bounds: source_start={hunk.source_start}, "
+                f"source_length={hunk.source_length}, file has {len(result_lines)} lines"
+            )
 
         result_lines[start_idx:end_idx] = new_lines
 

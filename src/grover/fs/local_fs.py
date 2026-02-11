@@ -13,7 +13,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .base import FV, BaseFileSystem, F
-from .types import DeleteResult, FileInfo, ListResult, MkdirResult, ReadResult
+from .types import DeleteResult, FileInfo, ListResult, MkdirResult, ReadResult, RestoreResult
 from .utils import get_similar_files, is_binary_file, normalize_path, validate_path
 
 
@@ -72,7 +72,8 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         self._engine = None
         self._session_factory = None
-        self._session: AsyncSession | None = None
+        self._txn_session: AsyncSession | None = None
+        self._init_lock = asyncio.Lock()
 
     # =========================================================================
     # Database Management
@@ -80,43 +81,53 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
     async def _ensure_db(self) -> None:
         """Initialize database if needed."""
-        if self._engine is not None:
+        if self._session_factory is not None:
             return
+        async with self._init_lock:
+            if self._session_factory is not None:
+                return
 
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = self.data_dir / "file_versions.db"
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            db_path = self.data_dir / "file_versions.db"
 
-        self._engine = create_async_engine(
-            f"sqlite+aiosqlite:///{db_path}",
-            echo=False,
-        )
+            self._engine = create_async_engine(
+                f"sqlite+aiosqlite:///{db_path}",
+                echo=False,
+            )
 
-        # Scope the pragma listener to this engine only
-        @event.listens_for(self._engine.sync_engine, "connect")
-        def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
-            cursor = dbapi_connection.cursor()  # type: ignore[union-attr]
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
+            # Scope the pragma listener to this engine only
+            @event.listens_for(self._engine.sync_engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
+                cursor = dbapi_connection.cursor()  # type: ignore[union-attr]
+                cursor.execute("PRAGMA journal_mode=WAL")
+                result = cursor.fetchone()
+                if result[0].lower() != "wal":
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "WAL mode not active, got: %s", result[0],
+                    )
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.execute("PRAGMA synchronous=FULL")
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
 
-        async with self._engine.begin() as conn:
-            fm_table = self._file_model.__table__  # type: ignore[unresolved-attribute]
-            fv_table = self._file_version_model.__table__  # type: ignore[unresolved-attribute]
-            await conn.run_sync(lambda c: fm_table.create(c, checkfirst=True))
-            await conn.run_sync(lambda c: fv_table.create(c, checkfirst=True))
+            async with self._engine.begin() as conn:
+                fm_table = self._file_model.__table__  # type: ignore[unresolved-attribute]
+                fv_table = self._file_version_model.__table__  # type: ignore[unresolved-attribute]
+                await conn.run_sync(lambda c: fm_table.create(c, checkfirst=True))
+                await conn.run_sync(lambda c: fv_table.create(c, checkfirst=True))
 
-        self._session_factory = async_sessionmaker(
-            self._engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
+            self._session_factory = async_sessionmaker(
+                self._engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
 
     async def close(self) -> None:
-        """Close database connection."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        """Close database engine and release resources."""
+        if self._txn_session is not None:
+            await self._txn_session.close()
+            self._txn_session = None
         if self._engine:
             await self._engine.dispose()
             self._engine = None
@@ -131,31 +142,44 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         exc_val: object,
         exc_tb: object,
     ) -> None:
-        if self._session is not None:
+        if self._txn_session is not None:
             try:
                 if exc_type is None:
-                    await self._session.commit()
+                    await self._txn_session.commit()
                 else:
-                    await self._session.rollback()
+                    await self._txn_session.rollback()
             finally:
-                await self.close()
+                await self._txn_session.close()
+                self._txn_session = None
+        await self.close()
 
     # =========================================================================
     # Abstract Method Implementations
     # =========================================================================
 
     async def _get_session(self) -> AsyncSession:
-        """Get or create database session."""
+        """Return a database session.
+
+        In transaction mode, reuses a single session so flushes are
+        visible across operations. Otherwise, creates a fresh session
+        per operation to avoid concurrency issues.
+        """
         await self._ensure_db()
-        if self._session is None:
-            self._session = self._session_factory()  # type: ignore[misc]
-        return self._session
+        if self.in_transaction:
+            if self._txn_session is None:
+                self._txn_session = self._session_factory()  # type: ignore[misc]
+            return self._txn_session
+        return self._session_factory()  # type: ignore[misc]
 
     async def _commit(self, session: AsyncSession) -> None:
         if self.in_transaction:
             await session.flush()
         else:
             await session.commit()
+
+    async def _close_session(self, session: AsyncSession) -> None:
+        if not self.in_transaction:
+            await session.close()
 
     def _resolve_path_sync(self, virtual_path: str) -> Path:
         """Convert virtual path to an actual disk path within the workspace.
@@ -251,9 +275,10 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         def _do_delete() -> None:
             try:
-                actual_path.unlink()
-            except IsADirectoryError:
-                shutil.rmtree(actual_path)
+                if actual_path.is_dir():
+                    shutil.rmtree(actual_path)
+                else:
+                    actual_path.unlink()
             except FileNotFoundError:
                 pass
 
@@ -329,7 +354,10 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         # Ensure a DB record exists so super().delete() can soft-delete it
         if content is not None:
             session = await self._get_session()
-            file = await self._get_file(session, norm)
+            try:
+                file = await self._get_file(session, norm)
+            finally:
+                await self._close_session(session)
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
                 await super().write(norm, content, created_by="backup")
@@ -339,6 +367,55 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         # Remove from disk regardless of soft/permanent
         if result.success:
             await self._delete_content(norm)
+
+        return result
+
+    # =========================================================================
+    # Override restore_from_trash to write content back to disk
+    # =========================================================================
+
+    async def restore_from_trash(self, path: str) -> RestoreResult:
+        """Restore a file from trash, writing content back to disk."""
+        result = await super().restore_from_trash(path)
+        if not result.success:
+            return result
+
+        restored_path = result.file_path or path
+        session = await self._get_session()
+        try:
+            file = await self._get_file(session, restored_path)
+            if file:
+                if file.is_directory:
+                    # Restore children's disk content
+                    model = self._file_model
+                    from sqlmodel import select
+                    children_result = await session.execute(
+                        select(model).where(
+                            model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
+                            model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                        )
+                    )
+                    # Collect child info before closing session
+                    child_files = [
+                        (child.path, child.current_version)
+                        for child in children_result.scalars().all()
+                        if not child.is_directory
+                    ]
+                else:
+                    child_files = []
+        finally:
+            await self._close_session(session)
+
+        if file:
+            if file.is_directory:
+                for child_path, child_version in child_files:
+                    child_content = await self.get_version_content(child_path, child_version)
+                    if child_content is not None:
+                        await self._write_content(child_path, child_content)
+            else:
+                content = await self.get_version_content(restored_path, file.current_version)
+                if content is not None:
+                    await self._write_content(restored_path, content)
 
         return result
 
@@ -417,3 +494,5 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         except Exception:
             await session.rollback()
             raise
+        finally:
+            await self._close_session(session)

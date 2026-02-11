@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -19,7 +19,7 @@ class FileBase(SQLModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     path: str = Field(index=True, unique=True)
-    parent_path: str = Field(default="")
+    parent_path: str = Field(default="", index=True)
     name: str = Field(default="")
     is_directory: bool = Field(default=False)
     mime_type: str = Field(default="text/plain")
@@ -52,6 +52,10 @@ class File(FileBase, table=True):
 
 class FileVersionBase(SQLModel):
     """Base fields for a file version record. Subclass with ``table=True`` for a concrete table."""
+
+    __table_args__ = (
+        UniqueConstraint("file_id", "version"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     file_id: str = Field(index=True)

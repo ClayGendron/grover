@@ -63,6 +63,9 @@ class DatabaseFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         else:
             await session.commit()
 
+    async def _close_session(self, session: AsyncSession) -> None:
+        pass  # Session lifecycle managed externally
+
     async def close(self) -> None:
         """Close the session and clean up resources."""
         if self._session is not None:
