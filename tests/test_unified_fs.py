@@ -30,7 +30,7 @@ async def _collecting_handler(
     events.append(event)
 
 
-def _make_local_setup(
+async def _make_local_setup(
     tmp_path: Path,
     *,
     second_mount: bool = False,
@@ -53,8 +53,14 @@ def _make_local_setup(
         data_dir=tmp_path / ".grover_local",
     )
     (tmp_path / "ws_local").mkdir(exist_ok=True)
+    await backend_local._ensure_db()
     registry.add_mount(
-        MountConfig(mount_path="/local", backend=backend_local, mount_type="local")
+        MountConfig(
+            mount_path="/local",
+            backend=backend_local,
+            session_factory=backend_local._session_factory,
+            mount_type="local",
+        )
     )
 
     if second_mount:
@@ -63,8 +69,14 @@ def _make_local_setup(
             workspace_dir=tmp_path / "ws_other",
             data_dir=tmp_path / ".grover_other",
         )
+        await backend_other._ensure_db()
         registry.add_mount(
-            MountConfig(mount_path="/other", backend=backend_other, mount_type="local")
+            MountConfig(
+                mount_path="/other",
+                backend=backend_other,
+                session_factory=backend_other._session_factory,
+                mount_type="local",
+            )
         )
 
     if ro_mount:
@@ -73,10 +85,12 @@ def _make_local_setup(
             workspace_dir=tmp_path / "ws_ro",
             data_dir=tmp_path / ".grover_ro",
         )
+        await backend_ro._ensure_db()
         registry.add_mount(
             MountConfig(
                 mount_path="/ro",
                 backend=backend_ro,
+                session_factory=backend_ro._session_factory,
                 mount_type="local",
                 permission=Permission.READ_ONLY,
             )
@@ -94,7 +108,7 @@ def _make_local_setup(
 @pytest.fixture
 async def rw_ufs(tmp_path: Path):
     """Single RW mount at /local."""
-    ufs, _bus, collected, _registry = _make_local_setup(tmp_path)
+    ufs, _bus, collected, _registry = await _make_local_setup(tmp_path)
     async with ufs:
         yield ufs, collected
 
@@ -102,7 +116,7 @@ async def rw_ufs(tmp_path: Path):
 @pytest.fixture
 async def rw_ro_ufs(tmp_path: Path):
     """RW mount at /local + RO mount at /ro."""
-    ufs, _bus, collected, _registry = _make_local_setup(tmp_path, ro_mount=True)
+    ufs, _bus, collected, _registry = await _make_local_setup(tmp_path, ro_mount=True)
     async with ufs:
         yield ufs, collected
 
@@ -110,7 +124,7 @@ async def rw_ro_ufs(tmp_path: Path):
 @pytest.fixture
 async def two_mount_ufs(tmp_path: Path):
     """Two RW mounts at /local and /other."""
-    ufs, _bus, collected, _registry = _make_local_setup(tmp_path, second_mount=True)
+    ufs, _bus, collected, _registry = await _make_local_setup(tmp_path, second_mount=True)
     async with ufs:
         yield ufs, collected
 
@@ -165,13 +179,14 @@ class TestPermissionChecks:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
+        db = DatabaseFileSystem(dialect="sqlite")
 
         registry = MountRegistry()
         registry.add_mount(
             MountConfig(
                 mount_path="/vfs",
                 backend=db,
+                session_factory=factory,
                 mount_type="vfs",
                 permission=Permission.READ_ONLY,
             )
@@ -334,7 +349,7 @@ class TestTrashOperations:
 
 class TestContextManager:
     async def test_close_all_backends(self, tmp_path: Path):
-        ufs, _, _, _ = _make_local_setup(tmp_path)
+        ufs, _, _, _ = await _make_local_setup(tmp_path)
         async with ufs:
             assert len(ufs._entered_backends) > 0
         assert len(ufs._entered_backends) == 0
@@ -367,10 +382,12 @@ class TestVersionOperations:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
+        db = DatabaseFileSystem(dialect="sqlite")
 
         registry = MountRegistry()
-        registry.add_mount(MountConfig(mount_path="/vfs", backend=db, mount_type="vfs"))
+        registry.add_mount(MountConfig(
+            mount_path="/vfs", backend=db, session_factory=factory, mount_type="vfs",
+        ))
         ufs = UnifiedFileSystem(registry)
         async with ufs:
             yield ufs

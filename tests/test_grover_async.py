@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from grover._grover_async import GroverAsync
-from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph._graph import Graph
 from grover.ref import Ref
@@ -207,19 +206,17 @@ class TestGroverAsyncTransaction:
         assert (await grover.read("/project/after_tx.txt")).content == "after transaction"
 
     @pytest.mark.asyncio
-    async def test_transaction_sets_backend_flag(self, workspace: Path, tmp_path: Path):
-        """``async with g:`` sets ``in_transaction`` on backends."""
-        from grover.fs.database_fs import DatabaseFileSystem
-
+    async def test_transaction_sets_ufs_flag(self, workspace: Path, tmp_path: Path):
+        """``async with g:`` sets ``_in_transaction`` on the UFS."""
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         local = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
         await g.mount("/app", local)
 
-        assert local.in_transaction is False
+        assert g._ufs._in_transaction is False
         async with g:
-            assert local.in_transaction is True
-        assert local.in_transaction is False
+            assert g._ufs._in_transaction is True
+        assert g._ufs._in_transaction is False
         await g.close()
 
     @pytest.mark.asyncio
@@ -232,7 +229,6 @@ class TestGroverAsyncTransaction:
         )
         from sqlmodel import SQLModel, select
 
-        from grover.fs.database_fs import DatabaseFileSystem
         from grover.models.files import File
 
         db_path = tmp_path / "rollback_test.db"
@@ -245,9 +241,8 @@ class TestGroverAsyncTransaction:
             engine, class_=AsyncSession, expire_on_commit=False,
         )
 
-        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-        await g.mount("/app", db)
+        await g.mount("/app", session_factory=factory, dialect="sqlite")
 
         # Write inside a transaction that raises — should be rolled back
         with pytest.raises(RuntimeError, match="boom"):
@@ -285,7 +280,6 @@ class TestGroverAsyncTransaction:
         )
         from sqlmodel import SQLModel, select
 
-        from grover.fs.database_fs import DatabaseFileSystem
         from grover.models.files import File
 
         # Set up two separate SQLite databases
@@ -307,12 +301,9 @@ class TestGroverAsyncTransaction:
             engine_b, class_=AsyncSession, expire_on_commit=False,
         )
 
-        db_a = DatabaseFileSystem(session_factory=factory_a, dialect="sqlite")
-        db_b = DatabaseFileSystem(session_factory=factory_b, dialect="sqlite")
-
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-        await g.mount("/a", db_a)
-        await g.mount("/b", db_b)
+        await g.mount("/a", session_factory=factory_a, dialect="sqlite")
+        await g.mount("/b", session_factory=factory_b, dialect="sqlite")
 
         # Write to both mounts inside a transaction, then raise
         with pytest.raises(RuntimeError, match="cross-mount boom"):
@@ -344,6 +335,69 @@ class TestGroverAsyncTransaction:
         await g.close()
         await engine_a.dispose()
         await engine_b.dispose()
+
+    @pytest.mark.asyncio
+    async def test_local_mount_transaction_rollback(self, tmp_path: Path):
+        """Writes to a local mount inside ``async with g:`` are rolled back on exception.
+
+        The DB record should be absent after rollback. The disk file may
+        exist as an orphan (content-before-commit ordering), which is expected.
+        """
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession as _AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+        from sqlmodel import select
+
+        from grover.models.files import File
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        data = tmp_path / "grover_data"
+
+        g = GroverAsync(data_dir=str(data))
+        backend = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
+        await g.mount("/app", backend)
+
+        with pytest.raises(RuntimeError, match="local boom"):
+            async with g:
+                await g.write("/app/doomed.txt", "should vanish from DB")
+                raise RuntimeError("local boom")
+
+        # The file record should NOT exist in the local SQLite DB
+        db_path = data / "local" / "file_versions.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        factory = async_sessionmaker(engine, class_=_AsyncSession, expire_on_commit=False)
+        async with factory() as session:
+            result = await session.execute(
+                select(File).where(File.path == "/doomed.txt")
+            )
+            assert result.scalar_one_or_none() is None, (
+                "Local mount data should be rolled back after exception"
+            )
+        await engine.dispose()
+        await g.close()
+
+    @pytest.mark.asyncio
+    async def test_local_mount_transaction_commit(self, tmp_path: Path):
+        """Writes to a local mount inside ``async with g:`` are committed on clean exit."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        data = tmp_path / "grover_data"
+
+        g = GroverAsync(data_dir=str(data))
+        backend = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
+        await g.mount("/app", backend)
+
+        async with g:
+            await g.write("/app/a.txt", "content a")
+            await g.write("/app/b.txt", "content b")
+
+        # Both files should be readable after transaction commit
+        assert (await g.read("/app/a.txt")).content == "content a"
+        assert (await g.read("/app/b.txt")).content == "content b"
+        await g.close()
 
 
 # ==================================================================
@@ -679,13 +733,12 @@ class TestGroverAsyncMountOptions:
         local_mount = next(m for m in g._registry.list_mounts() if m.mount_path == "/local")
         assert local_mount.mount_type == "local"
 
-        # Database mount
+        # Database mount via session_factory
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        db = DatabaseFileSystem(session_factory=factory, dialect="sqlite")
-        await g.mount("/db", db)
+        await g.mount("/db", session_factory=factory, dialect="sqlite")
         db_mount = next(m for m in g._registry.list_mounts() if m.mount_path == "/db")
         assert db_mount.mount_type == "vfs"
 

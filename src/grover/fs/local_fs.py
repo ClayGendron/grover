@@ -72,7 +72,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         self._engine = None
         self._session_factory = None
-        self._txn_session: AsyncSession | None = None
         self._init_lock = asyncio.Lock()
 
     # =========================================================================
@@ -125,9 +124,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
     async def close(self) -> None:
         """Close database engine and release resources."""
-        if self._txn_session is not None:
-            await self._txn_session.close()
-            self._txn_session = None
         if self._engine:
             await self._engine.dispose()
             self._engine = None
@@ -142,15 +138,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         exc_val: object,
         exc_tb: object,
     ) -> None:
-        if self._txn_session is not None:
-            try:
-                if exc_type is None:
-                    await self._txn_session.commit()
-                else:
-                    await self._txn_session.rollback()
-            finally:
-                await self._txn_session.close()
-                self._txn_session = None
         await self.close()
 
     # =========================================================================
@@ -158,28 +145,15 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # =========================================================================
 
     async def _get_session(self) -> AsyncSession:
-        """Return a database session.
-
-        In transaction mode, reuses a single session so flushes are
-        visible across operations. Otherwise, creates a fresh session
-        per operation to avoid concurrency issues.
-        """
+        """Return a new database session for the current operation."""
         await self._ensure_db()
-        if self.in_transaction:
-            if self._txn_session is None:
-                self._txn_session = self._session_factory()  # type: ignore[misc]
-            return self._txn_session
         return self._session_factory()  # type: ignore[misc]
 
     async def _commit(self, session: AsyncSession) -> None:
-        if self.in_transaction:
-            await session.flush()
-        else:
-            await session.commit()
+        await session.commit()
 
     async def _close_session(self, session: AsyncSession) -> None:
-        if not self.in_transaction:
-            await session.close()
+        await session.close()
 
     def _resolve_path_sync(self, virtual_path: str) -> Path:
         """Convert virtual path to an actual disk path within the workspace.
@@ -227,7 +201,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         vpath = "/" + str(rel).replace("\\", "/")
         return vpath if vpath != "/." else "/"
 
-    async def _read_content(self, path: str) -> str | None:
+    async def _read_content(self, path: str, session: AsyncSession) -> str | None:
         try:
             actual_path = await self._resolve_path(path)
         except (PermissionError, ValueError):
@@ -243,7 +217,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         except (UnicodeDecodeError, PermissionError, OSError):
             return None
 
-    async def _write_content(self, path: str, content: str) -> None:
+    async def _write_content(self, path: str, content: str, session: AsyncSession) -> None:
         actual_path = await self._resolve_path(path)
 
         def _do_write() -> None:
@@ -267,7 +241,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         await asyncio.to_thread(_do_write)
 
-    async def _delete_content(self, path: str) -> None:
+    async def _delete_content(self, path: str, session: AsyncSession) -> None:
         try:
             actual_path = await self._resolve_path(path)
         except (PermissionError, ValueError):
@@ -284,7 +258,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         await asyncio.to_thread(_do_delete)
 
-    async def _content_exists(self, path: str) -> bool:
+    async def _content_exists(self, path: str, session: AsyncSession) -> bool:
         try:
             actual_path = await self._resolve_path(path)
             return await asyncio.to_thread(actual_path.exists)
@@ -295,7 +269,14 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Override read() to add binary check and suggestions
     # =========================================================================
 
-    async def read(self, path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+    async def read(
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ReadResult:
         """Read file with binary check and similar file suggestions."""
         valid, error = validate_path(path)
         if not valid:
@@ -329,7 +310,14 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         if await asyncio.to_thread(actual_path.is_dir):
             return ReadResult(success=False, message=f"Path is a directory, not a file: {path}")
 
-        content = await self._read_content(path)
+        # Need a session for _read_content
+        _session, owns = await self._resolve_session(session)
+        try:
+            content = await self._read_content(path, _session)
+        finally:
+            if owns:
+                await self._close_session(_session)
+
         if content is None:
             return ReadResult(success=False, message=f"Could not read file: {path}")
 
@@ -339,7 +327,13 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Override delete to back up content to DB before removing from disk
     # =========================================================================
 
-    async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+    async def delete(
+        self,
+        path: str,
+        permanent: bool = False,
+        *,
+        session: AsyncSession | None = None,
+    ) -> DeleteResult:
         """Delete file, backing up content to the database first.
 
         For files that exist on disk but have no DB record, a record and
@@ -349,24 +343,36 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         norm = normalize_path(path)
 
         # Read content from disk before anything else
-        content = await self._read_content(norm)
+        _session, owns = await self._resolve_session(session)
+        try:
+            content = await self._read_content(norm, _session)
+        finally:
+            if owns:
+                await self._close_session(_session)
 
         # Ensure a DB record exists so super().delete() can soft-delete it
         if content is not None:
-            session = await self._get_session()
+            _session2, owns2 = await self._resolve_session(session)
             try:
-                file = await self._get_file(session, norm)
+                file = await self._get_file(_session2, norm)
             finally:
-                await self._close_session(session)
+                if owns2:
+                    await self._close_session(_session2)
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
-                await super().write(norm, content, created_by="backup")
+                await super().write(norm, content, created_by="backup", session=session)
 
-        result = await super().delete(norm, permanent)
+        result = await super().delete(norm, permanent, session=session)
 
         # Remove from disk regardless of soft/permanent
         if result.success:
-            await self._delete_content(norm)
+            # Need a dummy session for _delete_content (ignored by LocalFS disk ops)
+            _session3, owns3 = await self._resolve_session(session)
+            try:
+                await self._delete_content(norm, _session3)
+            finally:
+                if owns3:
+                    await self._close_session(_session3)
 
         return result
 
@@ -374,22 +380,27 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Override restore_from_trash to write content back to disk
     # =========================================================================
 
-    async def restore_from_trash(self, path: str) -> RestoreResult:
+    async def restore_from_trash(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> RestoreResult:
         """Restore a file from trash, writing content back to disk."""
-        result = await super().restore_from_trash(path)
+        result = await super().restore_from_trash(path, session=session)
         if not result.success:
             return result
 
         restored_path = result.file_path or path
-        session = await self._get_session()
+        _session, owns = await self._resolve_session(session)
         try:
-            file = await self._get_file(session, restored_path)
+            file = await self._get_file(_session, restored_path)
             if file:
                 if file.is_directory:
                     # Restore children's disk content
                     model = self._file_model
                     from sqlmodel import select
-                    children_result = await session.execute(
+                    children_result = await _session.execute(
                         select(model).where(
                             model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
                             model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
@@ -404,18 +415,34 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 else:
                     child_files = []
         finally:
-            await self._close_session(session)
+            if owns:
+                await self._close_session(_session)
 
         if file:
             if file.is_directory:
                 for child_path, child_version in child_files:
-                    child_content = await self.get_version_content(child_path, child_version)
+                    child_content = await self.get_version_content(
+                        child_path, child_version, session=session,
+                    )
                     if child_content is not None:
-                        await self._write_content(child_path, child_content)
+                        # Need a session for _write_content (ignored by LocalFS disk ops)
+                        _s, _o = await self._resolve_session(session)
+                        try:
+                            await self._write_content(child_path, child_content, _s)
+                        finally:
+                            if _o:
+                                await self._close_session(_s)
             else:
-                content = await self.get_version_content(restored_path, file.current_version)
+                content = await self.get_version_content(
+                    restored_path, file.current_version, session=session,
+                )
                 if content is not None:
-                    await self._write_content(restored_path, content)
+                    _s, _o = await self._resolve_session(session)
+                    try:
+                        await self._write_content(restored_path, content, _s)
+                    finally:
+                        if _o:
+                            await self._close_session(_s)
 
         return result
 
@@ -423,9 +450,15 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Override mkdir to create on disk too
     # =========================================================================
 
-    async def mkdir(self, path: str, parents: bool = True) -> MkdirResult:
+    async def mkdir(
+        self,
+        path: str,
+        parents: bool = True,
+        *,
+        session: AsyncSession | None = None,
+    ) -> MkdirResult:
         """Create directory in database and on disk."""
-        result = await super().mkdir(path, parents)
+        result = await super().mkdir(path, parents, session=session)
 
         if result.success:
             actual_path = await self._resolve_path(path)
@@ -437,7 +470,12 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
     # Override list_dir to sync with disk
     # =========================================================================
 
-    async def list_dir(self, path: str = "/") -> ListResult:
+    async def list_dir(
+        self,
+        path: str = "/",
+        *,
+        session: AsyncSession | None = None,
+    ) -> ListResult:
         """List directory, including files only on disk."""
         path = normalize_path(path)
 
@@ -457,7 +495,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         entries: list[FileInfo] = []
         disk_items = await asyncio.to_thread(lambda: list(actual_path.iterdir()))
 
-        session = await self._get_session()
+        _session, owns = await self._resolve_session(session)
         try:
             for item in disk_items:
                 if item.name.startswith("."):
@@ -466,7 +504,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 item_path = f"{path}/{item.name}" if path != "/" else f"/{item.name}"
                 item_path = normalize_path(item_path)
 
-                file = await self._get_file(session, item_path)
+                file = await self._get_file(_session, item_path)
 
                 entries.append(
                     FileInfo(
@@ -492,7 +530,9 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 path=path,
             )
         except Exception:
-            await session.rollback()
+            if owns:
+                await _session.rollback()
             raise
         finally:
-            await self._close_session(session)
+            if owns:
+                await self._close_session(_session)

@@ -10,6 +10,10 @@ from .permissions import Permission
 from .utils import normalize_path
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from .protocol import StorageBackend
 
 
@@ -22,6 +26,10 @@ class MountConfig:
 
     backend: StorageBackend
     """Storage backend implementing the StorageBackend protocol."""
+
+    # Session factory — set by GroverAsync.mount() for both DB and local mounts
+    session_factory: Callable[..., AsyncSession] | None = None
+    """Async session factory for UFS-managed sessions.  ``None`` for standalone use."""
 
     permission: Permission = Permission.READ_WRITE
     """Default permission for this mount."""
@@ -37,6 +45,11 @@ class MountConfig:
 
     read_only_paths: set[str] = field(default_factory=set)
     """Paths within this mount that are forced read-only."""
+
+    @property
+    def has_session_factory(self) -> bool:
+        """True when this mount has a UFS-managed session factory."""
+        return self.session_factory is not None
 
     def __post_init__(self) -> None:
         self.mount_path = normalize_path(self.mount_path).rstrip("/")

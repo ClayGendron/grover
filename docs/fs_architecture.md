@@ -10,6 +10,7 @@ graph TD
         UFS["UnifiedFileSystem"]
         UFS_perm["_check_writable()"]
         UFS_route["resolve path → mount + rel_path"]
+        UFS_session["_session_for(mount)"]
         UFS_emit["_emit(FileEvent)"]
     end
 
@@ -17,6 +18,7 @@ graph TD
         MR["MountRegistry"]
         MC_proj["MountConfig /project"]
         MC_grover["MountConfig /.grover"]
+        MC_sf["session_factory (all mounts)"]
         Perm["Permission (RW / RO)"]
     end
 
@@ -38,13 +40,13 @@ graph TD
             LFS_disk["_resolve_path → disk I/O"]
             LFS_db["SQLite at ~/.grover/{slug}/"]
             LFS_override["overrides: read, delete, list_dir, mkdir, restore_from_trash"]
-            LFS_session["session-per-operation (new session each call)"]
+            LFS_session["session-injected via UFS (or standalone)"]
         end
 
         subgraph DatabaseFileSystem
             DFS["DatabaseFileSystem"]
             DFS_content["content in File.content column"]
-            DFS_session["shared session (_close_session = no-op)"]
+            DFS_session["stateless (dialect + models only)"]
         end
     end
 
@@ -63,6 +65,7 @@ graph TD
     Caller --> UFS
     UFS --> UFS_perm --> Perm
     UFS --> UFS_route --> MR
+    UFS --> UFS_session
     MR --> MC_proj
     MR --> MC_grover
 
@@ -71,7 +74,10 @@ graph TD
     MC_grover -->|"local mode"| LFS
 
     %% Database mode: mount points to DatabaseFileSystem instead
-    MC_proj -->|"database mode (source=conn string)"| DFS
+    MC_proj -->|"database mode (engine=)"| DFS
+    MC_proj --> MC_sf
+
+    UFS_session -->|"all mounts"| MC_sf
 
     UFS --> UFS_emit --> EB
 
@@ -99,7 +105,9 @@ graph TD
     LFS --> LFS_session
 ```
 
-## Request Flow: `write("/project/hello.py", content)`
+**DB mounts** are created via `engine=` or `session_factory=` on `GroverAsync.mount()`. The engine form auto-creates a session factory, detects the SQL dialect, and ensures tables exist. This produces a stateless `DatabaseFileSystem` instance (immutable config only — dialect, file model, schema) paired with a `session_factory` stored on `MountConfig`. UFS creates sessions from the factory per-operation and passes them to DFS via `session=`.
+
+## Request Flow: `write("/project/hello.py", content)` — Local Mount
 
 ```mermaid
 sequenceDiagram
@@ -120,13 +128,13 @@ sequenceDiagram
     UFS->>MR: resolve("/project/hello.py")
     MR-->>UFS: (MountConfig /project, "/hello.py")
 
-    UFS->>LFS: write("/hello.py", content)
-    LFS->>BFS: write("/hello.py", content)
+    UFS->>UFS: _session_for(mount) → creates session from mount.session_factory
+    UFS->>LFS: write("/hello.py", content, session=session)
+    LFS->>BFS: _resolve_session(session) → (session, owns=False)
 
     Note over BFS: validate_path + normalize_path (NFC)
     Note over BFS: is_text_file check
 
-    BFS->>DB: _get_session() → new session
     BFS->>DB: SELECT existing file
     alt new file
         BFS->>DB: _ensure_parent_dirs (upsert, sets parent_path)
@@ -139,12 +147,64 @@ sequenceDiagram
         BFS->>DB: INSERT FileVersion (diff or snapshot)
     end
 
-    BFS->>DB: COMMIT
-    BFS->>LFS: _write_content("/hello.py", content)
+    BFS->>LFS: _write_content("/hello.py", content, session)
     LFS->>Disk: atomic write (tmpfile + rename)
-    BFS->>DB: _close_session() (finally block)
+    BFS->>DB: session.flush() (owns=False, so flush not commit)
 
     LFS-->>UFS: WriteResult(success=True)
+
+    Note over UFS: _session_for exits: session.commit()
+
+    UFS->>EB: emit(FILE_WRITTEN, path, content)
+    Note over EB: handlers update graph + search
+
+    UFS-->>C: WriteResult(success=True)
+```
+
+## Request Flow: `write("/data/hello.py", content)` — DB Mount
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant UFS as UnifiedFileSystem
+    participant MR as MountRegistry
+    participant P as Permission
+    participant EB as EventBus
+    participant DFS as DatabaseFileSystem
+    participant BFS as BaseFileSystem
+    participant DB as External DB
+
+    C->>UFS: write("/data/hello.py", content)
+    UFS->>P: _check_writable("/data/hello.py")
+    P-->>UFS: OK
+
+    UFS->>MR: resolve("/data/hello.py")
+    MR-->>UFS: (MountConfig /data, "/hello.py")
+
+    UFS->>UFS: _session_for(mount) → creates session from mount.session_factory
+    UFS->>DFS: write("/hello.py", content, session=session)
+    DFS->>BFS: _resolve_session(session) → (session, owns=False)
+
+    Note over BFS: validate_path + normalize_path (NFC)
+    Note over BFS: is_text_file check
+
+    BFS->>DB: SELECT existing file
+    alt new file
+        BFS->>DB: _ensure_parent_dirs (upsert)
+        BFS->>DB: INSERT File
+        BFS->>DB: INSERT FileVersion (snapshot)
+    else existing file
+        BFS->>DB: UPDATE File (version++)
+        BFS->>DFS: _read_content (old content from DB)
+        BFS->>DB: INSERT FileVersion (diff or snapshot)
+    end
+
+    BFS->>DFS: _write_content → UPDATE File.content
+    BFS->>DB: session.flush() (owns=False, so flush not commit)
+
+    DFS-->>UFS: WriteResult(success=True)
+
+    Note over UFS: _session_for exits: session.commit()
 
     UFS->>EB: emit(FILE_WRITTEN, path, content)
     Note over EB: handlers update graph + search
@@ -154,34 +214,76 @@ sequenceDiagram
 
 ## Session Lifecycle
 
+Sessions are managed at two levels: **UFS** (outer) and **backend** (inner).
+
 ```mermaid
 sequenceDiagram
-    participant Op as Public Method
-    participant BFS as BaseFileSystem
-    participant Sub as LocalFileSystem / DatabaseFileSystem
+    participant Caller
+    participant UFS as UnifiedFileSystem
+    participant MC as MountConfig
+    participant Backend as Backend (LFS / DFS)
 
-    Op->>Sub: _get_session()
-    Note over Sub: LocalFileSystem: new session each call<br/>(shared session in transaction mode)
-    Note over Sub: DatabaseFileSystem: returns cached session
-    Sub-->>Op: session
+    Caller->>UFS: write(path, content)
+    UFS->>UFS: resolve path → mount
 
-    rect rgb(240, 248, 255)
-        Note over Op: try block — do work
-        Op->>BFS: DB operations via session
-        Op->>Sub: _commit(session)
-        Note over Sub: LocalFileSystem: session.commit()<br/>DatabaseFileSystem: session.flush()
-    end
+    Note over UFS: All mounts have session_factory set
+    UFS->>MC: session_factory() → new session
+    UFS->>Backend: write(path, content, session=session)
+    Backend->>Backend: _resolve_session(session) → session, owns=False
+    Note over Backend: Backend uses injected session as-is
+    Backend->>Backend: do work → _write_content → session.flush()
+    Note over Backend: _close_session is no-op (owns=False)
+    UFS->>UFS: session.commit() (on _session_for exit)
 
-    rect rgb(255, 240, 240)
-        Note over Op: except — on error
-        Op->>BFS: session.rollback()
-    end
+    Backend-->>UFS: WriteResult
+    UFS-->>Caller: WriteResult
+```
 
-    rect rgb(240, 255, 240)
-        Note over Op: finally — always runs
-        Op->>Sub: _close_session(session)
-        Note over Sub: LocalFileSystem: session.close()<br/>DatabaseFileSystem: no-op
-    end
+### Transaction Mode
+
+In transaction mode (`async with grover:`), UFS reuses sessions per mount across operations for all mount types (local and DB). The commit happens on context-manager exit rather than after each operation.
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant UFS as UnifiedFileSystem
+    participant Backend as Backend (LFS / DFS)
+
+    App->>UFS: begin_transaction()
+
+    App->>UFS: write("/mount/a.py", content)
+    UFS->>UFS: _session_for(mount) → reuse txn session
+    UFS->>Backend: write(path, content, session=txn_session)
+    Backend->>Backend: flush (not commit)
+
+    App->>UFS: write("/mount/b.py", content)
+    UFS->>UFS: _session_for(mount) → same txn session
+    UFS->>Backend: write(path, content, session=txn_session)
+    Backend->>Backend: flush (not commit)
+
+    App->>UFS: commit_transaction()
+    UFS->>UFS: txn_session.commit() + close()
+```
+
+## DB Mount Setup: `engine=` API
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant GA as GroverAsync
+    participant DFS as DatabaseFileSystem
+    participant MC as MountConfig
+    participant MR as MountRegistry
+    participant Engine as AsyncEngine
+
+    App->>GA: mount("/data", engine=engine)
+    GA->>Engine: detect dialect (engine.dialect.name)
+    GA->>Engine: ensure tables (File, FileVersion)
+    GA->>GA: async_sessionmaker(engine) → session_factory
+    GA->>DFS: DatabaseFileSystem(dialect, file_model, ...)
+    Note over DFS: Stateless — no session, no engine ref
+    GA->>MC: MountConfig(backend=DFS, session_factory=sf)
+    GA->>MR: add_mount(config)
 ```
 
 ## Soft-Delete / Restore (Directories)

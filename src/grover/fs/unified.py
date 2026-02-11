@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +27,13 @@ from .types import (
 from .utils import normalize_path
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from .mounts import MountConfig, MountRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class UnifiedFileSystem(StorageBackend):
@@ -34,6 +42,10 @@ class UnifiedFileSystem(StorageBackend):
     Presents a single namespace to callers while delegating to the
     appropriate backend based on the path prefix. Enforces permissions
     and handles cross-mount copy/move.
+
+    For database mounts the UFS manages session lifecycle via
+    ``_session_for()``: per-operation sessions in normal mode,
+    reused sessions in transaction mode.
     """
 
     def __init__(
@@ -42,6 +54,10 @@ class UnifiedFileSystem(StorageBackend):
         self._registry = registry
         self._event_bus = event_bus
         self._entered_backends: list[Any] = []
+
+        # Transaction state for DB mounts
+        self._in_transaction: bool = False
+        self._txn_sessions: dict[str, AsyncSession] = {}  # mount_path → session
 
     async def enter_backend(self, backend: Any) -> None:
         """Enter a backend's context manager and track it."""
@@ -59,6 +75,71 @@ class UnifiedFileSystem(StorageBackend):
     async def _emit(self, event: FileEvent) -> None:
         if self._event_bus is not None:
             await self._event_bus.emit(event)
+
+    # =========================================================================
+    # Session Management
+    # =========================================================================
+
+    @asynccontextmanager
+    async def _session_for(self, mount: MountConfig) -> AsyncGenerator[AsyncSession | None]:
+        """Yield a session for DB mounts, or ``None`` for local mounts."""
+        if not mount.has_session_factory:
+            yield None
+            return
+
+        assert mount.session_factory is not None  # for type narrowing
+
+        # Transaction mode: reuse session per mount
+        if self._in_transaction:
+            if mount.mount_path not in self._txn_sessions:
+                self._txn_sessions[mount.mount_path] = mount.session_factory()
+            yield self._txn_sessions[mount.mount_path]
+            return
+
+        # Per-operation: create, commit, close
+        session = mount.session_factory()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    # =========================================================================
+    # Transaction Lifecycle
+    # =========================================================================
+
+    async def begin_transaction(self) -> None:
+        """Enter transaction mode — DB sessions are reused per mount."""
+        self._in_transaction = True
+
+    async def commit_transaction(self) -> None:
+        """Commit all open transaction sessions and exit transaction mode."""
+        for session in self._txn_sessions.values():
+            await session.commit()
+        await self._close_txn_sessions()
+        self._in_transaction = False
+
+    async def rollback_transaction(self) -> None:
+        """Roll back all open transaction sessions and exit transaction mode."""
+        for session in self._txn_sessions.values():
+            try:
+                await session.rollback()
+            except Exception:
+                logger.warning("Rollback failed for mount session", exc_info=True)
+        await self._close_txn_sessions()
+        self._in_transaction = False
+
+    async def _close_txn_sessions(self) -> None:
+        """Close and discard all transaction sessions."""
+        for session in self._txn_sessions.values():
+            try:
+                await session.close()
+            except Exception:
+                logger.warning("Session close failed", exc_info=True)
+        self._txn_sessions.clear()
 
     # =========================================================================
     # Context Manager
@@ -126,16 +207,17 @@ class UnifiedFileSystem(StorageBackend):
     # =========================================================================
 
     async def read(
-        self, path: str, offset: int = 0, limit: int = 2000
+        self, path: str, offset: int = 0, limit: int = 2000, *, session: AsyncSession | None = None
     ) -> ReadResult:
         """Read file content with pagination."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.read(rel_path, offset, limit)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.read(rel_path, offset, limit, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         return result
 
-    async def list_dir(self, path: str = "/") -> ListResult:
+    async def list_dir(self, path: str = "/", *, session: AsyncSession | None = None) -> ListResult:
         """List directory entries."""
         path = normalize_path(path)
 
@@ -143,7 +225,8 @@ class UnifiedFileSystem(StorageBackend):
             return self._list_root()
 
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.list_dir(rel_path)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.list_dir(rel_path, session=sess)
 
         result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [
@@ -172,7 +255,7 @@ class UnifiedFileSystem(StorageBackend):
             path="/",
         )
 
-    async def exists(self, path: str) -> bool:
+    async def exists(self, path: str, *, session: AsyncSession | None = None) -> bool:
         """Check whether a path exists in any mount."""
         path = normalize_path(path)
 
@@ -187,9 +270,10 @@ class UnifiedFileSystem(StorageBackend):
         except MountNotFoundError:
             return False
 
-        return await mount.backend.exists(rel_path)
+        async with self._session_for(mount) as sess:
+            return await mount.backend.exists(rel_path, session=sess)
 
-    async def get_info(self, path: str) -> FileInfo | None:
+    async def get_info(self, path: str, *, session: AsyncSession | None = None) -> FileInfo | None:
         """Get file metadata, or ``None`` if not found."""
         path = normalize_path(path)
 
@@ -210,7 +294,8 @@ class UnifiedFileSystem(StorageBackend):
         except MountNotFoundError:
             return None
 
-        info = await mount.backend.get_info(rel_path)
+        async with self._session_for(mount) as sess:
+            info = await mount.backend.get_info(rel_path, session=sess)
         if info is not None:
             info = self._prefix_file_info(info, mount)
         return info
@@ -232,7 +317,13 @@ class UnifiedFileSystem(StorageBackend):
     # =========================================================================
 
     async def write(
-        self, path: str, content: str, created_by: str = "agent"
+        self,
+        path: str,
+        content: str,
+        created_by: str = "agent",
+        *,
+        overwrite: bool = True,
+        session: AsyncSession | None = None,
     ) -> WriteResult:
         """Write content to a file."""
         path = normalize_path(path)
@@ -242,7 +333,10 @@ class UnifiedFileSystem(StorageBackend):
             return WriteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.write(rel_path, content, created_by)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.write(
+                rel_path, content, created_by, overwrite=overwrite, session=sess
+            )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -257,6 +351,8 @@ class UnifiedFileSystem(StorageBackend):
         new_string: str,
         replace_all: bool = False,
         created_by: str = "agent",
+        *,
+        session: AsyncSession | None = None,
     ) -> EditResult:
         """Apply a string replacement to a file."""
         path = normalize_path(path)
@@ -266,9 +362,10 @@ class UnifiedFileSystem(StorageBackend):
             return EditResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.edit(
-            rel_path, old_string, new_string, replace_all, created_by
-        )
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.edit(
+                rel_path, old_string, new_string, replace_all, created_by, session=sess
+            )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -276,7 +373,9 @@ class UnifiedFileSystem(StorageBackend):
             )
         return result
 
-    async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+    async def delete(
+        self, path: str, permanent: bool = False, *, session: AsyncSession | None = None
+    ) -> DeleteResult:
         """Delete a file or directory."""
         path = normalize_path(path)
         try:
@@ -285,7 +384,8 @@ class UnifiedFileSystem(StorageBackend):
             return DeleteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.delete(rel_path, permanent)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.delete(rel_path, permanent, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -293,7 +393,9 @@ class UnifiedFileSystem(StorageBackend):
             )
         return result
 
-    async def mkdir(self, path: str, parents: bool = True) -> MkdirResult:
+    async def mkdir(
+        self, path: str, parents: bool = True, *, session: AsyncSession | None = None
+    ) -> MkdirResult:
         """Create a directory."""
         path = normalize_path(path)
         try:
@@ -302,14 +404,17 @@ class UnifiedFileSystem(StorageBackend):
             return MkdirResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.mkdir(rel_path, parents)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.mkdir(rel_path, parents, session=sess)
         result.path = self._prefix_path(result.path, mount.mount_path)
         result.created_dirs = [
             self._prefix_path(d, mount.mount_path) or d for d in result.created_dirs
         ]
         return result
 
-    async def move(self, src: str, dest: str) -> MoveResult:
+    async def move(
+        self, src: str, dest: str, *, session: AsyncSession | None = None
+    ) -> MoveResult:
         """Move a file within or across mounts."""
         src = normalize_path(src)
         dest = normalize_path(dest)
@@ -324,7 +429,8 @@ class UnifiedFileSystem(StorageBackend):
         dest_mount, dest_rel = self._registry.resolve(dest)
 
         if src_mount is dest_mount:
-            result = await src_mount.backend.move(src_rel, dest_rel)
+            async with self._session_for(src_mount) as sess:
+                result = await src_mount.backend.move(src_rel, dest_rel, session=sess)
             result.old_path = self._prefix_path(result.old_path, src_mount.mount_path)
             result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
             if result.success:
@@ -333,7 +439,9 @@ class UnifiedFileSystem(StorageBackend):
                 )
             return result
 
-        read_result = await src_mount.backend.read(src_rel)
+        # Cross-mount move: read → write → delete
+        async with self._session_for(src_mount) as src_sess:
+            read_result = await src_mount.backend.read(src_rel, session=src_sess)
         if not read_result.success:
             return MoveResult(
                 success=False,
@@ -346,14 +454,20 @@ class UnifiedFileSystem(StorageBackend):
                 message=f"Source file has no content: {src}",
             )
 
-        write_result = await dest_mount.backend.write(dest_rel, read_result.content)
+        async with self._session_for(dest_mount) as dest_sess:
+            write_result = await dest_mount.backend.write(
+                dest_rel, read_result.content, session=dest_sess
+            )
         if not write_result.success:
             return MoveResult(
                 success=False,
                 message=f"Cannot write to destination for cross-mount move: {write_result.message}",
             )
 
-        delete_result = await src_mount.backend.delete(src_rel, permanent=False)
+        async with self._session_for(src_mount) as src_sess:
+            delete_result = await src_mount.backend.delete(
+                src_rel, permanent=False, session=src_sess
+            )
         if not delete_result.success:
             return MoveResult(
                 success=False,
@@ -370,7 +484,9 @@ class UnifiedFileSystem(StorageBackend):
             new_path=dest,
         )
 
-    async def copy(self, src: str, dest: str) -> WriteResult:
+    async def copy(
+        self, src: str, dest: str, *, session: AsyncSession | None = None
+    ) -> WriteResult:
         """Copy a file within or across mounts."""
         src = normalize_path(src)
         dest = normalize_path(dest)
@@ -384,7 +500,8 @@ class UnifiedFileSystem(StorageBackend):
         dest_mount, dest_rel = self._registry.resolve(dest)
 
         if src_mount is dest_mount:
-            result = await src_mount.backend.copy(src_rel, dest_rel)
+            async with self._session_for(src_mount) as sess:
+                result = await src_mount.backend.copy(src_rel, dest_rel, session=sess)
             result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
             if result.success:
                 await self._emit(
@@ -392,7 +509,9 @@ class UnifiedFileSystem(StorageBackend):
                 )
             return result
 
-        read_result = await src_mount.backend.read(src_rel)
+        # Cross-mount copy: read → write
+        async with self._session_for(src_mount) as src_sess:
+            read_result = await src_mount.backend.read(src_rel, session=src_sess)
         if not read_result.success:
             return WriteResult(
                 success=False,
@@ -405,7 +524,10 @@ class UnifiedFileSystem(StorageBackend):
                 message=f"Source file has no content: {src}",
             )
 
-        result = await dest_mount.backend.write(dest_rel, read_result.content)
+        async with self._session_for(dest_mount) as dest_sess:
+            result = await dest_mount.backend.write(
+                dest_rel, read_result.content, session=dest_sess
+            )
         result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
         if result.success:
             await self._emit(
@@ -417,13 +539,18 @@ class UnifiedFileSystem(StorageBackend):
     # Version & Trash Operations
     # =========================================================================
 
-    async def list_versions(self, path: str) -> list[VersionInfo]:
+    async def list_versions(
+        self, path: str, *, session: AsyncSession | None = None
+    ) -> list[VersionInfo]:
         """List version history for a file."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        return await mount.backend.list_versions(rel_path)
+        async with self._session_for(mount) as sess:
+            return await mount.backend.list_versions(rel_path, session=sess)
 
-    async def restore_version(self, path: str, version: int) -> RestoreResult:
+    async def restore_version(
+        self, path: str, version: int, *, session: AsyncSession | None = None
+    ) -> RestoreResult:
         """Restore a file to a specific version."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
@@ -432,7 +559,8 @@ class UnifiedFileSystem(StorageBackend):
         except PermissionError as e:
             return RestoreResult(success=False, message=str(e))
 
-        result = await mount.backend.restore_version(rel_path, version)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.restore_version(rel_path, version, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -440,17 +568,21 @@ class UnifiedFileSystem(StorageBackend):
             )
         return result
 
-    async def get_version_content(self, path: str, version: int) -> str | None:
+    async def get_version_content(
+        self, path: str, version: int, *, session: AsyncSession | None = None
+    ) -> str | None:
         """Get content of a specific file version."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        return await mount.backend.get_version_content(rel_path, version)
+        async with self._session_for(mount) as sess:
+            return await mount.backend.get_version_content(rel_path, version, session=sess)
 
-    async def list_trash(self) -> ListResult:
+    async def list_trash(self, *, session: AsyncSession | None = None) -> ListResult:
         """List all items in trash across all mounts."""
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
-            result = await mount.backend.list_trash()
+            async with self._session_for(mount) as sess:
+                result = await mount.backend.list_trash(session=sess)
             if result.success:
                 prefixed_entries = [
                     self._prefix_file_info(entry, mount) for entry in result.entries
@@ -464,7 +596,9 @@ class UnifiedFileSystem(StorageBackend):
             path="/__trash__",
         )
 
-    async def restore_from_trash(self, path: str) -> RestoreResult:
+    async def restore_from_trash(
+        self, path: str, *, session: AsyncSession | None = None
+    ) -> RestoreResult:
         """Restore a file from trash."""
         path = normalize_path(path)
         try:
@@ -473,7 +607,8 @@ class UnifiedFileSystem(StorageBackend):
             return RestoreResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        result = await mount.backend.restore_from_trash(rel_path)
+        async with self._session_for(mount) as sess:
+            result = await mount.backend.restore_from_trash(rel_path, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -481,12 +616,13 @@ class UnifiedFileSystem(StorageBackend):
             )
         return result
 
-    async def empty_trash(self) -> DeleteResult:
+    async def empty_trash(self, *, session: AsyncSession | None = None) -> DeleteResult:
         """Permanently delete all trashed files."""
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
-            result = await mount.backend.empty_trash()
+            async with self._session_for(mount) as sess:
+                result = await mount.backend.empty_trash(session=sess)
             if not result.success:
                 return result
             total_deleted += result.total_deleted or 0

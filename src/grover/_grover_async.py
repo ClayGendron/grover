@@ -7,20 +7,26 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from grover.events import EventBus, EventType, FileEvent
+from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
+from grover.fs.types import ReadResult
 from grover.fs.unified import UnifiedFileSystem
 from grover.graph._graph import Graph
 from grover.graph.analyzers import AnalyzerRegistry
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
+from grover.models.files import File, FileVersion
 from grover.search._index import SearchIndex, SearchResult
-from grover.fs.types import ReadResult
 from grover.search.extractors import extract_from_chunks, extract_from_file
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
     from grover.fs.protocol import StorageBackend
     from grover.ref import Ref
 
@@ -34,10 +40,16 @@ class GroverAsync:
 
     Mount-first API: create an instance, then mount backends.
 
+    Engine-based DB mount (primary API)::
+
+        engine = create_async_engine("postgresql+asyncpg://...")
+        g = GroverAsync(data_dir="/myapp/.grover")
+        await g.mount("/data", engine=engine)
+
     Direct access (outside context manager) — auto-commits per operation::
 
         g = GroverAsync()
-        await g.mount("/app", db)
+        await g.mount("/app", backend)
         await g.write("/app/test.py", "print('hi')")
 
     Batch/transaction mode (inside context manager)::
@@ -97,16 +109,9 @@ class GroverAsync:
     # Context manager (transaction mode)
     # ------------------------------------------------------------------
 
-    def _set_backends_transaction(self, in_transaction: bool) -> None:
-        """Toggle ``in_transaction`` on every mounted backend."""
-        for mount in self._registry.list_mounts():
-            backend = mount.backend
-            if hasattr(backend, "in_transaction"):
-                backend.in_transaction = in_transaction
-
     async def __aenter__(self) -> GroverAsync:
         self._in_transaction = True
-        self._set_backends_transaction(True)
+        await self._ufs.begin_transaction()
         return self
 
     async def __aexit__(
@@ -116,26 +121,12 @@ class GroverAsync:
         exc_tb: object,
     ) -> None:
         self._in_transaction = False
-        self._set_backends_transaction(False)
-
-        # Commit or rollback all entered backends
-        for backend in list(self._ufs._entered_backends):
-            if hasattr(backend, "__aexit__"):
-                try:
-                    await backend.__aexit__(exc_type, exc_val, exc_tb)
-                except Exception:
-                    logger.warning("Backend exit failed", exc_info=True)
-        self._ufs._entered_backends.clear()
-
-        # Re-enter backends for future operations
-        for mount in self._registry.list_mounts():
-            backend = mount.backend
-            if hasattr(backend, "__aenter__"):
-                await backend.__aenter__()
-                self._ufs._entered_backends.append(backend)
 
         if exc_type is None:
+            await self._ufs.commit_transaction()
             await self._async_save()
+        else:
+            await self._ufs.rollback_transaction()
 
     # ------------------------------------------------------------------
     # Mount / Unmount
@@ -144,34 +135,104 @@ class GroverAsync:
     async def mount(
         self,
         path: str,
-        backend: StorageBackend | Any,
+        backend: StorageBackend | Any | None = None,
         *,
+        engine: AsyncEngine | None = None,
+        session_factory: Callable[..., AsyncSession] | None = None,
+        dialect: str = "sqlite",
+        file_model: type | None = None,
+        file_version_model: type | None = None,
+        db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
     ) -> None:
-        """Mount a backend at *path*."""
-        # Auto-detect mount type
-        if mount_type is None:
-            mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
+        """Mount a backend at *path*.
 
-        config = MountConfig(
-            mount_path=path,
-            backend=backend,
-            mount_type=mount_type,
-            permission=permission,
-            label=label,
-            hidden=hidden,
-        )
+        For database mounts, provide ``engine=`` (preferred) or
+        ``session_factory=`` instead of a backend.  The engine form
+        auto-creates a session factory, detects the dialect, and ensures
+        tables exist.
+        """
+        sf: Callable[..., AsyncSession] | None = None
+
+        if engine is not None:
+            if session_factory is not None:
+                raise ValueError("Provide engine or session_factory, not both")
+            from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            sf = async_sessionmaker(engine, class_=_AsyncSession, expire_on_commit=False)
+            dialect = engine.dialect.name
+
+            # Ensure tables exist
+            fm = file_model or File
+            fvm = file_version_model or FileVersion
+            async with engine.begin() as conn:
+                await conn.run_sync(
+                    lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+                )
+                await conn.run_sync(
+                    lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+                )
+
+        elif session_factory is not None:
+            sf = session_factory
+
+        if sf is not None:
+            # Create stateless DFS as backend
+            backend = DatabaseFileSystem(
+                dialect=dialect,
+                file_model=file_model,
+                file_version_model=file_version_model,
+                schema=db_schema,
+            )
+            if mount_type is None:
+                mount_type = "vfs"
+            config = MountConfig(
+                mount_path=path,
+                backend=backend,
+                session_factory=sf,
+                mount_type=mount_type,
+                permission=permission,
+                label=label,
+                hidden=hidden,
+            )
+        else:
+            if backend is None:
+                raise ValueError(
+                    "Provide backend, engine, or session_factory"
+                )
+            # Auto-detect mount type
+            if mount_type is None:
+                mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
+
+            # For local backends, eagerly init DB and expose session_factory
+            # so UFS can manage sessions for all mounts uniformly.
+            local_sf: Callable[..., AsyncSession] | None = None
+            if isinstance(backend, LocalFileSystem):
+                await backend._ensure_db()
+                local_sf = backend._session_factory
+
+            config = MountConfig(
+                mount_path=path,
+                backend=backend,
+                session_factory=local_sf,
+                mount_type=mount_type,
+                permission=permission,
+                label=label,
+                hidden=hidden,
+            )
+
         self._registry.add_mount(config)
 
         # Enter the backend context
-        await self._ufs.enter_backend(backend)
+        await self._ufs.enter_backend(config.backend)
 
         # Lazily initialise meta_fs on first non-hidden mount
         if not hidden and self._meta_fs is None:
-            await self._init_meta_fs(backend)
+            await self._init_meta_fs(config.backend)
 
     async def unmount(self, path: str) -> None:
         """Unmount the backend at *path*."""
@@ -223,10 +284,14 @@ class GroverAsync:
             data_dir=data_dir / "_meta",
         )
 
+        # Eagerly init DB so UFS can manage sessions for the meta mount too
+        await self._meta_fs._ensure_db()
+
         self._registry.add_mount(
             MountConfig(
                 mount_path="/.grover",
                 backend=self._meta_fs,
+                session_factory=self._meta_fs._session_factory,
                 mount_type="local",
                 hidden=True,
             )
@@ -266,8 +331,9 @@ class GroverAsync:
             # Find the first non-hidden mount's backend for file_model
             file_model = None
             for mount in self._registry.list_visible_mounts():
-                if hasattr(mount.backend, "file_model"):
-                    file_model = mount.backend.file_model
+                backend = mount.backend
+                if hasattr(backend, "file_model"):
+                    file_model = backend.file_model
                     break
             await self._graph.from_sql(session, file_model=file_model)  # type: ignore[arg-type]
             await self._meta_fs._commit(session)
@@ -519,9 +585,15 @@ class GroverAsync:
             mount, rel_path = self._registry.resolve(path)
         except MountNotFoundError:
             return None
+
         backend = mount.backend
         if hasattr(backend, "_read_content"):
-            content: str | None = await backend._read_content(rel_path)  # type: ignore[union-attr]
+            # For mounts with a session factory, get a UFS-managed session
+            if mount.has_session_factory:
+                async with self._ufs._session_for(mount) as sess:
+                    content: str | None = await backend._read_content(rel_path, sess)  # type: ignore[union-attr]
+            else:
+                content = await backend._read_content(rel_path, None)  # type: ignore[union-attr]
             return content
 
         return None
