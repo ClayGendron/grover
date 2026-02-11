@@ -1,34 +1,54 @@
-"""LocalFileSystem — disk + SQLite versioning."""
+"""LocalFileSystem — disk + SQLite versioning, no base class."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Generic
+from typing import TYPE_CHECKING
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlmodel import select
 
-from .base import FV, BaseFileSystem, F
-from .types import DeleteResult, FileInfo, ListResult, MkdirResult, ReadResult, RestoreResult
+from .directories import DirectoryService
+from .exceptions import GroverError
+from .metadata import MetadataService
+from .operations import (
+    copy_file,
+    delete_file,
+    edit_file,
+    move_file,
+    write_file,
+)
+from .trash import TrashService
+from .types import (
+    DeleteResult,
+    EditResult,
+    FileInfo,
+    GetVersionContentResult,
+    ListResult,
+    ListVersionsResult,
+    MkdirResult,
+    MoveResult,
+    ReadResult,
+    RestoreResult,
+    WriteResult,
+)
 from .utils import get_similar_files, is_binary_file, normalize_path, validate_path
+from .versioning import VersioningService
+
+if TYPE_CHECKING:
+    from grover.models.files import FileBase, FileVersionBase
+
+logger = logging.getLogger(__name__)
 
 
 def _workspace_slug(workspace_dir: Path) -> str:
-    """Derive a directory-safe slug from a workspace path.
-
-    Converts to a path relative to the user's home directory, then replaces
-    path separators with underscores.  For paths outside of home, uses the
-    full absolute path minus the leading ``/``.
-
-    Examples::
-
-        ~/Git/Repos/grover  →  Git_Repos_grover
-        /opt/projects/app   →  opt_projects_app
-    """
+    """Derive a directory-safe slug from a workspace path."""
     try:
         relative = workspace_dir.resolve().relative_to(Path.home())
     except ValueError:
@@ -37,35 +57,38 @@ def _workspace_slug(workspace_dir: Path) -> str:
 
 
 def _default_data_dir(workspace_dir: Path) -> Path:
-    """Return the global data directory for a given workspace.
-
-    Stored under ``~/.grover/{slug}/`` so project directories stay clean.
-    """
+    """Return the global data directory for a given workspace."""
     return Path.home() / ".grover" / _workspace_slug(workspace_dir)
 
 
-class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
+class LocalFileSystem:
     """Local file system with disk storage and SQLite versioning.
 
     - Files stored on disk at ``{workspace_dir}/{path}``
     - Metadata and versions in SQLite at ``~/.grover/{slug}/file_versions.db``
     - IDE, git, and other tools can see/edit files directly
+
+    Implements ``StorageBackend``, ``SupportsVersions``, ``SupportsTrash``,
+    and ``SupportsReconcile`` protocols.
     """
 
     def __init__(
         self,
         workspace_dir: str | Path | None = None,
         data_dir: str | Path | None = None,
-        file_model: type[F] | None = None,
-        file_version_model: type[FV] | None = None,
+        file_model: type[FileBase] | None = None,
+        file_version_model: type[FileVersionBase] | None = None,
         schema: str | None = None,
     ) -> None:
-        super().__init__(
-            dialect="sqlite",
-            file_model=file_model,
-            file_version_model=file_version_model,
-            schema=schema,
-        )
+        from grover.models.files import File, FileVersion
+
+        fm: type[FileBase] = file_model or File  # type: ignore[assignment]
+        fvm: type[FileVersionBase] = file_version_model or FileVersion  # type: ignore[assignment]
+
+        self.dialect = "sqlite"
+        self.schema = schema
+        self._file_model = fm
+        self._file_version_model = fvm
 
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd()
         self.data_dir = Path(data_dir) if data_dir else _default_data_dir(self.workspace_dir)
@@ -74,9 +97,28 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         self._session_factory = None
         self._init_lock = asyncio.Lock()
 
-    # =========================================================================
+        # Composed services
+        self.metadata = MetadataService(fm)
+        self.versioning = VersioningService(fm, fvm)
+        self.directories = DirectoryService(fm, "sqlite", schema)
+        self.trash = TrashService(fm, self.versioning, self._delete_content)
+
+    @property
+    def file_model(self) -> type[FileBase]:
+        return self._file_model
+
+    @property
+    def file_version_model(self) -> type[FileVersionBase]:
+        return self._file_version_model
+
+    def _require_session(self, session: AsyncSession | None) -> AsyncSession:
+        if session is None:
+            raise GroverError("LocalFileSystem requires a session")
+        return session
+
+    # ------------------------------------------------------------------
     # Database Management
-    # =========================================================================
+    # ------------------------------------------------------------------
 
     async def _ensure_db(self) -> None:
         """Initialize database if needed."""
@@ -94,14 +136,12 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 echo=False,
             )
 
-            # Scope the pragma listener to this engine only
             @event.listens_for(self._engine.sync_engine, "connect")
             def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
                 cursor = dbapi_connection.cursor()  # type: ignore[union-attr]
                 cursor.execute("PRAGMA journal_mode=WAL")
                 result = cursor.fetchone()
                 if result[0].lower() != "wal":
-                    import logging
                     logging.getLogger(__name__).warning(
                         "WAL mode not active, got: %s", result[0],
                     )
@@ -122,6 +162,14 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
                 expire_on_commit=False,
             )
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def open(self) -> None:
+        """Initialize the SQLite database."""
+        await self._ensure_db()
+
     async def close(self) -> None:
         """Close database engine and release resources."""
         if self._engine:
@@ -129,30 +177,12 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             self._engine = None
             self._session_factory = None
 
-    async def __aenter__(self) -> LocalFileSystem[F, FV]:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: object,
-        exc_val: object,
-        exc_tb: object,
-    ) -> None:
-        await self.close()
-
-    # =========================================================================
-    # Abstract Method Implementations
-    # =========================================================================
+    # ------------------------------------------------------------------
+    # Path resolution
+    # ------------------------------------------------------------------
 
     def _resolve_path_sync(self, virtual_path: str) -> Path:
-        """Convert virtual path to an actual disk path within the workspace.
-
-        Walks each path component to reject symlinks (prevents TOCTOU attacks)
-        and verifies the resolved path stays within ``workspace_dir``.
-
-        Raises:
-            PermissionError: On symlinks or path traversal.
-        """
+        """Convert virtual path to an actual disk path within the workspace."""
         virtual_path = normalize_path(virtual_path)
         rel = virtual_path.lstrip("/")
         if not rel:
@@ -160,7 +190,6 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         candidate = self.workspace_dir / rel
 
-        # Walk each component checking for symlinks
         current = self.workspace_dir
         for part in Path(rel).parts:
             current = current / part
@@ -181,14 +210,16 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         return resolved
 
     async def _resolve_path(self, virtual_path: str) -> Path:
-        """Async wrapper around _resolve_path_sync to avoid blocking the event loop."""
         return await asyncio.to_thread(self._resolve_path_sync, virtual_path)
 
     def _to_virtual_path(self, physical_path: Path) -> str:
-        """Convert a physical path back to a virtual path."""
         rel = physical_path.resolve().relative_to(self.workspace_dir.resolve())
         vpath = "/" + str(rel).replace("\\", "/")
         return vpath if vpath != "/." else "/"
+
+    # ------------------------------------------------------------------
+    # Content helpers (disk-specific)
+    # ------------------------------------------------------------------
 
     async def _read_content(self, path: str, session: AsyncSession) -> str | None:
         try:
@@ -247,26 +278,24 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
 
         await asyncio.to_thread(_do_delete)
 
-    async def _content_exists(self, path: str, session: AsyncSession) -> bool:
+    async def _content_exists(self, path: str) -> bool:
         try:
             actual_path = await self._resolve_path(path)
             return await asyncio.to_thread(actual_path.exists)
         except (PermissionError, ValueError):
             return False
 
-    # =========================================================================
-    # Override read() to add binary check and suggestions
-    # =========================================================================
+    # ------------------------------------------------------------------
+    # Core protocol: StorageBackend
+    # ------------------------------------------------------------------
 
     async def read(
-        self,
-        path: str,
-        offset: int = 0,
-        limit: int = 2000,
-        *,
-        session: AsyncSession,
+        self, path: str, offset: int = 0, limit: int = 2000,
+        *, session: AsyncSession | None = None,
     ) -> ReadResult:
         """Read file with binary check and similar file suggestions."""
+        sess = self._require_session(session)
+
         valid, error = validate_path(path)
         if not valid:
             return ReadResult(success=False, message=error)
@@ -299,125 +328,123 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
         if await asyncio.to_thread(actual_path.is_dir):
             return ReadResult(success=False, message=f"Path is a directory, not a file: {path}")
 
-        content = await self._read_content(path, session)
+        content = await self._read_content(path, sess)
 
         if content is None:
             return ReadResult(success=False, message=f"Could not read file: {path}")
 
-        return self._paginate_content(content, path, offset, limit)
+        return MetadataService.paginate_content(content, path, offset, limit)
 
-    # =========================================================================
-    # Override delete to back up content to DB before removing from disk
-    # =========================================================================
+    async def write(
+        self, path: str, content: str, created_by: str = "agent",
+        *, overwrite: bool = True,
+        session: AsyncSession | None = None,
+    ) -> WriteResult:
+        sess = self._require_session(session)
+        return await write_file(
+            path, content, created_by, overwrite, sess,
+            metadata=self.metadata,
+            versioning=self.versioning,
+            directories=self.directories,
+            file_model=self._file_model,
+            read_content=self._read_content,
+            write_content=self._write_content,
+        )
+
+    async def edit(
+        self, path: str, old_string: str, new_string: str,
+        replace_all: bool = False, created_by: str = "agent",
+        *, session: AsyncSession | None = None,
+    ) -> EditResult:
+        sess = self._require_session(session)
+        return await edit_file(
+            path, old_string, new_string, replace_all, created_by, sess,
+            metadata=self.metadata,
+            versioning=self.versioning,
+            read_content=self._read_content,
+            write_content=self._write_content,
+        )
 
     async def delete(
-        self,
-        path: str,
-        permanent: bool = False,
-        *,
-        session: AsyncSession,
+        self, path: str, permanent: bool = False,
+        *, session: AsyncSession | None = None,
     ) -> DeleteResult:
         """Delete file, backing up content to the database first.
 
-        For files that exist on disk but have no DB record, a record and
-        version snapshot are created before soft-deleting, so the content
-        is always recoverable from the database.
+        Content-before-commit: DB soft-delete → flush → unlink disk → return.
+        VFS commits after.
         """
+        sess = self._require_session(session)
         norm = normalize_path(path)
 
         # Read content from disk before anything else
-        content = await self._read_content(norm, session)
+        content = await self._read_content(norm, sess)
 
-        # Ensure a DB record exists so super().delete() can soft-delete it
+        # Ensure a DB record exists so delete can soft-delete it
         if content is not None:
-            file = await self._get_file(session, norm)
+            file = await self.metadata.get_file(sess, norm)
             if file is None:
                 # Disk-only file: create a DB record + version 1 snapshot
-                await super().write(norm, content, created_by="backup", session=session)
+                await write_file(
+                    norm, content, "backup", True, sess,
+                    metadata=self.metadata,
+                    versioning=self.versioning,
+                    directories=self.directories,
+                    file_model=self._file_model,
+                    read_content=self._read_content,
+                    write_content=self._write_content,
+                )
 
-        result = await super().delete(norm, permanent, session=session)
+        result = await delete_file(
+            norm, permanent, sess,
+            metadata=self.metadata,
+            versioning=self.versioning,
+            file_model=self._file_model,
+            delete_content=self._delete_content,
+        )
 
         # Remove from disk regardless of soft/permanent
         if result.success:
-            await self._delete_content(norm, session)
+            await self._delete_content(norm, sess)
 
         return result
-
-    # =========================================================================
-    # Override restore_from_trash to write content back to disk
-    # =========================================================================
-
-    async def restore_from_trash(
-        self,
-        path: str,
-        *,
-        session: AsyncSession,
-    ) -> RestoreResult:
-        """Restore a file from trash, writing content back to disk."""
-        result = await super().restore_from_trash(path, session=session)
-        if not result.success:
-            return result
-
-        restored_path = result.file_path or path
-        file = await self._get_file(session, restored_path)
-        if file:
-            if file.is_directory:
-                # Restore children's disk content
-                model = self._file_model
-                from sqlmodel import select
-                children_result = await session.execute(
-                    select(model).where(
-                        model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
-                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                    )
-                )
-                for child in children_result.scalars().all():
-                    if not child.is_directory:
-                        child_content = await self.get_version_content(
-                            child.path, child.current_version, session=session,
-                        )
-                        if child_content is not None:
-                            await self._write_content(child.path, child_content, session)
-            else:
-                content = await self.get_version_content(
-                    restored_path, file.current_version, session=session,
-                )
-                if content is not None:
-                    await self._write_content(restored_path, content, session)
-
-        return result
-
-    # =========================================================================
-    # Override mkdir to create on disk too
-    # =========================================================================
 
     async def mkdir(
-        self,
-        path: str,
-        parents: bool = True,
-        *,
-        session: AsyncSession,
+        self, path: str, parents: bool = True,
+        *, session: AsyncSession | None = None,
     ) -> MkdirResult:
         """Create directory in database and on disk."""
-        result = await super().mkdir(path, parents, session=session)
+        sess = self._require_session(session)
+        created_dirs, error = await self.directories.mkdir(
+            sess, path, parents, self.metadata.get_file,
+        )
+        if error is not None:
+            return MkdirResult(success=False, message=error)
 
-        if result.success:
-            actual_path = await self._resolve_path(path)
-            await asyncio.to_thread(actual_path.mkdir, parents=True, exist_ok=True)
+        path = normalize_path(path)
+        actual_path = await self._resolve_path(path)
+        await asyncio.to_thread(actual_path.mkdir, parents=True, exist_ok=True)
 
-        return result
-
-    # =========================================================================
-    # Override list_dir to sync with disk
-    # =========================================================================
+        if created_dirs:
+            return MkdirResult(
+                success=True,
+                message=f"Created directory: {path}",
+                path=path,
+                created_dirs=created_dirs,
+            )
+        return MkdirResult(
+            success=True,
+            message=f"Directory already exists: {path}",
+            path=path,
+            created_dirs=[],
+        )
 
     async def list_dir(
-        self,
-        path: str = "/",
-        *,
-        session: AsyncSession,
+        self, path: str = "/",
+        *, session: AsyncSession | None = None,
     ) -> ListResult:
         """List directory, including files only on disk."""
+        sess = self._require_session(session)
         path = normalize_path(path)
 
         try:
@@ -443,7 +470,7 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             item_path = f"{path}/{item.name}" if path != "/" else f"/{item.name}"
             item_path = normalize_path(item_path)
 
-            file = await self._get_file(session, item_path)
+            file = await self.metadata.get_file(sess, item_path)
 
             entries.append(
                 FileInfo(
@@ -468,3 +495,234 @@ class LocalFileSystem(BaseFileSystem[F, FV], Generic[F, FV]):
             entries=entries,
             path=path,
         )
+
+    async def exists(
+        self, path: str,
+        *, session: AsyncSession | None = None,
+    ) -> bool:
+        sess = self._require_session(session)
+        return await self.metadata.exists(sess, path)
+
+    async def get_info(
+        self, path: str,
+        *, session: AsyncSession | None = None,
+    ) -> FileInfo | None:
+        sess = self._require_session(session)
+        return await self.metadata.get_info(sess, path)
+
+    async def move(
+        self, src: str, dest: str,
+        *, session: AsyncSession | None = None,
+    ) -> MoveResult:
+        sess = self._require_session(session)
+        return await move_file(
+            src, dest, sess,
+            metadata=self.metadata,
+            versioning=self.versioning,
+            file_model=self._file_model,
+            read_content=self._read_content,
+            write_content=self._write_content,
+            delete_content=self._delete_content,
+        )
+
+    async def copy(
+        self, src: str, dest: str,
+        *, session: AsyncSession | None = None,
+    ) -> WriteResult:
+        sess = self._require_session(session)
+        return await copy_file(
+            src, dest, sess,
+            metadata=self.metadata,
+            read_content=self._read_content,
+            write_fn=self.write,
+        )
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsVersions
+    # ------------------------------------------------------------------
+
+    async def list_versions(
+        self, path: str,
+        *, session: AsyncSession | None = None,
+    ) -> ListVersionsResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        file = await self.metadata.get_file(sess, path)
+        if not file:
+            return ListVersionsResult(success=True, message="File not found", versions=[])
+        versions = await self.versioning.list_versions(sess, file)
+        return ListVersionsResult(
+            success=True,
+            message=f"Found {len(versions)} version(s)",
+            versions=versions,
+        )
+
+    async def get_version_content(
+        self, path: str, version: int,
+        *, session: AsyncSession | None = None,
+    ) -> GetVersionContentResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        file = await self.metadata.get_file(sess, path)
+        if not file:
+            return GetVersionContentResult(
+                success=False, message=f"File not found: {path}",
+            )
+        content = await self.versioning.get_version_content(sess, file, version)
+        if content is None:
+            return GetVersionContentResult(
+                success=False, message=f"Version {version} not found for {path}",
+            )
+        return GetVersionContentResult(success=True, message="OK", content=content)
+
+    async def restore_version(
+        self, path: str, version: int,
+        *, session: AsyncSession | None = None,
+    ) -> RestoreResult:
+        sess = self._require_session(session)
+        path = normalize_path(path)
+        vc_result = await self.get_version_content(path, version, session=sess)
+        if not vc_result.success or vc_result.content is None:
+            return RestoreResult(
+                success=False,
+                message=f"Version {version} not found for {path}",
+            )
+
+        write_result = await self.write(
+            path, vc_result.content, created_by="restore", session=sess,
+        )
+
+        return RestoreResult(
+            success=True,
+            message=f"Restored {path} to version {version}",
+            file_path=path,
+            restored_version=version,
+            current_version=write_result.version,
+        )
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsTrash
+    # ------------------------------------------------------------------
+
+    async def list_trash(
+        self, *, session: AsyncSession | None = None,
+    ) -> ListResult:
+        sess = self._require_session(session)
+        return await self.trash.list_trash(sess)
+
+    async def restore_from_trash(
+        self, path: str,
+        *, session: AsyncSession | None = None,
+    ) -> RestoreResult:
+        """Restore a file from trash, writing content back to disk."""
+        sess = self._require_session(session)
+        result = await self.trash.restore_from_trash(sess, path, self.metadata.get_file)
+        if not result.success:
+            return result
+
+        restored_path = result.file_path or path
+        file = await self.metadata.get_file(sess, restored_path)
+        if file:
+            if file.is_directory:
+                model = self._file_model
+                children_result = await sess.execute(
+                    select(model).where(
+                        model.path.startswith(restored_path + "/"),  # type: ignore[union-attr]
+                        model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                    )
+                )
+                for child in children_result.scalars().all():
+                    if not child.is_directory:
+                        vc = await self.get_version_content(
+                            child.path, child.current_version, session=sess,
+                        )
+                        if vc.success and vc.content is not None:
+                            await self._write_content(child.path, vc.content, sess)
+            else:
+                vc = await self.get_version_content(
+                    restored_path, file.current_version, session=sess,
+                )
+                if vc.success and vc.content is not None:
+                    await self._write_content(restored_path, vc.content, sess)
+
+        return result
+
+    async def empty_trash(
+        self, *, session: AsyncSession | None = None,
+    ) -> DeleteResult:
+        sess = self._require_session(session)
+        return await self.trash.empty_trash(sess)
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsReconcile
+    # ------------------------------------------------------------------
+
+    async def reconcile(
+        self, *, session: AsyncSession | None = None,
+    ) -> dict[str, int]:
+        """Walk disk, compare with DB, create/update/soft-delete as needed."""
+        sess = self._require_session(session)
+        stats = {"created": 0, "updated": 0, "deleted": 0}
+
+        # Walk workspace files
+        disk_paths: set[str] = set()
+
+        def _walk() -> list[tuple[str, bool]]:
+            items = []
+            for root, dirs, files in os.walk(self.workspace_dir):
+                # Skip dotfiles/dirs
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for name in files:
+                    if name.startswith("."):
+                        continue
+                    full = Path(root) / name
+                    try:
+                        vpath = self._to_virtual_path(full)
+                        items.append((vpath, True))
+                    except (ValueError, PermissionError):
+                        continue
+            return items
+
+        items = await asyncio.to_thread(_walk)
+        for vpath, _ in items:
+            disk_paths.add(vpath)
+
+            file = await self.metadata.get_file(sess, vpath)
+            if file is None:
+                # File on disk but not in DB — create record
+                content = await self._read_content(vpath, sess)
+                if content is not None:
+                    await write_file(
+                        vpath, content, "reconcile", True, sess,
+                        metadata=self.metadata,
+                        versioning=self.versioning,
+                        directories=self.directories,
+                        file_model=self._file_model,
+                        read_content=self._read_content,
+                        write_content=self._write_content,
+                    )
+                    stats["created"] += 1
+
+        # Check DB records against disk
+        model = self._file_model
+        result = await sess.execute(
+            select(model).where(
+                model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
+                model.is_directory.is_(False),  # type: ignore[union-attr]
+            )
+        )
+        for file in result.scalars().all():
+            if file.path not in disk_paths:
+                exists = await self._content_exists(file.path)
+                if not exists:
+                    # DB record but no disk file — phantom metadata, soft-delete
+                    from datetime import UTC, datetime
+
+                    from .utils import to_trash_path
+                    file.original_path = file.path
+                    file.path = to_trash_path(file.path, file.id)
+                    file.deleted_at = datetime.now(UTC)
+                    stats["deleted"] += 1
+
+        await sess.flush()
+        return stats

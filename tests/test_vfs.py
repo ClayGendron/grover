@@ -109,24 +109,24 @@ async def _make_local_setup(
 async def rw_ufs(tmp_path: Path):
     """Single RW mount at /local."""
     ufs, _bus, collected, _registry = await _make_local_setup(tmp_path)
-    async with ufs:
-        yield ufs, collected
+    yield ufs, collected
+    await ufs.close()
 
 
 @pytest.fixture
 async def rw_ro_ufs(tmp_path: Path):
     """RW mount at /local + RO mount at /ro."""
     ufs, _bus, collected, _registry = await _make_local_setup(tmp_path, ro_mount=True)
-    async with ufs:
-        yield ufs, collected
+    yield ufs, collected
+    await ufs.close()
 
 
 @pytest.fixture
 async def two_mount_ufs(tmp_path: Path):
     """Two RW mounts at /local and /other."""
     ufs, _bus, collected, _registry = await _make_local_setup(tmp_path, second_mount=True)
-    async with ufs:
-        yield ufs, collected
+    yield ufs, collected
+    await ufs.close()
 
 
 # =========================================================================
@@ -192,9 +192,9 @@ class TestPermissionChecks:
             )
         )
         ufs = VFS(registry)
-        async with ufs:
-            result = await ufs.restore_version("/vfs/file.txt", 1)
-            assert result.success is False
+        result = await ufs.restore_version("/vfs/file.txt", 1)
+        assert result.success is False
+        await ufs.close()
         await engine.dispose()
 
     async def test_restore_from_trash_read_only(self, rw_ro_ufs):
@@ -343,34 +343,6 @@ class TestTrashOperations:
 
 
 # =========================================================================
-# Context Manager / Backend Lifecycle
-# =========================================================================
-
-
-class TestContextManager:
-    async def test_close_all_backends(self, tmp_path: Path):
-        ufs, _, _, _ = await _make_local_setup(tmp_path)
-        async with ufs:
-            assert len(ufs._entered_backends) > 0
-        assert len(ufs._entered_backends) == 0
-
-    async def test_enter_exit_backend(self, tmp_path: Path):
-        (tmp_path / "ws_manual").mkdir(exist_ok=True)
-        backend = LocalFileSystem(
-            workspace_dir=tmp_path / "ws_manual",
-            data_dir=tmp_path / ".grover_manual",
-        )
-        registry = MountRegistry()
-        ufs = VFS(registry)
-
-        await ufs.enter_backend(backend)
-        assert backend in ufs._entered_backends
-
-        await ufs.exit_backend(backend)
-        assert backend not in ufs._entered_backends
-
-
-# =========================================================================
 # Version Operations (delegates correctly)
 # =========================================================================
 
@@ -389,20 +361,20 @@ class TestVersionOperations:
             mount_path="/vfs", backend=db, session_factory=factory, mount_type="vfs",
         ))
         ufs = VFS(registry)
-        async with ufs:
-            yield ufs
+        yield ufs
+        await ufs.close()
         await engine.dispose()
 
     async def test_list_versions_routes(self, vfs_ufs):
         ufs = vfs_ufs
         await ufs.write("/vfs/doc.txt", "v1")
         await ufs.write("/vfs/doc.txt", "v2")
-        versions = await ufs.list_versions("/vfs/doc.txt")
-        assert len(versions) >= 2
+        result = await ufs.list_versions("/vfs/doc.txt")
+        assert len(result.versions) >= 2
 
     async def test_get_version_content_routes(self, vfs_ufs):
         ufs = vfs_ufs
         await ufs.write("/vfs/doc.txt", "first")
         await ufs.write("/vfs/doc.txt", "second")
-        content = await ufs.get_version_content("/vfs/doc.txt", 1)
-        assert content == "first"
+        result = await ufs.get_version_content("/vfs/doc.txt", 1)
+        assert result.content == "first"

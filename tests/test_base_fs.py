@@ -122,8 +122,8 @@ class TestVersioning:
             # Verify each version can be reconstructed
             for version_num in range(1, len(contents) + 1):
                 vc = await fs.get_version_content("/f.py", version_num, session=session)
-                assert vc is not None, f"Version {version_num} returned None"
-                assert vc == contents[version_num - 1], (
+                assert vc.success, f"Version {version_num} failed: {vc.message}"
+                assert vc.content == contents[version_num - 1], (
                     f"Version {version_num} mismatch"
                 )
         await engine.dispose()
@@ -139,18 +139,18 @@ class TestVersioning:
                 new = f"version {i}"
                 await fs.edit("/f.py", old, new, session=session)
 
-            versions = await fs.list_versions("/f.py", session=session)
-            assert len(versions) > 0
+            result = await fs.list_versions("/f.py", session=session)
+            assert len(result.versions) > 0
 
             vc1 = await fs.get_version_content("/f.py", 1, session=session)
-            assert vc1 is not None
+            assert vc1.success
         await engine.dispose()
 
     async def test_get_version_content_nonexistent(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             result = await fs.get_version_content("/nope.py", 1, session=session)
-            assert result is None
+            assert result.success is False
         await engine.dispose()
 
 
@@ -166,16 +166,16 @@ class TestListVersions:
             await fs.write("/f.py", "v1\n", session=session)
             await fs.edit("/f.py", "v1", "v2", session=session)
 
-            versions = await fs.list_versions("/f.py", session=session)
-            assert len(versions) >= 1
-            assert versions[0].version >= versions[-1].version
+            result = await fs.list_versions("/f.py", session=session)
+            assert len(result.versions) >= 1
+            assert result.versions[0].version >= result.versions[-1].version
         await engine.dispose()
 
     async def test_list_versions_nonexistent(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            versions = await fs.list_versions("/nope.py", session=session)
-            assert versions == []
+            result = await fs.list_versions("/nope.py", session=session)
+            assert result.versions == []
         await engine.dispose()
 
 
@@ -244,16 +244,16 @@ class TestDelete:
         async with factory() as session:
             await fs.write("/f.py", "v1\n", session=session)
             await fs.write("/f.py", "v2\n", session=session)
-            versions = await fs.list_versions("/f.py", session=session)
-            assert len(versions) == 2
+            ver_result = await fs.list_versions("/f.py", session=session)
+            assert len(ver_result.versions) == 2
 
             await fs.delete("/f.py", permanent=True, session=session)
             await session.commit()
 
         # Verify no orphaned version records remain
         async with factory() as session:
-            result = await session.execute(select(FileVersion))
-            assert result.scalars().all() == [], "Version records should be deleted"
+            db_result = await session.execute(select(FileVersion))
+            assert db_result.scalars().all() == [], "Version records should be deleted"
         await engine.dispose()
 
     async def test_delete_nonexistent(self):
@@ -757,7 +757,7 @@ class TestParentPath:
             info = await fs.get_info("/src/main.py", session=session)
             assert info is not None
 
-            file = await fs._get_file(session, "/src/main.py")
+            file = await fs.metadata.get_file(session, "/src/main.py")
             assert file.parent_path == "/src"
         await engine.dispose()
 
@@ -766,11 +766,11 @@ class TestParentPath:
         async with factory() as session:
             await fs.mkdir("/a/b/c", session=session)
 
-            b = await fs._get_file(session, "/a/b")
+            b = await fs.metadata.get_file(session, "/a/b")
             assert b is not None
             assert b.parent_path == "/a"
 
-            c = await fs._get_file(session, "/a/b/c")
+            c = await fs.metadata.get_file(session, "/a/b/c")
             assert c is not None
             assert c.parent_path == "/a/b"
         await engine.dispose()
@@ -782,7 +782,7 @@ class TestParentPath:
             await fs.mkdir("/dst", session=session)
             await fs.move("/src/file.py", "/dst/file.py", session=session)
 
-            file = await fs._get_file(session, "/dst/file.py")
+            file = await fs.metadata.get_file(session, "/dst/file.py")
             assert file is not None
             assert file.parent_path == "/dst"
         await engine.dispose()
@@ -792,7 +792,7 @@ class TestParentPath:
         async with factory() as session:
             await fs.write("/root_file.py", "content\n", session=session)
 
-            file = await fs._get_file(session, "/root_file.py")
+            file = await fs.metadata.get_file(session, "/root_file.py")
             assert file.parent_path == "/"
         await engine.dispose()
 
@@ -821,8 +821,8 @@ class TestVersionReconstructionAcrossSnapshots:
 
             for version_num in range(1, len(contents) + 1):
                 vc = await fs.get_version_content("/f.py", version_num, session=session)
-                assert vc is not None, f"Version {version_num} returned None"
-                assert vc == contents[version_num - 1], (
+                assert vc.success, f"Version {version_num} failed: {vc.message}"
+                assert vc.content == contents[version_num - 1], (
                     f"Version {version_num} mismatch"
                 )
         await engine.dispose()
@@ -888,8 +888,8 @@ class TestAtomicMoveOverwrite:
             await fs.write("/dest.py", "old dest\n", session=session)
             await fs.move("/src.py", "/dest.py", session=session)
             # dest should have version history
-            versions = await fs.list_versions("/dest.py", session=session)
-            assert len(versions) >= 2
+            ver_result = await fs.list_versions("/dest.py", session=session)
+            assert len(ver_result.versions) >= 2
         await engine.dispose()
 
 

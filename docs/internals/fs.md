@@ -9,9 +9,12 @@ For the high-level architecture diagram and component relationships, see [fs_arc
 ## Table of Contents
 
 - [Write Order of Operations](#write-order-of-operations)
+- [Delete Order of Operations](#delete-order-of-operations)
 - [Session Lifecycle](#session-lifecycle)
+- [Capability Protocols](#capability-protocols)
 - [Version Snapshotting](#version-snapshotting)
 - [Soft Delete and Trash](#soft-delete-and-trash)
+- [Reconciliation](#reconciliation)
 - [LocalFileSystem vs DatabaseFileSystem](#localfilesystem-vs-databasefilesystem)
 - [Path Validation and Security](#path-validation-and-security)
 
@@ -25,7 +28,7 @@ All mutating operations (`write`, `edit`) follow the same sequence:
 
 ```
 1. Save version record to session  (not yet committed)
-2. Write content to storage         (_write_content)
+2. Write content to storage         (write_content callback)
 3. Flush the session                (session.flush)
 4. VFS commits on _session_for exit (session.commit)
 ```
@@ -53,14 +56,14 @@ The opposite ordering — commit the session, then write content — creates **p
 An orphan file on disk is strictly better than phantom metadata because:
 
 - The system cannot see an orphan file (no DB record references it).
-- Orphan files can be garbage-collected by a periodic reconciliation pass.
+- Orphan files can be garbage-collected by `reconcile()`.
 - Phantom metadata causes user-visible errors on every subsequent read.
 
 ### How It Applies to Each Backend
 
 **LocalFileSystem**: Content is written to disk via atomic temp-file + rename. The commit then persists the version record and metadata to SQLite. If the disk write fails, the rollback removes the version record. If the SQLite commit fails, the disk file exists but is invisible — no user impact.
 
-**DatabaseFileSystem**: `_write_content()` updates the `File.content` column on the same session object. Both the content update and the version record are part of the same transaction, so they commit or roll back together atomically when VFS exits `_session_for()`.
+**DatabaseFileSystem**: `write_content()` updates the `File.content` column on the same session object. Both the content update and the version record are part of the same transaction, so they commit or roll back together atomically when VFS exits `_session_for()`.
 
 ### History
 
@@ -68,34 +71,83 @@ This ordering has been the intended design since the initial filesystem implemen
 
 ### Code Locations
 
-All mutating methods in `base.py` follow the same pattern — write content, then flush:
+Write and edit orchestration lives in `operations.py`. The pattern is:
 
 ```python
-# write() and edit() (base.py)
-await self._write_content(path, content, session)
+# operations.py — write_file() and edit_file()
+await write_content(path, content, session)
 await session.flush()
 ```
 
-Sessions are always injected by VFS via `_session_for(mount)`. The VFS context manager handles commit on success and rollback on error. Backends only call `session.flush()` to make changes visible within the transaction.
+Sessions are always injected by VFS via `_session_for(mount)`. The VFS context manager handles commit on success and rollback on error. Backends and operations only call `session.flush()` to make changes visible within the transaction.
+
+---
+
+## Delete Order of Operations
+
+Delete follows the same **content-before-commit** principle as writes:
+
+### LocalFileSystem
+
+1. DB soft-delete: set `deleted_at`, move to trash path → `session.flush()`
+2. Disk unlink: remove the file from disk
+3. Return `DeleteResult(success=True)`
+4. VFS commits the session via `_session_for`
+
+### Failure Modes
+
+| Scenario | What happens | State |
+|----------|-------------|-------|
+| Unlink fails | Return `DeleteResult(success=False)`, session rolls back | Clean — file exists on disk and in DB |
+| VFS commit fails after unlink | Disk file gone, DB rolled back (file appears "alive") | Phantom metadata — `reconcile()` fixes it |
+| Both succeed | File trashed in DB, gone from disk | Clean |
+
+The commit-failure case is rare (SQLite WAL + FULL sync) and reconcile handles it.
+
+### DatabaseFileSystem
+
+No disk involved — soft-delete is metadata-only (set `deleted_at`, move path to trash). Everything happens within the same DB transaction.
 
 ---
 
 ## Session Lifecycle
 
-Sessions are managed by VFS and injected into backends.
+Sessions are managed by VFS and injected into backends. Every operation creates, uses, commits, and closes its own session.
 
 ### VFS `_session_for(mount)`
 
-`VFS._session_for(mount)` is an async context manager that provides sessions to backend operations for **all mounts** (both local and DB). Every mount registered via `GroverAsync.mount()` has a `session_factory` on its `MountConfig`, so VFS manages sessions uniformly.
+`VFS._session_for(mount)` is an async context manager that provides sessions to backend operations.
 
-| Mode | Behavior |
-|------|----------|
-| **Per-operation** (default) | Creates session from `mount.session_factory()` → yields → `session.commit()` → `session.close()`. On error: `session.rollback()` → `session.close()`. |
-| **Transaction** (`async with grover:`) | Reuses a single session per mount path (stored in `_txn_sessions`). Yields the shared session without committing. Commit/rollback happens on context manager exit via `commit_transaction()` / `rollback_transaction()`. |
+```python
+@asynccontextmanager
+async def _session_for(self, mount):
+    if not mount.has_session_factory:
+        yield None  # Non-SQL backends get None
+        return
+
+    session = mount.session_factory()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+```
+
+SQL backends **fail fast** if session is None:
+
+```python
+def _require_session(self, session):
+    if session is None:
+        raise GroverError("LocalFileSystem requires a session")
+    return session
+```
 
 ### Backend Session Usage
 
-All backend methods require a `session: AsyncSession` parameter (keyword-only). Backends never create, commit, or close sessions — they only call `session.flush()` after mutations to make changes visible within the transaction. VFS handles the full session lifecycle (create → inject → commit/rollback → close).
+All backend methods accept `session: AsyncSession | None = None` (keyword-only). SQL backends call `_require_session()` at the top of each method. Backends never create, commit, or close sessions — they only call `session.flush()` after mutations to make changes visible within the transaction. VFS handles the full session lifecycle (create → inject → commit/rollback → close).
 
 **LocalFileSystem**: Uses the injected session for all metadata and version operations. Disk I/O is independent of the session.
 
@@ -114,9 +166,48 @@ The SQLite engine is configured with these pragmas on every connection:
 
 ---
 
+## Capability Protocols
+
+Backends implement the core `StorageBackend` protocol plus optional capability protocols. VFS checks capabilities at runtime using `isinstance()`.
+
+### Protocol Hierarchy
+
+```
+StorageBackend (core — 11 methods)
+    open, close, read, write, edit, delete, mkdir, move, copy, list_dir, exists, get_info
+├── SupportsVersions (opt-in)
+│     list_versions → ListVersionsResult
+│     get_version_content → GetVersionContentResult
+│     restore_version → RestoreResult
+├── SupportsTrash (opt-in)
+│     list_trash → ListResult
+│     restore_from_trash → RestoreResult
+│     empty_trash → DeleteResult
+└── SupportsReconcile (opt-in)
+      reconcile → dict[str, int]
+```
+
+### Implementation
+
+| Backend | StorageBackend | SupportsVersions | SupportsTrash | SupportsReconcile |
+|---------|:---:|:---:|:---:|:---:|
+| LocalFileSystem | Y | Y | Y | Y |
+| DatabaseFileSystem | Y | Y | Y | N |
+| Custom (minimal) | Y | - | - | - |
+
+### Unsupported Capability Handling
+
+- **Targeted path operations** (e.g., `list_versions("/path")`) → VFS raises `CapabilityNotSupportedError`
+- **Aggregate endpoints** (e.g., `list_trash()`, `empty_trash()`) → VFS silently skips unsupported mounts
+- **`delete(permanent=False)`** on non-trash backends → Returns `DeleteResult(success=False)` with guidance to use `permanent=True`
+
+`GroverAsync` catches `CapabilityNotSupportedError` and returns appropriate `Result(success=False, message=...)`. The agent loop always gets Results, never unhandled exceptions from normal operations.
+
+---
+
 ## Version Snapshotting
 
-Every `write()` and `edit()` creates a `FileVersion` record. Versions use a **snapshot + forward diff** strategy to balance storage efficiency with reconstruction speed.
+Every `write()` and `edit()` creates a `FileVersion` record via `VersioningService`. Versions use a **snapshot + forward diff** strategy to balance storage efficiency with reconstruction speed.
 
 ### Snapshot Interval
 
@@ -175,7 +266,7 @@ When `delete(path, permanent=False)` is called (the default):
 2. The file's `path` is rewritten to a trash path: `/__trash__/{file_id}/{name}`.
 3. `deleted_at` is set to the current timestamp.
 4. If the target is a directory, all children undergo the same transformation.
-5. The session is committed.
+5. The session is flushed (VFS commits after return).
 
 The trash path format uses the file's UUID to prevent collisions when multiple files with the same name are deleted.
 
@@ -186,8 +277,8 @@ Before soft-deleting, `LocalFileSystem.delete()`:
 1. Reads the file content from disk.
 2. If no DB record exists (the file was created outside Grover, e.g. by git or an
    IDE), creates a DB record and version 1 snapshot as a backup.
-3. Calls the base `delete()` to perform the soft-delete in the DB.
-4. Physically removes the file from disk.
+3. Calls `delete_file()` to perform the soft-delete in the DB.
+4. Physically removes the file from disk (content-before-commit).
 
 On restore (`restore_from_trash`), the content is written back to disk from the version history.
 
@@ -205,12 +296,25 @@ On restore (`restore_from_trash`), the content is written back to disk from the 
 
 ---
 
+## Reconciliation
+
+`LocalFileSystem` implements `SupportsReconcile` with a `reconcile()` method that synchronizes disk state with DB state:
+
+1. Walk all files on disk within the workspace.
+2. For each disk file not in the DB → create a DB record (created).
+3. For each DB file not on disk → soft-delete the DB record (deleted).
+4. For each file that exists in both → compare content hashes and update if changed (updated).
+
+VFS delegates `reconcile()` to capable backends, aggregating results across mounts.
+
+---
+
 ## LocalFileSystem vs DatabaseFileSystem
 
 | Aspect | LocalFileSystem | DatabaseFileSystem |
 |--------|----------------|-------------------|
 | **Content storage** | Files on disk at `workspace_dir` | `File.content` column in DB |
-| **Metadata storage** | SQLite at `~/.grover/{slug}/` | External DB (PostgreSQL, MSSQL, etc.) |
+| **Metadata storage** | SQLite at `data_dir/` | External DB (PostgreSQL, MSSQL, etc.) |
 | **`File.content` column** | Always `NULL` | Contains actual file text |
 | **Instance state** | Workspace dir, SQLite engine, session factory | Dialect, file model, file version model (immutable) |
 | **Session handling** | Session injected by VFS, flush only | Session injected by VFS, flush only |
@@ -220,6 +324,7 @@ On restore (`restore_from_trash`), the content is written back to disk from the 
 | **Path security** | Symlink detection, workspace boundary enforcement | N/A (virtual paths only) |
 | **Delete behavior** | Backs up content before delete, removes from disk | Metadata-only delete |
 | **Restore behavior** | Writes content back to disk from version history | Metadata restoration (content already in DB) |
+| **Capabilities** | Versions, Trash, Reconcile | Versions, Trash |
 
 ### When to Use Which
 

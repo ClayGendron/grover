@@ -36,10 +36,10 @@ class TestStatelessConstruction:
         assert not hasattr(db, "_txn_session")
         await engine.dispose()
 
-    async def test_context_manager_is_noop(self):
+    async def test_open_close_is_noop(self):
         db, _factory, engine = await _make_db_fs()
-        async with db:
-            pass  # Should not raise
+        await db.open()
+        await db.close()  # Should not raise
         await engine.dispose()
 
     async def test_close_is_noop(self):
@@ -67,16 +67,20 @@ class TestSessionInjection:
     async def test_write_without_session_raises(self):
         import pytest
 
+        from grover.fs.exceptions import GroverError
+
         db, _factory, engine = await _make_db_fs()
-        with pytest.raises(TypeError):
+        with pytest.raises(GroverError, match="requires a session"):
             await db.write("/hello.txt", "hello")
         await engine.dispose()
 
     async def test_read_without_session_raises(self):
         import pytest
 
+        from grover.fs.exceptions import GroverError
+
         db, _factory, engine = await _make_db_fs()
-        with pytest.raises(TypeError):
+        with pytest.raises(GroverError, match="requires a session"):
             await db.read("/hello.txt")
         await engine.dispose()
 
@@ -132,13 +136,13 @@ class TestContentFiltering:
             assert not result.success
         await engine.dispose()
 
-    async def test_content_exists_false_for_deleted(self):
+    async def test_read_content_none_for_deleted(self):
         db, factory, engine = await _make_db_fs()
         async with factory() as session:
             await db.write("/soon_gone.txt", "content", session=session)
-            assert await db._content_exists("/soon_gone.txt", session) is True
+            assert await db._read_content("/soon_gone.txt", session) is not None
             await db.delete("/soon_gone.txt", permanent=False, session=session)
-            assert await db._content_exists("/soon_gone.txt", session) is False
+            assert await db._read_content("/soon_gone.txt", session) is None
         await engine.dispose()
 
 

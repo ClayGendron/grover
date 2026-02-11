@@ -261,8 +261,8 @@ class TestEventBusIntegration:
         )
         ufs = VFS(registry, event_bus=bus)
 
-        async with ufs:
-            yield ufs, bus, collected
+        yield ufs, bus, collected
+        await ufs.close()
 
     async def test_write_emits_file_written(
         self, setup: tuple[VFS, EventBus, list[FileEvent]]
@@ -359,9 +359,9 @@ class TestEventBusIntegration:
         )
         ufs = VFS(registry)
 
-        async with ufs:
-            result = await ufs.write("/local/hello.txt", "hello")
-            assert result.success
+        result = await ufs.write("/local/hello.txt", "hello")
+        assert result.success
+        await ufs.close()
 
 
 # =========================================================================
@@ -402,8 +402,8 @@ class TestEventBusVFSIntegration:
         )
         ufs = VFS(registry, event_bus=bus)
 
-        async with ufs:
-            yield ufs, bus, collected
+        yield ufs, bus, collected
+        await ufs.close()
 
         await engine.dispose()
 

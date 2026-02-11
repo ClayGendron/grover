@@ -19,3 +19,7 @@ class StorageError(GroverError):
 
 class ConsistencyError(GroverError):
     """Raised when data integrity is compromised (e.g. phantom metadata)."""
+
+
+class CapabilityNotSupportedError(GroverError):
+    """Raised when a backend doesn't support a requested capability."""

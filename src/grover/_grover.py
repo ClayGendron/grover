@@ -1,4 +1,4 @@
-"""Grover — thin sync wrapper around GroverAsync."""
+"""Grover — thin sync wrapper around GroverAsync with RLock."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING, Any
 
 from grover._grover_async import GroverAsync
 from grover.fs.permissions import Permission
-from grover.fs.types import ReadResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+    from grover.fs.types import ReadResult
     from grover.fs.vfs import VFS
     from grover.graph._graph import Graph
     from grover.ref import Ref
@@ -26,20 +26,14 @@ class Grover:
 
     Presents a mount-first API with a private event loop in a daemon
     thread.  All public methods delegate to ``GroverAsync`` via
-    :meth:`_run`.
+    :meth:`_run`.  Thread-safe via ``RLock``.
 
-    Direct access (outside context manager) — auto-commits per operation::
+    Usage::
 
         g = Grover(embedding_provider=FakeProvider())
         g.mount("/project", LocalFileSystem(workspace_dir="."))
         g.write("/project/hello.py", "print('hi')")
-
-    Batch/transaction mode (inside context manager)::
-
-        with g:
-            g.write("/project/a.py", "a")
-            g.write("/project/b.py", "b")
-            # committed together on clean exit
+        g.close()
     """
 
     def __init__(
@@ -49,6 +43,7 @@ class Grover:
         embedding_provider: Any = None,
     ) -> None:
         self._closed = False
+        self._lock = threading.RLock()
 
         # Private event loop in a daemon thread
         self._loop = asyncio.new_event_loop()
@@ -68,8 +63,9 @@ class Grover:
 
     def _run(self, coro: Any) -> Any:
         """Submit *coro* to the private loop and block for the result."""
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result()
+        with self._lock:
+            future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+            return future.result()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -86,15 +82,6 @@ class Grover:
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=5)
-
-    def __enter__(self) -> Grover:
-        self._run(self._async.__aenter__())
-        return self
-
-    def __exit__(
-        self, exc_type: object, exc_val: object, exc_tb: object
-    ) -> None:
-        self._run(self._async.__aexit__(exc_type, exc_val, exc_tb))  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Mount / Unmount
@@ -154,9 +141,9 @@ class Grover:
         """Replace *old* with *new* in the file at *path*."""
         return self._run(self._async.edit(path, old, new))
 
-    def delete(self, path: str) -> bool:
+    def delete(self, path: str, permanent: bool = False) -> bool:
         """Delete the file at *path*."""
-        return self._run(self._async.delete(path))
+        return self._run(self._async.delete(path, permanent))
 
     def list_dir(self, path: str = "/") -> list[dict[str, Any]]:
         """List entries under *path*."""
@@ -167,27 +154,47 @@ class Grover:
         return self._run(self._async.exists(path))
 
     # ------------------------------------------------------------------
+    # Version / Trash / Reconciliation wrappers (sync)
+    # ------------------------------------------------------------------
+
+    def list_versions(self, path: str) -> Any:
+        return self._run(self._async.list_versions(path))
+
+    def get_version_content(self, path: str, version: int) -> Any:
+        return self._run(self._async.get_version_content(path, version))
+
+    def restore_version(self, path: str, version: int) -> Any:
+        return self._run(self._async.restore_version(path, version))
+
+    def list_trash(self) -> Any:
+        return self._run(self._async.list_trash())
+
+    def restore_from_trash(self, path: str) -> Any:
+        return self._run(self._async.restore_from_trash(path))
+
+    def empty_trash(self) -> Any:
+        return self._run(self._async.empty_trash())
+
+    def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
+        return self._run(self._async.reconcile(mount_path))
+
+    # ------------------------------------------------------------------
     # Graph query wrappers (sync — Graph methods are already sync)
     # ------------------------------------------------------------------
 
     def dependents(self, path: str) -> list[Ref]:
-        """Nodes with edges pointing to *path* (predecessors)."""
         return self._async.dependents(path)
 
     def dependencies(self, path: str) -> list[Ref]:
-        """Nodes that *path* points to (successors)."""
         return self._async.dependencies(path)
 
     def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        """Reverse transitive reachability from *path*."""
         return self._async.impacts(path, max_depth)
 
     def path_between(self, source: str, target: str) -> list[Ref] | None:
-        """Shortest path from *source* to *target*, or ``None``."""
         return self._async.path_between(source, target)
 
     def contains(self, path: str) -> list[Ref]:
-        """Successors connected by "contains" edges."""
         return self._async.contains(path)
 
     # ------------------------------------------------------------------

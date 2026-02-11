@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING, Any
 
 from grover.events import EventBus, EventType, FileEvent
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.exceptions import MountNotFoundError
+from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
-from grover.fs.types import ReadResult
+from grover.fs.types import (
+    DeleteResult,
+    GetVersionContentResult,
+    ListVersionsResult,
+    ReadResult,
+    RestoreResult,
+)
 from grover.fs.vfs import VFS
 from grover.graph._graph import Graph
 from grover.graph.analyzers import AnalyzerRegistry
@@ -46,18 +52,11 @@ class GroverAsync:
         g = GroverAsync(data_dir="/myapp/.grover")
         await g.mount("/data", engine=engine)
 
-    Direct access (outside context manager) — auto-commits per operation::
+    Direct access — auto-commits per operation::
 
         g = GroverAsync()
         await g.mount("/app", backend)
         await g.write("/app/test.py", "print('hi')")
-
-    Batch/transaction mode (inside context manager)::
-
-        async with g:
-            await g.write("/app/a.py", "a")
-            await g.write("/app/b.py", "b")
-            # committed together on clean exit
     """
 
     def __init__(
@@ -67,7 +66,6 @@ class GroverAsync:
         embedding_provider: Any = None,
     ) -> None:
         self._explicit_data_dir = Path(data_dir) if data_dir else None
-        self._in_transaction = False
         self._closed = False
 
         # Core subsystems (sync init)
@@ -106,29 +104,6 @@ class GroverAsync:
         )
 
     # ------------------------------------------------------------------
-    # Context manager (transaction mode)
-    # ------------------------------------------------------------------
-
-    async def __aenter__(self) -> GroverAsync:
-        self._in_transaction = True
-        await self._vfs.begin_transaction()
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        self._in_transaction = False
-
-        if exc_type is None:
-            await self._vfs.commit_transaction()
-            await self._async_save()
-        else:
-            await self._vfs.rollback_transaction()
-
-    # ------------------------------------------------------------------
     # Mount / Unmount
     # ------------------------------------------------------------------
 
@@ -148,13 +123,7 @@ class GroverAsync:
         label: str = "",
         hidden: bool = False,
     ) -> None:
-        """Mount a backend at *path*.
-
-        For database mounts, provide ``engine=`` (preferred) or
-        ``session_factory=`` instead of a backend.  The engine form
-        auto-creates a session factory, detects the dialect, and ensures
-        tables exist.
-        """
+        """Mount a backend at *path*."""
         sf: Callable[..., AsyncSession] | None = None
 
         if engine is not None:
@@ -209,10 +178,9 @@ class GroverAsync:
                 mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
 
             # For local backends, eagerly init DB and expose session_factory
-            # so VFS can manage sessions for all mounts uniformly.
             local_sf: Callable[..., AsyncSession] | None = None
             if isinstance(backend, LocalFileSystem):
-                await backend._ensure_db()
+                await backend.open()
                 local_sf = backend._session_factory
 
             config = MountConfig(
@@ -227,8 +195,9 @@ class GroverAsync:
 
         self._registry.add_mount(config)
 
-        # Enter the backend context
-        await self._vfs.enter_backend(config.backend)
+        # Call open() on the backend
+        if hasattr(config.backend, "open"):
+            await config.backend.open()
 
         # Lazily initialise meta_fs on first non-hidden mount
         if not hidden and self._meta_fs is None:
@@ -248,7 +217,8 @@ class GroverAsync:
             return
 
         backend = mount.backend
-        await self._vfs.exit_backend(backend)
+        if hasattr(backend, "close"):
+            await backend.close()
         self._registry.remove_mount(path)
 
         # Clean graph nodes and search entries with this mount prefix
@@ -269,7 +239,6 @@ class GroverAsync:
 
     async def _init_meta_fs(self, first_backend: Any) -> None:
         """Create the internal /.grover metadata mount."""
-        # Determine data_dir
         if self._explicit_data_dir is not None:
             data_dir = self._explicit_data_dir
         elif isinstance(first_backend, LocalFileSystem):
@@ -284,8 +253,8 @@ class GroverAsync:
             data_dir=data_dir / "_meta",
         )
 
-        # Eagerly init DB so VFS can manage sessions for the meta mount too
-        await self._meta_fs._ensure_db()
+        # Eagerly init DB
+        await self._meta_fs.open()
 
         self._registry.add_mount(
             MountConfig(
@@ -296,7 +265,6 @@ class GroverAsync:
                 hidden=True,
             )
         )
-        await self._vfs.enter_backend(self._meta_fs)
 
         # Create extra tables on the meta engine
         await self._ensure_extra_tables()
@@ -305,7 +273,6 @@ class GroverAsync:
         await self._load_existing_state()
 
     async def _ensure_extra_tables(self) -> None:
-        """Create GroverEdge and Embedding tables on the meta engine."""
         if self._meta_fs is None:
             return
         await self._meta_fs._ensure_db()
@@ -322,7 +289,6 @@ class GroverAsync:
             )
 
     async def _load_existing_state(self) -> None:
-        """Hydrate graph from SQL and search from disk if available."""
         if self._meta_fs is None:
             return
 
@@ -332,7 +298,6 @@ class GroverAsync:
 
         try:
             async with self._vfs._session_for(meta_mount) as session:
-                # Find the first non-hidden mount's backend for file_model
                 file_model = None
                 for mount in self._registry.list_visible_mounts():
                     backend = mount.backend
@@ -343,7 +308,6 @@ class GroverAsync:
         except Exception:
             logger.debug("No existing graph state to load", exc_info=True)
 
-        # Load search index from disk
         if self._search_index is not None and self._meta_data_dir is not None:
             search_dir = self._meta_data_dir / "search"
             meta_file = search_dir / "search_meta.json"
@@ -410,19 +374,15 @@ class GroverAsync:
     async def _analyze_and_integrate(
         self, path: str, content: str
     ) -> dict[str, int]:
-        """Analyze a file and integrate results into graph and search."""
         stats = {"chunks_created": 0, "edges_added": 0}
 
-        # Remove old subgraph and search entries
         if self._graph.has_node(path):
             self._graph.remove_file_subgraph(path)
         if self._search_index is not None:
             self._search_index.remove_file(path)
 
-        # Add file node
         self._graph.add_node(path)
 
-        # Run analyzer
         analysis = self._analyzer_registry.analyze_file(path, content)
 
         if analysis is not None:
@@ -447,13 +407,11 @@ class GroverAsync:
                 )
                 stats["edges_added"] += 1
 
-            # Embed chunks for search
             if self._search_index is not None:
                 embeddable = extract_from_chunks(chunks)
                 if embeddable:
                     self._search_index.add_batch(embeddable)
         else:
-            # Unsupported file type — embed whole file
             if self._search_index is not None:
                 embeddable = extract_from_file(path, content)
                 if embeddable:
@@ -466,26 +424,21 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def read(self, path: str) -> ReadResult:
-        """Read file content at *path*."""
         return await self._vfs.read(path)
 
     async def write(self, path: str, content: str) -> bool:
-        """Write *content* to *path*. Returns ``True`` on success."""
         result = await self._vfs.write(path, content)
         return result.success
 
     async def edit(self, path: str, old: str, new: str) -> bool:
-        """Replace *old* with *new* in the file at *path*."""
         result = await self._vfs.edit(path, old, new)
         return result.success
 
-    async def delete(self, path: str) -> bool:
-        """Delete the file at *path*."""
-        result = await self._vfs.delete(path)
+    async def delete(self, path: str, permanent: bool = False) -> bool:
+        result = await self._vfs.delete(path, permanent)
         return result.success
 
     async def list_dir(self, path: str = "/") -> list[dict[str, Any]]:
-        """List entries under *path*."""
         result = await self._vfs.list_dir(path)
         return [
             {"path": e.path, "name": e.name, "is_directory": e.is_directory}
@@ -493,31 +446,70 @@ class GroverAsync:
         ]
 
     async def exists(self, path: str) -> bool:
-        """Check whether *path* exists."""
         return await self._vfs.exists(path)
+
+    # ------------------------------------------------------------------
+    # Version operations (normalize exceptions to Results)
+    # ------------------------------------------------------------------
+
+    async def list_versions(self, path: str) -> ListVersionsResult:
+        try:
+            return await self._vfs.list_versions(path)
+        except CapabilityNotSupportedError as e:
+            return ListVersionsResult(success=False, versions=[], message=str(e))
+
+    async def get_version_content(self, path: str, version: int) -> GetVersionContentResult:
+        try:
+            return await self._vfs.get_version_content(path, version)
+        except CapabilityNotSupportedError as e:
+            return GetVersionContentResult(success=False, content=None, message=str(e))
+
+    async def restore_version(self, path: str, version: int) -> RestoreResult:
+        try:
+            return await self._vfs.restore_version(path, version)
+        except CapabilityNotSupportedError as e:
+            return RestoreResult(success=False, message=str(e))
+
+    # ------------------------------------------------------------------
+    # Trash operations (normalize exceptions to Results)
+    # ------------------------------------------------------------------
+
+    async def list_trash(self) -> Any:
+        return await self._vfs.list_trash()
+
+    async def restore_from_trash(self, path: str) -> RestoreResult:
+        try:
+            return await self._vfs.restore_from_trash(path)
+        except CapabilityNotSupportedError as e:
+            return RestoreResult(success=False, message=str(e))
+
+    async def empty_trash(self) -> DeleteResult:
+        return await self._vfs.empty_trash()
+
+    # ------------------------------------------------------------------
+    # Reconciliation
+    # ------------------------------------------------------------------
+
+    async def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
+        return await self._vfs.reconcile(mount_path)
 
     # ------------------------------------------------------------------
     # Graph query wrappers (sync — Graph methods are already sync)
     # ------------------------------------------------------------------
 
     def dependents(self, path: str) -> list[Ref]:
-        """Nodes with edges pointing to *path* (predecessors)."""
         return self._graph.dependents(path)
 
     def dependencies(self, path: str) -> list[Ref]:
-        """Nodes that *path* points to (successors)."""
         return self._graph.dependencies(path)
 
     def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        """Reverse transitive reachability from *path*."""
         return self._graph.impacts(path, max_depth)
 
     def path_between(self, source: str, target: str) -> list[Ref] | None:
-        """Shortest path from *source* to *target*, or ``None``."""
         return self._graph.path_between(source, target)
 
     def contains(self, path: str) -> list[Ref]:
-        """Successors connected by "contains" edges."""
         return self._graph.contains(path)
 
     # ------------------------------------------------------------------
@@ -525,7 +517,6 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def search(self, query: str, k: int = 10) -> list[SearchResult]:
-        """Semantic search over indexed content."""
         if self._search_index is None:
             msg = (
                 "Search is not available: no embedding provider configured. "
@@ -539,10 +530,6 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def index(self, mount_path: str | None = None) -> dict[str, int]:
-        """Walk the filesystem, analyze all files, build graph + search.
-
-        If *mount_path* is given, only that mount is walked.
-        """
         stats = {"files_scanned": 0, "chunks_created": 0, "edges_added": 0}
 
         if mount_path is not None:
@@ -578,12 +565,10 @@ class GroverAsync:
                 stats["edges_added"] += file_stats["edges_added"]
 
     async def _read_file_content(self, path: str) -> str | None:
-        """Read raw file content, trying VFS first then direct backend."""
         read_result = await self._vfs.read(path)
         if read_result.success:
             return read_result.content
 
-        # File may exist on disk but not in the DB — read directly
         try:
             mount, rel_path = self._registry.resolve(path)
         except MountNotFoundError:
@@ -591,7 +576,6 @@ class GroverAsync:
 
         backend = mount.backend
         if hasattr(backend, "_read_content"):
-            # For mounts with a session factory, get a VFS-managed session
             if mount.has_session_factory:
                 async with self._vfs._session_for(mount) as sess:
                     content: str | None = await backend._read_content(rel_path, sess)  # type: ignore[union-attr]
@@ -602,18 +586,15 @@ class GroverAsync:
         return None
 
     async def save(self) -> None:
-        """Persist graph and search index."""
         await self._async_save()
 
     async def _async_save(self) -> None:
-        # Save graph to SQL
         if self._meta_fs is not None:
             meta_mount = self._registry._mounts.get("/.grover")
             if meta_mount is not None:
                 async with self._vfs._session_for(meta_mount) as session:
                     await self._graph.to_sql(session)
 
-        # Save search index to disk
         if self._search_index is not None and self._meta_data_dir is not None:
             search_dir = self._meta_data_dir / "search"
             self._search_index.save(str(search_dir))
@@ -623,20 +604,12 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        """Shut down subsystems."""
         if self._closed:
             return
         self._closed = True
 
         await self._async_save()
-        # Exit all backends
-        for backend in list(self._vfs._entered_backends):
-            if hasattr(backend, "__aexit__"):
-                try:
-                    await backend.__aexit__(None, None, None)
-                except Exception:
-                    logger.warning("Backend exit failed", exc_info=True)
-        self._vfs._entered_backends.clear()
+        await self._vfs.close()
 
     # ------------------------------------------------------------------
     # Properties
@@ -644,10 +617,8 @@ class GroverAsync:
 
     @property
     def graph(self) -> Graph:
-        """The knowledge graph."""
         return self._graph
 
     @property
     def fs(self) -> VFS:
-        """The underlying ``VFS``."""
         return self._vfs

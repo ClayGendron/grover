@@ -12,33 +12,43 @@ graph TD
         UFS_route["resolve path → mount + rel_path"]
         UFS_session["_session_for(mount)"]
         UFS_emit["_emit(FileEvent)"]
+        UFS_cap["_get_capability(backend, protocol)"]
     end
 
     subgraph Mounts
         MR["MountRegistry"]
         MC_proj["MountConfig /project"]
         MC_grover["MountConfig /.grover"]
-        MC_sf["session_factory (all mounts)"]
+        MC_sf["session_factory (SQL mounts)"]
         Perm["Permission (RW / RO)"]
+    end
+
+    subgraph Services
+        Meta["MetadataService"]
+        Ver["VersioningService"]
+        Dir["DirectoryService"]
+        Trash["TrashService"]
+    end
+
+    subgraph Operations
+        Ops["operations.py"]
+        Ops_write["write_file()"]
+        Ops_edit["edit_file()"]
+        Ops_delete["delete_file()"]
+        Ops_move["move_file()"]
+        Ops_copy["copy_file()"]
     end
 
     subgraph Backends
         Proto["StorageBackend (Protocol)"]
-
-        subgraph BaseFileSystem
-            BFS["BaseFileSystem (ABC)"]
-            BFS_crud["read / write / edit / delete"]
-            BFS_query["exists / get_info"]
-            BFS_dir["mkdir / list_dir / move / copy"]
-            BFS_ver["_save_version / list_versions / get_version_content / restore_version"]
-            BFS_trash["list_trash / restore_from_trash / empty_trash"]
-        end
+        CapVer["SupportsVersions (Protocol)"]
+        CapTrash["SupportsTrash (Protocol)"]
+        CapRecon["SupportsReconcile (Protocol)"]
 
         subgraph LocalFileSystem
             LFS["LocalFileSystem"]
             LFS_disk["_resolve_path → disk I/O"]
-            LFS_db["SQLite at ~/.grover/{slug}/"]
-            LFS_override["overrides: read, delete, list_dir, mkdir, restore_from_trash"]
+            LFS_db["SQLite at data_dir/"]
             LFS_session["session injected by VFS"]
         end
 
@@ -56,8 +66,8 @@ graph TD
 
     subgraph Support
         Dialect["dialect.py (upsert_file)"]
-        Utils["utils.py (normalize_path, validate_path, split_path, replace, is_text_file, is_binary_file, format_read_output)"]
-        Types["types.py (ReadResult, WriteResult, EditResult, DeleteResult, ...)"]
+        Utils["utils.py (normalize_path, validate_path, ...)"]
+        Types["types.py (ReadResult, WriteResult, ...)"]
         EB["EventBus"]
     end
 
@@ -65,44 +75,84 @@ graph TD
     UFS --> UFS_perm --> Perm
     UFS --> UFS_route --> MR
     UFS --> UFS_session
+    UFS --> UFS_cap
     MR --> MC_proj
     MR --> MC_grover
 
-    %% Local mode: both mounts point to LocalFileSystem instances
     MC_proj -->|"local mode"| LFS
     MC_grover -->|"local mode"| LFS
-
-    %% Database mode: mount points to DatabaseFileSystem instead
     MC_proj -->|"database mode (engine=)"| DFS
     MC_proj --> MC_sf
 
-    UFS_session -->|"all mounts"| MC_sf
+    UFS_session -->|"SQL mounts"| MC_sf
 
     UFS --> UFS_emit --> EB
 
-    LFS -->|inherits| BFS
-    DFS -->|inherits| BFS
     LFS -.implements.-> Proto
+    LFS -.implements.-> CapVer
+    LFS -.implements.-> CapTrash
+    LFS -.implements.-> CapRecon
     DFS -.implements.-> Proto
+    DFS -.implements.-> CapVer
+    DFS -.implements.-> CapTrash
 
-    BFS --> BFS_crud
-    BFS --> BFS_query
-    BFS --> BFS_dir
-    BFS --> BFS_ver
-    BFS --> BFS_trash
-    BFS_crud --> Utils
-    BFS_crud --> Types
-    BFS_ver --> GF
-    BFS_ver --> FV
-    BFS_dir --> Dialect
+    LFS -->|composes| Meta
+    LFS -->|composes| Ver
+    LFS -->|composes| Dir
+    LFS -->|composes| Trash
+    DFS -->|composes| Meta
+    DFS -->|composes| Ver
+    DFS -->|composes| Dir
+    DFS -->|composes| Trash
 
-    LFS --> LFS_disk
-    LFS --> LFS_db
-    LFS --> LFS_override
-    LFS --> LFS_session
+    LFS -->|delegates to| Ops
+    DFS -->|delegates to| Ops
+
+    Ops --> Ops_write
+    Ops --> Ops_edit
+    Ops --> Ops_delete
+    Ops --> Ops_move
+    Ops --> Ops_copy
+    Ops --> Utils
+    Ops --> Types
+
+    Meta --> GF
+    Ver --> FV
+    Dir --> Dialect
 ```
 
+**No base class.** Both `LocalFileSystem` and `DatabaseFileSystem` implement the `StorageBackend` protocol directly, composing shared services (`MetadataService`, `VersioningService`, `DirectoryService`, `TrashService`) and delegating to standalone orchestration functions in `operations.py`.
+
 **DB mounts** are created via `engine=` or `session_factory=` on `GroverAsync.mount()`. The engine form auto-creates a session factory, detects the SQL dialect, and ensures tables exist. This produces a stateless `DatabaseFileSystem` instance (immutable config only — dialect, file model, schema) paired with a `session_factory` stored on `MountConfig`. VFS creates sessions from the factory per-operation and passes them to DFS via `session=`.
+
+## Capability Protocols
+
+Backends implement the core `StorageBackend` protocol plus optional capability protocols:
+
+```
+StorageBackend (core — 11 methods)
+    session: AsyncSession | None = None on all methods
+├── SupportsVersions (opt-in — 3 methods)
+│     list_versions, get_version_content, restore_version
+├── SupportsTrash (opt-in — 3 methods)
+│     list_trash, restore_from_trash, empty_trash
+└── SupportsReconcile (opt-in — 1 method)
+      reconcile
+```
+
+VFS uses `isinstance(backend, protocol)` to check capabilities at runtime. Behavior for unsupported capabilities:
+
+| VFS Method | Capability | Unsupported Behavior |
+|-----------|-----------|---------------------|
+| `list_versions(path)` | `SupportsVersions` | Raise `CapabilityNotSupportedError` |
+| `get_version_content(path, ver)` | `SupportsVersions` | Raise `CapabilityNotSupportedError` |
+| `restore_version(path, ver)` | `SupportsVersions` | Raise `CapabilityNotSupportedError` |
+| `list_trash()` | `SupportsTrash` | Skip mount silently (aggregation) |
+| `restore_from_trash(path)` | `SupportsTrash` | Raise `CapabilityNotSupportedError` |
+| `empty_trash()` | `SupportsTrash` | Skip mount silently (aggregation) |
+| `delete(permanent=False)` | No `SupportsTrash` | `DeleteResult(success=False)` |
+
+`GroverAsync` catches `CapabilityNotSupportedError` and returns `Result(success=False)` — the agent loop always gets Results, never unhandled exceptions.
 
 ## Request Flow: `write("/project/hello.py", content)` — Local Mount
 
@@ -114,7 +164,7 @@ sequenceDiagram
     participant P as Permission
     participant EB as EventBus
     participant LFS as LocalFileSystem
-    participant BFS as BaseFileSystem
+    participant Ops as operations.py
     participant DB as SQLite
     participant Disk as Disk I/O
 
@@ -128,24 +178,26 @@ sequenceDiagram
     UFS->>UFS: _session_for(mount) → creates session from mount.session_factory
     UFS->>LFS: write("/hello.py", content, session=session)
 
-    Note over BFS: validate_path + normalize_path (NFC)
-    Note over BFS: is_text_file check
+    LFS->>Ops: write_file(path, content, session, metadata=, versioning=, ...)
 
-    BFS->>DB: SELECT existing file
+    Note over Ops: validate_path + normalize_path (NFC)
+    Note over Ops: is_text_file check
+
+    Ops->>DB: metadata.get_file() → SELECT existing file
     alt new file
-        BFS->>DB: _ensure_parent_dirs (upsert, sets parent_path)
-        BFS->>DB: INSERT File (with parent_path)
-        BFS->>DB: INSERT FileVersion (snapshot)
+        Ops->>DB: directories.ensure_parent_dirs (upsert, sets parent_path)
+        Ops->>DB: INSERT File (with parent_path)
+        Ops->>DB: versioning.save_version (snapshot)
     else existing file
-        BFS->>DB: UPDATE File (version++)
-        BFS->>LFS: _read_content (old content)
+        Ops->>DB: UPDATE File (version++)
+        Ops->>LFS: read_content (old content)
         LFS->>Disk: read old bytes
-        BFS->>DB: INSERT FileVersion (diff or snapshot)
+        Ops->>DB: versioning.save_version (diff or snapshot)
     end
 
-    BFS->>LFS: _write_content("/hello.py", content, session)
+    Ops->>LFS: write_content("/hello.py", content, session)
     LFS->>Disk: atomic write (tmpfile + rename)
-    BFS->>DB: session.flush()
+    Ops->>DB: session.flush()
 
     LFS-->>UFS: WriteResult(success=True)
 
@@ -167,7 +219,7 @@ sequenceDiagram
     participant P as Permission
     participant EB as EventBus
     participant DFS as DatabaseFileSystem
-    participant BFS as BaseFileSystem
+    participant Ops as operations.py
     participant DB as External DB
 
     C->>UFS: write("/data/hello.py", content)
@@ -180,22 +232,24 @@ sequenceDiagram
     UFS->>UFS: _session_for(mount) → creates session from mount.session_factory
     UFS->>DFS: write("/hello.py", content, session=session)
 
-    Note over BFS: validate_path + normalize_path (NFC)
-    Note over BFS: is_text_file check
+    DFS->>Ops: write_file(path, content, session, metadata=, versioning=, ...)
 
-    BFS->>DB: SELECT existing file
+    Note over Ops: validate_path + normalize_path (NFC)
+    Note over Ops: is_text_file check
+
+    Ops->>DB: metadata.get_file() → SELECT existing file
     alt new file
-        BFS->>DB: _ensure_parent_dirs (upsert)
-        BFS->>DB: INSERT File
-        BFS->>DB: INSERT FileVersion (snapshot)
+        Ops->>DB: directories.ensure_parent_dirs (upsert)
+        Ops->>DB: INSERT File
+        Ops->>DB: versioning.save_version (snapshot)
     else existing file
-        BFS->>DB: UPDATE File (version++)
-        BFS->>DFS: _read_content (old content from DB)
-        BFS->>DB: INSERT FileVersion (diff or snapshot)
+        Ops->>DB: UPDATE File (version++)
+        Ops->>DFS: read_content (old content from DB)
+        Ops->>DB: versioning.save_version (diff or snapshot)
     end
 
-    BFS->>DFS: _write_content → UPDATE File.content
-    BFS->>DB: session.flush()
+    Ops->>DFS: write_content → UPDATE File.content
+    Ops->>DB: session.flush()
 
     DFS-->>UFS: WriteResult(success=True)
 
@@ -209,7 +263,7 @@ sequenceDiagram
 
 ## Session Lifecycle
 
-Sessions are managed by VFS and injected into backends.
+Sessions are managed by VFS and injected into backends. Every operation creates, uses, commits, and closes its own session.
 
 ```mermaid
 sequenceDiagram
@@ -221,42 +275,32 @@ sequenceDiagram
     Caller->>UFS: write(path, content)
     UFS->>UFS: resolve path → mount
 
-    Note over UFS: All mounts have session_factory set
-    UFS->>MC: session_factory() → new session
-    UFS->>Backend: write(path, content, session=session)
-    Note over Backend: Backend uses injected session
-    Backend->>Backend: do work → _write_content → session.flush()
+    alt SQL mount (has session_factory)
+        UFS->>MC: session_factory() → new session
+        UFS->>Backend: write(path, content, session=session)
+        Note over Backend: Backend uses injected session
+        Backend->>Backend: do work → services + operations → session.flush()
+        Backend-->>UFS: WriteResult
+        UFS->>UFS: session.commit() (on _session_for exit)
+    else Non-SQL mount (no session_factory)
+        UFS->>Backend: write(path, content, session=None)
+        Backend-->>UFS: WriteResult
+    end
 
-    Backend-->>UFS: WriteResult
-    UFS->>UFS: session.commit() (on _session_for exit)
     UFS-->>Caller: WriteResult
 ```
 
-### Transaction Mode
+Non-SQL backends receive `session=None` and handle storage independently. SQL backends **fail fast** if session is None.
 
-In transaction mode (`async with grover:`), VFS reuses sessions per mount across operations for all mount types (local and DB). The commit happens on context-manager exit rather than after each operation.
+## Explicit Lifecycle (`open` / `close`)
 
-```mermaid
-sequenceDiagram
-    participant App
-    participant UFS as VFS
-    participant Backend as Backend (LFS / DFS)
+Backends define `open()` and `close()` methods instead of context managers:
 
-    App->>UFS: begin_transaction()
+- `open()` — Called at mount time. LocalFS initializes its SQLite engine. DFS is a no-op.
+- `close()` — Called on unmount/shutdown. LocalFS disposes its SQLite engine. DFS is a no-op.
+- VFS `close()` calls `backend.close()` on all mounts.
 
-    App->>UFS: write("/mount/a.py", content)
-    UFS->>UFS: _session_for(mount) → reuse txn session
-    UFS->>Backend: write(path, content, session=txn_session)
-    Backend->>Backend: flush (not commit)
-
-    App->>UFS: write("/mount/b.py", content)
-    UFS->>UFS: _session_for(mount) → same txn session
-    UFS->>Backend: write(path, content, session=txn_session)
-    Backend->>Backend: flush (not commit)
-
-    App->>UFS: commit_transaction()
-    UFS->>UFS: txn_session.commit() + close()
-```
+There are no `__aenter__`/`__aexit__` methods on VFS, GroverAsync, or Grover.
 
 ## DB Mount Setup: `engine=` API
 
@@ -284,31 +328,31 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant C as Caller
-    participant BFS as BaseFileSystem
-    participant DB as SQLite
+    participant Ops as operations.py / TrashService
+    participant DB as Database
 
     rect rgb(255, 245, 238)
         Note over C,DB: Soft-delete directory
-        C->>BFS: delete("/mydir")
-        BFS->>DB: SELECT File WHERE path = "/mydir"
-        BFS->>DB: SELECT children WHERE path LIKE "/mydir/%"
+        C->>Ops: delete("/mydir")
+        Ops->>DB: SELECT File WHERE path = "/mydir"
+        Ops->>DB: SELECT children WHERE path LIKE "/mydir/%"
         loop each child
-            BFS->>DB: SET child.original_path, child.path = trash, child.deleted_at = now
+            Ops->>DB: SET child.original_path, child.path = trash, child.deleted_at = now
         end
-        BFS->>DB: SET dir.original_path, dir.path = trash, dir.deleted_at = now
-        BFS->>DB: COMMIT
+        Ops->>DB: SET dir.original_path, dir.path = trash, dir.deleted_at = now
+        Ops->>DB: session.flush()
     end
 
     rect rgb(240, 255, 240)
         Note over C,DB: Restore directory
-        C->>BFS: restore_from_trash("/mydir")
-        BFS->>DB: SELECT File WHERE original_path = "/mydir" AND deleted_at IS NOT NULL
-        BFS->>DB: Restore dir: path = original_path, clear deleted_at
-        BFS->>DB: SELECT children WHERE original_path LIKE "/mydir/%" AND deleted_at IS NOT NULL
+        C->>Ops: restore_from_trash("/mydir")
+        Ops->>DB: SELECT File WHERE original_path = "/mydir" AND deleted_at IS NOT NULL
+        Ops->>DB: Restore dir: path = original_path, clear deleted_at
+        Ops->>DB: SELECT children WHERE original_path LIKE "/mydir/%" AND deleted_at IS NOT NULL
         loop each child
-            BFS->>DB: Restore child: path = original_path, clear deleted_at
+            Ops->>DB: Restore child: path = original_path, clear deleted_at
         end
-        BFS->>DB: COMMIT
+        Ops->>DB: session.flush()
     end
 ```
 
@@ -338,6 +382,24 @@ graph LR
 ```
 
 Snapshots are stored every 20 versions (`SNAPSHOT_INTERVAL = 20`) and always for version 1. A `UniqueConstraint("file_id", "version")` prevents duplicate version records. Content integrity is verified via SHA-256 hash on reconstruction.
+
+## Composition Stack
+
+```
+Services (stateful, hold model refs, receive session per-call):
+  metadata.py    — MetadataService (get_file, exists, get_info, file_to_info)
+  versioning.py  — VersioningService (save_version, delete_versions, list_versions, get_version_content)
+  directories.py — DirectoryService (ensure_parent_dirs, mkdir)
+  trash.py       — TrashService (list_trash, restore_from_trash, empty_trash)
+
+Orchestration (stateless functions):
+  operations.py  — write_file(), edit_file(), delete_file(), move_file(), copy_file(), list_dir_db()
+                   Takes services + content callbacks as parameters.
+
+Concrete Backends (no base class, implement protocol directly):
+  LocalFileSystem    — composes all services + operations, owns disk I/O
+  DatabaseFileSystem — composes all services + operations, content in DB
+```
 
 ## Mount Resolution
 

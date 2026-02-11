@@ -1,7 +1,8 @@
-"""Filesystem layer — storage backends, mounts, permissions."""
+"""Filesystem layer — storage backends, mounts, permissions, capabilities."""
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import (
+    CapabilityNotSupportedError,
     ConsistencyError,
     GroverError,
     MountNotFoundError,
@@ -11,12 +12,19 @@ from grover.fs.exceptions import (
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
-from grover.fs.protocol import StorageBackend
+from grover.fs.protocol import (
+    StorageBackend,
+    SupportsReconcile,
+    SupportsTrash,
+    SupportsVersions,
+)
 from grover.fs.types import (
     DeleteResult,
     EditResult,
     FileInfo,
+    GetVersionContentResult,
     ListResult,
+    ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
@@ -29,13 +37,16 @@ from grover.fs.vfs import VFS
 
 __all__ = [
     "VFS",
+    "CapabilityNotSupportedError",
     "ConsistencyError",
     "DatabaseFileSystem",
     "DeleteResult",
     "EditResult",
     "FileInfo",
+    "GetVersionContentResult",
     "GroverError",
     "ListResult",
+    "ListVersionsResult",
     "LocalFileSystem",
     "MkdirResult",
     "MountConfig",
@@ -48,6 +59,9 @@ __all__ = [
     "RestoreResult",
     "StorageBackend",
     "StorageError",
+    "SupportsReconcile",
+    "SupportsTrash",
+    "SupportsVersions",
     "VersionInfo",
     "WriteResult",
     "format_read_output",

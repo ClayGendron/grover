@@ -1,26 +1,28 @@
-"""VFS — mount router with routing, permissions, events."""
+"""VFS — mount router with routing, permissions, events, capabilities."""
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import replace as dc_replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover.events import EventBus, EventType, FileEvent
 
-from .exceptions import MountNotFoundError
+from .exceptions import CapabilityNotSupportedError, MountNotFoundError
 from .permissions import Permission
+from .protocol import SupportsReconcile, SupportsTrash, SupportsVersions
 from .types import (
     DeleteResult,
     EditResult,
     FileInfo,
+    GetVersionContentResult,
     ListResult,
+    ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    VersionInfo,
     WriteResult,
 )
 from .utils import normalize_path
@@ -34,17 +36,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 
 class VFS:
     """Routes operations to backends via mount registry.
 
     Presents a single namespace to callers while delegating to the
-    appropriate backend based on the path prefix. Enforces permissions
-    and handles cross-mount copy/move.
+    appropriate backend based on the path prefix. Enforces permissions,
+    handles cross-mount copy/move, and provides capability gating.
 
-    For database mounts the VFS manages session lifecycle via
-    ``_session_for()``: per-operation sessions in normal mode,
-    reused sessions in transaction mode.
+    Session lifecycle is per-operation only.  No transaction mode.
     """
 
     def __init__(
@@ -52,49 +54,36 @@ class VFS:
     ) -> None:
         self._registry = registry
         self._event_bus = event_bus
-        self._entered_backends: list[Any] = []
 
-        # Transaction state for DB mounts
-        self._in_transaction: bool = False
-        self._txn_sessions: dict[str, AsyncSession] = {}  # mount_path → session
+    # ------------------------------------------------------------------
+    # Capability discovery
+    # ------------------------------------------------------------------
 
-    async def enter_backend(self, backend: Any) -> None:
-        """Enter a backend's context manager and track it."""
-        if hasattr(backend, "__aenter__"):
-            await backend.__aenter__()
-            self._entered_backends.append(backend)
+    def _get_capability(self, backend: Any, protocol: type[T]) -> T | None:
+        if isinstance(backend, protocol):
+            return backend
+        return None
 
-    async def exit_backend(self, backend: Any) -> None:
-        """Exit a backend's context manager and stop tracking it."""
-        if backend in self._entered_backends:
-            if hasattr(backend, "__aexit__"):
-                await backend.__aexit__(None, None, None)
-            self._entered_backends.remove(backend)
+    # ------------------------------------------------------------------
+    # Events
+    # ------------------------------------------------------------------
 
     async def _emit(self, event: FileEvent) -> None:
         if self._event_bus is not None:
             await self._event_bus.emit(event)
 
-    # =========================================================================
-    # Session Management
-    # =========================================================================
+    # ------------------------------------------------------------------
+    # Session Management (per-operation only)
+    # ------------------------------------------------------------------
 
     @asynccontextmanager
-    async def _session_for(self, mount: MountConfig) -> AsyncGenerator[AsyncSession]:
-        """Yield a session for the given mount."""
-        assert mount.has_session_factory, (
-            f"Mount {mount.mount_path!r} has no session_factory"
-        )
-        assert mount.session_factory is not None  # for type narrowing
-
-        # Transaction mode: reuse session per mount
-        if self._in_transaction:
-            if mount.mount_path not in self._txn_sessions:
-                self._txn_sessions[mount.mount_path] = mount.session_factory()
-            yield self._txn_sessions[mount.mount_path]
+    async def _session_for(self, mount: MountConfig) -> AsyncGenerator[AsyncSession | None]:
+        """Yield a session for the given mount, or None for non-SQL."""
+        if not mount.has_session_factory:
+            yield None
             return
 
-        # Per-operation: create, commit, close
+        assert mount.session_factory is not None
         session = mount.session_factory()
         try:
             yield session
@@ -105,79 +94,22 @@ class VFS:
         finally:
             await session.close()
 
-    # =========================================================================
-    # Transaction Lifecycle
-    # =========================================================================
-
-    async def begin_transaction(self) -> None:
-        """Enter transaction mode — DB sessions are reused per mount."""
-        self._in_transaction = True
-
-    async def commit_transaction(self) -> None:
-        """Commit all open transaction sessions and exit transaction mode."""
-        for session in self._txn_sessions.values():
-            await session.commit()
-        await self._close_txn_sessions()
-        self._in_transaction = False
-
-    async def rollback_transaction(self) -> None:
-        """Roll back all open transaction sessions and exit transaction mode."""
-        for session in self._txn_sessions.values():
-            try:
-                await session.rollback()
-            except Exception:
-                logger.warning("Rollback failed for mount session", exc_info=True)
-        await self._close_txn_sessions()
-        self._in_transaction = False
-
-    async def _close_txn_sessions(self) -> None:
-        """Close and discard all transaction sessions."""
-        for session in self._txn_sessions.values():
-            try:
-                await session.close()
-            except Exception:
-                logger.warning("Session close failed", exc_info=True)
-        self._txn_sessions.clear()
-
-    # =========================================================================
-    # Context Manager
-    # =========================================================================
-
-    async def __aenter__(self) -> VFS:
-        for mount in self._registry.list_mounts():
-            backend = mount.backend
-            if hasattr(backend, "__aenter__"):
-                await backend.__aenter__()
-                self._entered_backends.append(backend)
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: object,
-        exc_val: object,
-        exc_tb: object,
-    ) -> None:
-        errors: list[Exception] = []
-        for backend in reversed(self._entered_backends):
-            if hasattr(backend, "__aexit__"):
-                try:
-                    await backend.__aexit__(exc_type, exc_val, exc_tb)
-                except Exception as e:
-                    errors.append(e)
-        self._entered_backends.clear()
-        if errors and exc_type is None:
-            raise errors[0]
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        """Close all entered backends."""
-        for backend in reversed(self._entered_backends):
-            if hasattr(backend, "close"):
-                await backend.close()
-        self._entered_backends.clear()
+        """Close all backends."""
+        for mount in self._registry.list_mounts():
+            if hasattr(mount.backend, "close"):
+                try:
+                    await mount.backend.close()
+                except Exception:
+                    logger.warning("Backend close failed for %s", mount.mount_path, exc_info=True)
 
-    # =========================================================================
+    # ------------------------------------------------------------------
     # Path Helpers
-    # =========================================================================
+    # ------------------------------------------------------------------
 
     def _prefix_path(self, path: str | None, mount_path: str) -> str | None:
         if path is None:
@@ -200,23 +132,21 @@ class VFS:
         if perm == Permission.READ_ONLY:
             raise PermissionError(f"Cannot write to read-only path: {virtual_path}")
 
-    # =========================================================================
+    # ------------------------------------------------------------------
     # Read Operations
-    # =========================================================================
+    # ------------------------------------------------------------------
 
     async def read(
         self, path: str, offset: int = 0, limit: int = 2000,
     ) -> ReadResult:
-        """Read file content with pagination."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.read(rel_path, offset, limit, session=sess)  # type: ignore[call-arg]
+            result = await mount.backend.read(rel_path, offset, limit, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         return result
 
     async def list_dir(self, path: str = "/") -> ListResult:
-        """List directory entries."""
         path = normalize_path(path)
 
         if path == "/":
@@ -224,7 +154,7 @@ class VFS:
 
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.list_dir(rel_path, session=sess)  # type: ignore[call-arg]
+            result = await mount.backend.list_dir(rel_path, session=sess)
 
         result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [
@@ -254,7 +184,6 @@ class VFS:
         )
 
     async def exists(self, path: str) -> bool:
-        """Check whether a path exists in any mount."""
         path = normalize_path(path)
 
         if path == "/":
@@ -269,10 +198,9 @@ class VFS:
             return False
 
         async with self._session_for(mount) as sess:
-            return await mount.backend.exists(rel_path, session=sess)  # type: ignore[call-arg]
+            return await mount.backend.exists(rel_path, session=sess)
 
     async def get_info(self, path: str) -> FileInfo | None:
-        """Get file metadata, or ``None`` if not found."""
         path = normalize_path(path)
 
         if self._registry.has_mount(path):
@@ -293,13 +221,12 @@ class VFS:
             return None
 
         async with self._session_for(mount) as sess:
-            info = await mount.backend.get_info(rel_path, session=sess)  # type: ignore[call-arg]
+            info = await mount.backend.get_info(rel_path, session=sess)
         if info is not None:
             info = self._prefix_file_info(info, mount)
         return info
 
     def get_permission_info(self, path: str) -> tuple[str, bool]:
-        """Get permission and whether it's an explicit override."""
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
 
@@ -310,9 +237,9 @@ class VFS:
 
         return permission.value, is_override
 
-    # =========================================================================
+    # ------------------------------------------------------------------
     # Write Operations (permission-checked)
-    # =========================================================================
+    # ------------------------------------------------------------------
 
     async def write(
         self,
@@ -322,7 +249,6 @@ class VFS:
         *,
         overwrite: bool = True,
     ) -> WriteResult:
-        """Write content to a file."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -332,7 +258,7 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
             result = await mount.backend.write(
-                rel_path, content, created_by, overwrite=overwrite, session=sess  # type: ignore[call-arg]
+                rel_path, content, created_by, overwrite=overwrite, session=sess
             )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -349,7 +275,6 @@ class VFS:
         replace_all: bool = False,
         created_by: str = "agent",
     ) -> EditResult:
-        """Apply a string replacement to a file."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -359,7 +284,7 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
             result = await mount.backend.edit(
-                rel_path, old_string, new_string, replace_all, created_by, session=sess  # type: ignore[call-arg]
+                rel_path, old_string, new_string, replace_all, created_by, session=sess
             )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -371,7 +296,6 @@ class VFS:
     async def delete(
         self, path: str, permanent: bool = False,
     ) -> DeleteResult:
-        """Delete a file or directory."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -379,8 +303,17 @@ class VFS:
             return DeleteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
+
+        # If backend doesn't support trash and permanent=False, explicit failure
+        if not permanent and not self._get_capability(mount.backend, SupportsTrash):
+            return DeleteResult(
+                success=False,
+                message="Trash not supported on this mount. "
+                "Use permanent=True to delete permanently.",
+            )
+
         async with self._session_for(mount) as sess:
-            result = await mount.backend.delete(rel_path, permanent, session=sess)  # type: ignore[call-arg]
+            result = await mount.backend.delete(rel_path, permanent, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -391,7 +324,6 @@ class VFS:
     async def mkdir(
         self, path: str, parents: bool = True,
     ) -> MkdirResult:
-        """Create a directory."""
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -400,7 +332,7 @@ class VFS:
 
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.mkdir(rel_path, parents, session=sess)  # type: ignore[call-arg]
+            result = await mount.backend.mkdir(rel_path, parents, session=sess)
         result.path = self._prefix_path(result.path, mount.mount_path)
         result.created_dirs = [
             self._prefix_path(d, mount.mount_path) or d for d in result.created_dirs
@@ -410,7 +342,6 @@ class VFS:
     async def move(
         self, src: str, dest: str,
     ) -> MoveResult:
-        """Move a file within or across mounts."""
         src = normalize_path(src)
         dest = normalize_path(dest)
 
@@ -425,7 +356,7 @@ class VFS:
 
         if src_mount is dest_mount:
             async with self._session_for(src_mount) as sess:
-                result = await src_mount.backend.move(src_rel, dest_rel, session=sess)  # type: ignore[call-arg]
+                result = await src_mount.backend.move(src_rel, dest_rel, session=sess)
             result.old_path = self._prefix_path(result.old_path, src_mount.mount_path)
             result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
             if result.success:
@@ -436,7 +367,7 @@ class VFS:
 
         # Cross-mount move: read → write → delete
         async with self._session_for(src_mount) as src_sess:
-            read_result = await src_mount.backend.read(src_rel, session=src_sess)  # type: ignore[call-arg]
+            read_result = await src_mount.backend.read(src_rel, session=src_sess)
         if not read_result.success:
             return MoveResult(
                 success=False,
@@ -451,7 +382,7 @@ class VFS:
 
         async with self._session_for(dest_mount) as dest_sess:
             write_result = await dest_mount.backend.write(
-                dest_rel, read_result.content, session=dest_sess  # type: ignore[call-arg]
+                dest_rel, read_result.content, session=dest_sess
             )
         if not write_result.success:
             return MoveResult(
@@ -461,7 +392,7 @@ class VFS:
 
         async with self._session_for(src_mount) as src_sess:
             delete_result = await src_mount.backend.delete(
-                src_rel, permanent=False, session=src_sess  # type: ignore[call-arg]
+                src_rel, permanent=False, session=src_sess
             )
         if not delete_result.success:
             return MoveResult(
@@ -482,7 +413,6 @@ class VFS:
     async def copy(
         self, src: str, dest: str,
     ) -> WriteResult:
-        """Copy a file within or across mounts."""
         src = normalize_path(src)
         dest = normalize_path(dest)
 
@@ -496,7 +426,7 @@ class VFS:
 
         if src_mount is dest_mount:
             async with self._session_for(src_mount) as sess:
-                result = await src_mount.backend.copy(src_rel, dest_rel, session=sess)  # type: ignore[call-arg]
+                result = await src_mount.backend.copy(src_rel, dest_rel, session=sess)
             result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
             if result.success:
                 await self._emit(
@@ -506,7 +436,7 @@ class VFS:
 
         # Cross-mount copy: read → write
         async with self._session_for(src_mount) as src_sess:
-            read_result = await src_mount.backend.read(src_rel, session=src_sess)  # type: ignore[call-arg]
+            read_result = await src_mount.backend.read(src_rel, session=src_sess)
         if not read_result.success:
             return WriteResult(
                 success=False,
@@ -521,7 +451,7 @@ class VFS:
 
         async with self._session_for(dest_mount) as dest_sess:
             result = await dest_mount.backend.write(
-                dest_rel, read_result.content, session=dest_sess  # type: ignore[call-arg]
+                dest_rel, read_result.content, session=dest_sess
             )
         result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
         if result.success:
@@ -530,23 +460,22 @@ class VFS:
             )
         return result
 
-    # =========================================================================
-    # Version & Trash Operations
-    # =========================================================================
+    # ------------------------------------------------------------------
+    # Version Operations (capability-gated)
+    # ------------------------------------------------------------------
 
-    async def list_versions(
-        self, path: str,
-    ) -> list[VersionInfo]:
-        """List version history for a file."""
+    async def list_versions(self, path: str) -> ListVersionsResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
+        cap = self._get_capability(mount.backend, SupportsVersions)
+        if cap is None:
+            raise CapabilityNotSupportedError(
+                f"Mount at {mount.mount_path} does not support versioning"
+            )
         async with self._session_for(mount) as sess:
-            return await mount.backend.list_versions(rel_path, session=sess)  # type: ignore[call-arg]
+            return await cap.list_versions(rel_path, session=sess)
 
-    async def restore_version(
-        self, path: str, version: int,
-    ) -> RestoreResult:
-        """Restore a file to a specific version."""
+    async def restore_version(self, path: str, version: int) -> RestoreResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         try:
@@ -554,8 +483,13 @@ class VFS:
         except PermissionError as e:
             return RestoreResult(success=False, message=str(e))
 
+        cap = self._get_capability(mount.backend, SupportsVersions)
+        if cap is None:
+            raise CapabilityNotSupportedError(
+                f"Mount at {mount.mount_path} does not support versioning"
+            )
         async with self._session_for(mount) as sess:
-            result = await mount.backend.restore_version(rel_path, version, session=sess)  # type: ignore[call-arg]
+            result = await cap.restore_version(rel_path, version, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -563,21 +497,30 @@ class VFS:
             )
         return result
 
-    async def get_version_content(
-        self, path: str, version: int,
-    ) -> str | None:
-        """Get content of a specific file version."""
+    async def get_version_content(self, path: str, version: int) -> GetVersionContentResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
+        cap = self._get_capability(mount.backend, SupportsVersions)
+        if cap is None:
+            raise CapabilityNotSupportedError(
+                f"Mount at {mount.mount_path} does not support versioning"
+            )
         async with self._session_for(mount) as sess:
-            return await mount.backend.get_version_content(rel_path, version, session=sess)  # type: ignore[call-arg]
+            return await cap.get_version_content(rel_path, version, session=sess)
+
+    # ------------------------------------------------------------------
+    # Trash Operations (capability-gated)
+    # ------------------------------------------------------------------
 
     async def list_trash(self) -> ListResult:
-        """List all items in trash across all mounts."""
+        """List all items in trash across all mounts (skips unsupported)."""
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
+            cap = self._get_capability(mount.backend, SupportsTrash)
+            if cap is None:
+                continue  # Skip unsupported mounts silently
             async with self._session_for(mount) as sess:
-                result = await mount.backend.list_trash(session=sess)  # type: ignore[call-arg]
+                result = await cap.list_trash(session=sess)
             if result.success:
                 prefixed_entries = [
                     self._prefix_file_info(entry, mount) for entry in result.entries
@@ -591,10 +534,7 @@ class VFS:
             path="/__trash__",
         )
 
-    async def restore_from_trash(
-        self, path: str,
-    ) -> RestoreResult:
-        """Restore a file from trash."""
+    async def restore_from_trash(self, path: str) -> RestoreResult:
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -602,8 +542,13 @@ class VFS:
             return RestoreResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
+        cap = self._get_capability(mount.backend, SupportsTrash)
+        if cap is None:
+            raise CapabilityNotSupportedError(
+                f"Mount at {mount.mount_path} does not support trash"
+            )
         async with self._session_for(mount) as sess:
-            result = await mount.backend.restore_from_trash(rel_path, session=sess)  # type: ignore[call-arg]
+            result = await cap.restore_from_trash(rel_path, session=sess)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
@@ -612,12 +557,15 @@ class VFS:
         return result
 
     async def empty_trash(self) -> DeleteResult:
-        """Permanently delete all trashed files."""
+        """Empty trash across all mounts (skips unsupported)."""
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
+            cap = self._get_capability(mount.backend, SupportsTrash)
+            if cap is None:
+                continue  # Skip unsupported mounts silently
             async with self._session_for(mount) as sess:
-                result = await mount.backend.empty_trash(session=sess)  # type: ignore[call-arg]
+                result = await cap.empty_trash(session=sess)
             if not result.success:
                 return result
             total_deleted += result.total_deleted or 0
@@ -629,3 +577,26 @@ class VFS:
             total_deleted=total_deleted,
             permanent=True,
         )
+
+    # ------------------------------------------------------------------
+    # Reconciliation (capability-gated)
+    # ------------------------------------------------------------------
+
+    async def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
+        """Reconcile disk ↔ DB for capable mounts."""
+        total = {"created": 0, "updated": 0, "deleted": 0}
+        mounts = self._registry.list_mounts()
+        if mount_path is not None:
+            mount_path = normalize_path(mount_path).rstrip("/")
+            mounts = [m for m in mounts if m.mount_path == mount_path]
+
+        for mount in mounts:
+            cap = self._get_capability(mount.backend, SupportsReconcile)
+            if cap is None:
+                continue
+            async with self._session_for(mount) as sess:
+                stats = await cap.reconcile(session=sess)
+            for k in total:
+                total[k] += stats.get(k, 0)
+
+        return total

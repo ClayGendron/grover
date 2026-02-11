@@ -111,3 +111,19 @@ class RestoreResult:
     file_path: str | None = None
     restored_version: int = 0
     current_version: int = 0
+
+
+@dataclass
+class ListVersionsResult:
+    """Result of a list_versions operation."""
+    success: bool
+    message: str
+    versions: list[VersionInfo] = field(default_factory=list)
+
+
+@dataclass
+class GetVersionContentResult:
+    """Result of a get_version_content operation."""
+    success: bool
+    message: str
+    content: str | None = None

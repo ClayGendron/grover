@@ -162,11 +162,12 @@ class TestCustomModelFilesystem:
             await fs.edit("/page.md", "v1", "v2", session=session)
             await fs.edit("/page.md", "v2", "v3", session=session)
 
-            versions = await fs.list_versions("/page.md", session=session)
-            assert len(versions) >= 1
+            ver_result = await fs.list_versions("/page.md", session=session)
+            assert len(ver_result.versions) >= 1
 
-            v1_content = await fs.get_version_content("/page.md", 1, session=session)
-            assert v1_content == "v1\n"
+            vc_result = await fs.get_version_content("/page.md", 1, session=session)
+            assert vc_result.success
+            assert vc_result.content == "v1\n"
         await engine.dispose()
 
     async def test_data_written_to_custom_table(self):
