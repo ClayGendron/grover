@@ -7,7 +7,7 @@ packages = ["src/grover"]
 
 [project]
 name = "grover"
-version = "0.1.0"
+version = "0.0.1"
 description = "Safe files, knowledge graphs, and semantic search for AI agents"
 readme = "README.md"
 license = "Apache-2.0"
