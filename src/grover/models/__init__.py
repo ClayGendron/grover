@@ -8,11 +8,14 @@ from grover.models.files import (
     FileVersion,
     FileVersionBase,
 )
+from grover.models.shares import FileShare, FileShareBase
 
 __all__ = [
     "Embedding",
     "File",
     "FileBase",
+    "FileShare",
+    "FileShareBase",
     "FileVersion",
     "FileVersionBase",
     "GroverEdge",

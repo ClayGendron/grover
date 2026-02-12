@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel, select
 
 from grover.fs.diff import apply_diff, compute_diff, reconstruct_version
 from grover.models import (
     Embedding,
     File,
+    FileShare,
+    FileShareBase,
     FileVersion,
     GroverEdge,
 )
@@ -146,6 +148,96 @@ class TestDefaultFactories:
 
         assert f.content == "# Hello"
         assert f.content_hash == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# owner_id field
+# ---------------------------------------------------------------------------
+
+
+class TestFileBaseOwnerId:
+    def test_file_base_owner_id_default_none(self, session: Session):
+        f = File(path="/no_owner.txt", name="no_owner.txt", parent_path="/")
+        session.add(f)
+        session.commit()
+        session.refresh(f)
+        assert f.owner_id is None
+
+    def test_file_base_owner_id_set(self, session: Session):
+        f = File(
+            path="/owned.txt",
+            name="owned.txt",
+            parent_path="/",
+            owner_id="alice",
+        )
+        session.add(f)
+        session.commit()
+        session.refresh(f)
+        assert f.owner_id == "alice"
+
+
+# ---------------------------------------------------------------------------
+# FileShare model
+# ---------------------------------------------------------------------------
+
+
+class TestFileShare:
+    def test_file_share_create(self, session: Session):
+        share = FileShare(
+            path="/alice/notes.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        session.add(share)
+        session.commit()
+        session.refresh(share)
+
+        assert share.id  # UUID string
+        assert share.path == "/alice/notes.md"
+        assert share.grantee_id == "bob"
+        assert share.permission == "read"
+        assert share.granted_by == "alice"
+        assert share.created_at is not None
+        assert share.expires_at is None
+
+    def test_file_share_defaults(self, session: Session):
+        share = FileShare(
+            path="/a/b.txt",
+            grantee_id="charlie",
+            granted_by="alice",
+        )
+        session.add(share)
+        session.commit()
+        session.refresh(share)
+
+        assert share.permission == "read"
+        assert share.expires_at is None
+
+    def test_file_share_base_subclass(self, engine):
+        """Custom table name via subclassing FileShareBase."""
+
+        class CustomShare(FileShareBase, table=True):
+            __tablename__ = "custom_shares"
+
+        SQLModel.metadata.create_all(engine)
+        tables = engine.dialect.get_table_names(engine.connect())
+        assert "custom_shares" in tables
+
+    def test_file_share_table_exists(self, engine):
+        assert "grover_file_shares" in engine.dialect.get_table_names(engine.connect())
+
+    def test_file_share_write_permission(self, session: Session):
+        share = FileShare(
+            path="/alice/project/",
+            grantee_id="bob",
+            permission="write",
+            granted_by="alice",
+        )
+        session.add(share)
+        session.commit()
+        session.refresh(share)
+        assert share.permission == "write"
 
 
 # ---------------------------------------------------------------------------

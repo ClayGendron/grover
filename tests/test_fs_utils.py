@@ -12,6 +12,7 @@ from grover.fs.utils import (
     get_line_number,
     guess_mime_type,
     is_binary_file,
+    is_shared_path,
     is_text_file,
     is_trash_path,
     levenshtein,
@@ -291,6 +292,46 @@ class TestValidatePathEdgeCases:
         ok, msg = validate_path("/file\x01name.txt")
         assert ok is False
         assert "control character" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# @shared Path Validation
+# ---------------------------------------------------------------------------
+
+
+class TestSharedPathValidation:
+    def test_validate_path_rejects_at_shared(self):
+        ok, msg = validate_path("/foo/@shared/bar.txt")
+        assert ok is False
+        assert "@shared" in msg
+
+    def test_validate_path_rejects_at_shared_root(self):
+        ok, msg = validate_path("/@shared")
+        assert ok is False
+        assert "@shared" in msg
+
+    def test_validate_path_allows_normal_at_sign(self):
+        ok, msg = validate_path("/foo/@bar/baz.txt")
+        assert ok is True
+        assert msg == ""
+
+    def test_is_shared_path_true(self):
+        assert is_shared_path("/@shared/alice/notes.md") is True
+        assert is_shared_path("/foo/@shared/bar") is True
+
+    def test_is_shared_path_false(self):
+        assert is_shared_path("/foo/bar.txt") is False
+        assert is_shared_path("/foo/@bar/baz") is False
+        assert is_shared_path("/foo/shared/baz") is False
+
+    def test_is_shared_path_at_shared_as_substring(self):
+        """'@shared' embedded in a longer segment name is NOT a shared path."""
+        assert is_shared_path("/foo/@shared_extra/baz") is False
+
+    def test_validate_path_rejects_nested_shared(self):
+        ok, msg = validate_path("/foo/bar/@shared/baz/qux.txt")
+        assert ok is False
+        assert "@shared" in msg
 
 
 # ---------------------------------------------------------------------------

@@ -222,6 +222,20 @@ BINARY_EXTENSIONS = {
 
 
 # =============================================================================
+# Shared Namespace
+# =============================================================================
+
+SHARED_SEGMENT = "@shared"
+
+
+def is_shared_path(path: str) -> bool:
+    """Check if a path contains the ``@shared`` virtual namespace segment."""
+    normalized = normalize_path(path)
+    segments = normalized.split("/")
+    return SHARED_SEGMENT in segments
+
+
+# =============================================================================
 # Path Utilities
 # =============================================================================
 
@@ -301,6 +315,9 @@ def validate_path(path: str) -> tuple[bool, str]:
         base_name = name_upper.split(".")[0] if "." in name_upper else name_upper
         if base_name in RESERVED_NAMES:
             return False, f"Reserved filename: {name}"
+
+    if is_shared_path(path):
+        return False, "Path contains reserved '@shared' segment"
 
     return True, ""
 

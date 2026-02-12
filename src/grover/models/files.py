@@ -21,6 +21,7 @@ class FileBase(SQLModel):
     path: str = Field(index=True, unique=True)
     parent_path: str = Field(default="", index=True)
     name: str = Field(default="")
+    owner_id: str | None = Field(default=None, index=True)
     is_directory: bool = Field(default=False)
     mime_type: str = Field(default="text/plain")
     content: str | None = Field(default=None)
