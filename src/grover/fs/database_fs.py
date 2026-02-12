@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 
     from grover.models.files import FileBase, FileVersionBase
 
+    from .sharing import SharingService
+
 logger = logging.getLogger(__name__)
 
 
@@ -306,6 +308,8 @@ class DatabaseFileSystem:
         dest: str,
         *,
         session: AsyncSession | None = None,
+        follow: bool = False,
+        sharing: SharingService | None = None,
     ) -> MoveResult:
         sess = self._require_session(session)
         return await move_file(
@@ -314,10 +318,13 @@ class DatabaseFileSystem:
             sess,
             metadata=self.metadata,
             versioning=self.versioning,
+            directories=self.directories,
             file_model=self._file_model,
             read_content=self._read_content,
             write_content=self._write_content,
             delete_content=self._delete_content,
+            follow=follow,
+            sharing=sharing,
         )
 
     async def copy(

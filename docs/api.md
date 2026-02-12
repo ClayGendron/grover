@@ -64,6 +64,8 @@ g.edit(path, old, new) -> EditResult
 g.delete(path, permanent=False) -> DeleteResult
 g.list_dir(path="/") -> list[dict]
 g.exists(path) -> bool
+g.move(src, dest, *, follow=False) -> MoveResult
+g.copy(src, dest) -> WriteResult
 ```
 
 | Method | Description |
@@ -74,6 +76,8 @@ g.exists(path) -> bool
 | `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
 | `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. |
 | `exists(path)` | Check if a path exists. Returns `bool`. |
+| `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
+| `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
 
 ### Search / Query
 

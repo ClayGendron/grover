@@ -174,10 +174,10 @@ class Grover:
         return self._run(self._async.exists(path, user_id=user_id))
 
     def move(
-        self, src: str, dest: str, *, user_id: str | None = None
+        self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
     ) -> MoveResult:
         """Move a file from *src* to *dest*."""
-        return self._run(self._async.move(src, dest, user_id=user_id))
+        return self._run(self._async.move(src, dest, user_id=user_id, follow=follow))
 
     def copy(
         self, src: str, dest: str, *, user_id: str | None = None

@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select
 
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from grover.models.files import FileBase
 
     from .directories import DirectoryService
+    from .sharing import SharingService
     from .versioning import VersioningService
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
@@ -344,12 +345,29 @@ async def move_file(
     *,
     metadata: MetadataService,
     versioning: VersioningService,
+    directories: DirectoryService,
     file_model: type[FileBase],
     read_content: ContentReader,
     write_content: ContentWriter,
     delete_content: ContentDeleter,
+    follow: bool = False,
+    sharing: SharingService | None = None,
 ) -> MoveResult:
-    """Orchestrate a file move within the same backend."""
+    """Orchestrate a file move within the same backend.
+
+    Parameters
+    ----------
+    follow:
+        ``False`` (default) — clean break: new file at *dest*, source deleted.
+        Version history does not carry over. Share paths are NOT updated.
+
+        ``True`` — in-place rename: same file record, versions follow.
+        If a ``sharing`` service is provided, share paths are updated to
+        match the new location.
+    sharing:
+        Optional :class:`SharingService` instance for updating share paths
+        when ``follow=True``.
+    """
     valid, error = validate_path(src)
     if not valid:
         return MoveResult(success=False, message=error)
@@ -392,7 +410,7 @@ async def move_file(
                 message=f"Cannot move directory over file: {dest}",
             )
 
-        # Atomic move: all changes in the current session
+        # Overwrite existing dest with source content
         content = await read_content(src, session)
         if content is None:
             return MoveResult(success=False, message=f"Source content not found: {src}")
@@ -432,6 +450,11 @@ async def move_file(
         except Exception:
             logger.warning("Failed to clean up old content at %s", src)
 
+        # Update share paths if follow=True
+        if follow and sharing is not None:
+            await sharing.update_share_paths(session, src, dest)
+            await session.flush()
+
         return MoveResult(
             success=True,
             message=f"Moved {src} to {dest}",
@@ -439,43 +462,175 @@ async def move_file(
             new_path=dest,
         )
 
-    old_paths: list[str] = [src]
+    # ---- No existing dest ----
+
+    if follow:
+        # In-place rename: same file record, versions follow
+        await directories.ensure_parent_dirs(session, dest)
+        old_paths: list[str] = [src]
+
+        if src_file.is_directory:
+            model = file_model
+            result = await session.execute(
+                select(model).where(
+                    model.path.startswith(src + "/"),
+                )
+            )
+            children = result.scalars().all()
+
+            for desc in children:
+                old_paths.append(desc.path)
+                new_path = dest + desc.path[len(src) :]
+                content = await read_content(desc.path, session)
+                if content is not None:
+                    await write_content(new_path, content, session)
+                desc.path = new_path
+                desc.name = split_path(new_path)[1]
+                desc.parent_path = split_path(new_path)[0]
+
+        content = await read_content(src, session)
+        if content is not None:
+            await write_content(dest, content, session)
+
+        src_file.path = dest
+        src_file.name = split_path(dest)[1]
+        src_file.parent_path = split_path(dest)[0]
+        src_file.updated_at = datetime.now(UTC)
+
+        await session.flush()
+
+        for old_path in old_paths:
+            try:
+                await delete_content(old_path, session)
+            except Exception:
+                logger.warning("Failed to clean up old content at %s", old_path)
+
+        # Update share paths
+        if sharing is not None:
+            await sharing.update_share_paths(session, src, dest)
+            await session.flush()
+
+        return MoveResult(
+            success=True,
+            message=f"Moved {src} to {dest}",
+            old_path=src,
+            new_path=dest,
+        )
+
+    # follow=False: clean break — new records at dest, source soft-deleted
+    now = datetime.now(UTC)
+    await directories.ensure_parent_dirs(session, dest)
 
     if src_file.is_directory:
+        # Collect children and their content before modifying records
         model = file_model
         result = await session.execute(
             select(model).where(
                 model.path.startswith(src + "/"),
+                model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
             )
         )
-        children = result.scalars().all()
+        children = list(result.scalars().all())
+        child_contents: list[tuple[Any, str, str | None]] = []
+        for child in children:
+            c = await read_content(child.path, session)
+            new_child_path = dest + child.path[len(src) :]
+            child_contents.append((child, new_child_path, c))
 
-        for desc in children:
-            old_paths.append(desc.path)
-            new_path = dest + desc.path[len(src) :]
-            content = await read_content(desc.path, session)
-            if content is not None:
-                await write_content(new_path, content, session)
-            desc.path = new_path
-            desc.name = split_path(new_path)[1]
-            desc.parent_path = split_path(new_path)[0]
+        # Soft-delete source children
+        for child in children:
+            child.original_path = child.path
+            child.path = to_trash_path(child.path, child.id)
+            child.deleted_at = now
 
-    content = await read_content(src, session)
-    if content is not None:
+        # Soft-delete source directory
+        src_file.original_path = src_file.path
+        src_file.path = to_trash_path(src_file.path, src_file.id)
+        src_file.deleted_at = now
+
+        # Create new directory
+        dest_parent, dest_name = split_path(dest)
+        new_dir = file_model(
+            path=dest,
+            name=dest_name,
+            parent_path=dest_parent,
+            owner_id=src_file.owner_id,
+            is_directory=True,
+        )
+        session.add(new_dir)
+
+        # Create new children
+        for orig_child, new_child_path, child_content in child_contents:
+            cp, cn = split_path(new_child_path)
+            if orig_child.is_directory:
+                new_child = file_model(
+                    path=new_child_path,
+                    name=cn,
+                    parent_path=cp,
+                    owner_id=src_file.owner_id,
+                    is_directory=True,
+                )
+            else:
+                new_child = file_model(
+                    path=new_child_path,
+                    name=cn,
+                    parent_path=cp,
+                    owner_id=src_file.owner_id,
+                    content_hash=compute_content_hash(child_content or "")[0],
+                    size_bytes=compute_content_hash(child_content or "")[1],
+                    mime_type=guess_mime_type(cn),
+                )
+            session.add(new_child)
+            if child_content is not None and not orig_child.is_directory:
+                await versioning.save_version(
+                    session, new_child, "", child_content, "move"
+                )
+                await write_content(new_child_path, child_content, session)
+
+        await session.flush()
+
+        # Clean up old content (best-effort, use original path before soft-delete)
+        for orig_child, _np, _c in child_contents:
+            orig_path = orig_child.original_path
+            if orig_path:
+                try:
+                    await delete_content(orig_path, session)
+                except Exception:
+                    logger.debug("Failed to clean up old content for child")
+    else:
+        # Single file clean break
+        content = await read_content(src, session)
+        if content is None:
+            return MoveResult(success=False, message=f"Source content not found: {src}")
+
+        # Soft-delete source
+        src_file.original_path = src_file.path
+        src_file.path = to_trash_path(src_file.path, src_file.id)
+        src_file.deleted_at = now
+
+        # Create new file at dest
+        dest_parent, dest_name = split_path(dest)
+        content_hash, size_bytes = compute_content_hash(content)
+        new_file = file_model(
+            path=dest,
+            name=dest_name,
+            parent_path=dest_parent,
+            owner_id=src_file.owner_id,
+            content_hash=content_hash,
+            size_bytes=size_bytes,
+            mime_type=guess_mime_type(dest_name),
+        )
+        session.add(new_file)
+
+        await versioning.save_version(session, new_file, "", content, "move")
         await write_content(dest, content, session)
+        await session.flush()
 
-    src_file.path = dest
-    src_file.name = split_path(dest)[1]
-    src_file.parent_path = split_path(dest)[0]
-    src_file.updated_at = datetime.now(UTC)
-
-    await session.flush()
-
-    for old_path in old_paths:
+        # Clean up src content (best-effort)
         try:
-            await delete_content(old_path, session)
+            await delete_content(src, session)
         except Exception:
-            logger.warning("Failed to clean up old content at %s", old_path)
+            logger.warning("Failed to clean up old content at %s", src)
 
     return MoveResult(
         success=True,

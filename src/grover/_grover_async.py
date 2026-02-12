@@ -479,10 +479,10 @@ class GroverAsync:
         return await self._vfs.exists(path, user_id=user_id)
 
     async def move(
-        self, src: str, dest: str, *, user_id: str | None = None
+        self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
     ) -> MoveResult:
         try:
-            return await self._vfs.move(src, dest, user_id=user_id)
+            return await self._vfs.move(src, dest, user_id=user_id, follow=follow)
         except Exception as e:
             return MoveResult(success=False, message=f"Move failed: {e}")
 

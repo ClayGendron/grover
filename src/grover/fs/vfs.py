@@ -810,6 +810,7 @@ class VFS:
         dest: str,
         *,
         user_id: str | None = None,
+        follow: bool = False,
     ) -> MoveResult:
         src = normalize_path(src)
         dest = normalize_path(dest)
@@ -837,7 +838,10 @@ class VFS:
                     await self._check_share_access(sess, src_mount, src_rel, user_id, "write")
                 if dest_shared and user_id:
                     await self._check_share_access(sess, dest_mount, dest_rel, user_id, "write")
-                result = await src_mount.backend.move(src_rel, dest_rel, session=sess)
+                result = await src_mount.backend.move(
+                    src_rel, dest_rel, session=sess,
+                    follow=follow, sharing=src_mount.sharing,
+                )
             result.old_path = self._restore_user_path(result.old_path, src_mount, user_id)
             result.new_path = self._restore_user_path(result.new_path, dest_mount, user_id)
             if result.success:

@@ -110,6 +110,31 @@ No disk involved — soft-delete is metadata-only (set `deleted_at`, move path t
 
 ---
 
+## Move Semantics
+
+Move supports two modes via the `follow` parameter:
+
+### `follow=False` (default) — Clean Break
+
+The default mimics git's path-is-identity model. Moving a file creates a **new** file record at the destination and soft-deletes the source. The destination file has no version history — it starts fresh at version 1. Any shares on the source path become stale (they still point to the old path).
+
+For directories, all children are recreated at the new path with new file records. The `is_directory` flag is preserved on child directories.
+
+### `follow=True` — In-Place Rename
+
+When `follow=True`, the existing file record is updated in-place (path column changes). This preserves:
+- **File identity** — same `id` / primary key
+- **Version history** — all versions remain associated with the file
+- **Share paths** — `SharingService.update_share_paths()` bulk-updates shares from old prefix to new prefix
+
+For directories, all children have their paths updated in-place as well. Parent directories are created at the destination if they don't exist.
+
+### Overwrite Case
+
+When the destination already exists, both modes behave the same: the source content overwrites the destination (new version created), and the source is soft-deleted. With `follow=True`, share paths are also updated.
+
+---
+
 ## Session Lifecycle
 
 Sessions are managed by VFS and injected into backends. Every operation creates, uses, commits, and closes its own session.
