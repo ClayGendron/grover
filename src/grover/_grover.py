@@ -19,7 +19,10 @@ if TYPE_CHECKING:
         EditResult,
         GlobResult,
         GrepResult,
+        ListSharesResult,
+        MoveResult,
         ReadResult,
+        ShareResult,
         TreeResult,
         WriteResult,
     )
@@ -109,6 +112,7 @@ class Grover:
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
+        authenticated: bool = False,
     ) -> None:
         """Mount a backend at *path*."""
         self._run(
@@ -125,6 +129,7 @@ class Grover:
                 permission=permission,
                 label=label,
                 hidden=hidden,
+                authenticated=authenticated,
             )
         )
 
@@ -136,37 +141,59 @@ class Grover:
     # Filesystem wrappers (sync)
     # ------------------------------------------------------------------
 
-    def read(self, path: str) -> ReadResult:
+    def read(self, path: str, *, user_id: str | None = None) -> ReadResult:
         """Read file content at *path*."""
-        return self._run(self._async.read(path))
+        return self._run(self._async.read(path, user_id=user_id))
 
-    def write(self, path: str, content: str) -> WriteResult:
+    def write(
+        self, path: str, content: str, *, user_id: str | None = None
+    ) -> WriteResult:
         """Write *content* to *path*."""
-        return self._run(self._async.write(path, content))
+        return self._run(self._async.write(path, content, user_id=user_id))
 
-    def edit(self, path: str, old: str, new: str) -> EditResult:
+    def edit(
+        self, path: str, old: str, new: str, *, user_id: str | None = None
+    ) -> EditResult:
         """Replace *old* with *new* in the file at *path*."""
-        return self._run(self._async.edit(path, old, new))
+        return self._run(self._async.edit(path, old, new, user_id=user_id))
 
-    def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+    def delete(
+        self, path: str, permanent: bool = False, *, user_id: str | None = None
+    ) -> DeleteResult:
         """Delete the file at *path*."""
-        return self._run(self._async.delete(path, permanent))
+        return self._run(self._async.delete(path, permanent, user_id=user_id))
 
-    def list_dir(self, path: str = "/") -> list[dict[str, Any]]:
+    def list_dir(
+        self, path: str = "/", *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """List entries under *path*."""
-        return self._run(self._async.list_dir(path))
+        return self._run(self._async.list_dir(path, user_id=user_id))
 
-    def exists(self, path: str) -> bool:
+    def exists(self, path: str, *, user_id: str | None = None) -> bool:
         """Check whether *path* exists."""
-        return self._run(self._async.exists(path))
+        return self._run(self._async.exists(path, user_id=user_id))
+
+    def move(
+        self, src: str, dest: str, *, user_id: str | None = None
+    ) -> MoveResult:
+        """Move a file from *src* to *dest*."""
+        return self._run(self._async.move(src, dest, user_id=user_id))
+
+    def copy(
+        self, src: str, dest: str, *, user_id: str | None = None
+    ) -> WriteResult:
+        """Copy a file from *src* to *dest*."""
+        return self._run(self._async.copy(src, dest, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Search / Query wrappers (sync)
     # ------------------------------------------------------------------
 
-    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+    def glob(
+        self, pattern: str, path: str = "/", *, user_id: str | None = None
+    ) -> GlobResult:
         """Find files matching a glob *pattern* under *path*."""
-        return self._run(self._async.glob(pattern, path))
+        return self._run(self._async.glob(pattern, path, user_id=user_id))
 
     def grep(
         self,
@@ -183,6 +210,7 @@ class Grover:
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        user_id: str | None = None,
     ) -> GrepResult:
         """Search file contents for *pattern* under *path*."""
         return self._run(
@@ -199,37 +227,93 @@ class Grover:
                 max_results_per_file=max_results_per_file,
                 count_only=count_only,
                 files_only=files_only,
+                user_id=user_id,
             )
         )
 
-    def tree(self, path: str = "/", *, max_depth: int | None = None) -> TreeResult:
+    def tree(
+        self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
+    ) -> TreeResult:
         """List all entries under *path* recursively."""
-        return self._run(self._async.tree(path, max_depth=max_depth))
+        return self._run(self._async.tree(path, max_depth=max_depth, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Version / Trash / Reconciliation wrappers (sync)
     # ------------------------------------------------------------------
 
-    def list_versions(self, path: str) -> Any:
-        return self._run(self._async.list_versions(path))
+    def list_versions(self, path: str, *, user_id: str | None = None) -> Any:
+        return self._run(self._async.list_versions(path, user_id=user_id))
 
-    def get_version_content(self, path: str, version: int) -> Any:
-        return self._run(self._async.get_version_content(path, version))
+    def get_version_content(
+        self, path: str, version: int, *, user_id: str | None = None
+    ) -> Any:
+        return self._run(
+            self._async.get_version_content(path, version, user_id=user_id)
+        )
 
-    def restore_version(self, path: str, version: int) -> Any:
-        return self._run(self._async.restore_version(path, version))
+    def restore_version(
+        self, path: str, version: int, *, user_id: str | None = None
+    ) -> Any:
+        return self._run(
+            self._async.restore_version(path, version, user_id=user_id)
+        )
 
-    def list_trash(self) -> Any:
-        return self._run(self._async.list_trash())
+    def list_trash(self, *, user_id: str | None = None) -> Any:
+        return self._run(self._async.list_trash(user_id=user_id))
 
-    def restore_from_trash(self, path: str) -> Any:
-        return self._run(self._async.restore_from_trash(path))
+    def restore_from_trash(
+        self, path: str, *, user_id: str | None = None
+    ) -> Any:
+        return self._run(
+            self._async.restore_from_trash(path, user_id=user_id)
+        )
 
-    def empty_trash(self) -> Any:
-        return self._run(self._async.empty_trash())
+    def empty_trash(self, *, user_id: str | None = None) -> Any:
+        return self._run(self._async.empty_trash(user_id=user_id))
 
     def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
         return self._run(self._async.reconcile(mount_path))
+
+    # ------------------------------------------------------------------
+    # Share wrappers (sync)
+    # ------------------------------------------------------------------
+
+    def share(
+        self,
+        path: str,
+        grantee_id: str,
+        permission: str = "read",
+        *,
+        user_id: str,
+        expires_at: Any = None,
+    ) -> ShareResult:
+        """Share a file or directory with another user."""
+        return self._run(
+            self._async.share(
+                path, grantee_id, permission,
+                user_id=user_id, expires_at=expires_at,
+            )
+        )
+
+    def unshare(
+        self, path: str, grantee_id: str, *, user_id: str
+    ) -> ShareResult:
+        """Remove a share for a file or directory."""
+        return self._run(
+            self._async.unshare(path, grantee_id, user_id=user_id)
+        )
+
+    def list_shares(self, path: str, *, user_id: str) -> ListSharesResult:
+        """List all shares on a given path."""
+        return self._run(
+            self._async.list_shares(path, user_id=user_id)
+        )
+
+    def list_shared_with_me(self, *, user_id: str) -> ListSharesResult:
+        """List all files shared with the current user."""
+        return self._run(
+            self._async.list_shared_with_me(user_id=user_id)
+        )
 
     # ------------------------------------------------------------------
     # Graph query wrappers (sync — Graph methods are already sync)

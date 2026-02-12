@@ -187,3 +187,33 @@ class GetVersionContentResult:
     success: bool
     message: str
     content: str | None = None
+
+
+@dataclass
+class ShareInfo:
+    """Share metadata."""
+
+    path: str
+    grantee_id: str
+    permission: str
+    granted_by: str
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+@dataclass
+class ShareResult:
+    """Result of a share/unshare operation."""
+
+    success: bool
+    message: str
+    share: ShareInfo | None = None
+
+
+@dataclass
+class ListSharesResult:
+    """Result of a list_shares operation."""
+
+    success: bool
+    message: str
+    shares: list[ShareInfo] = field(default_factory=list)

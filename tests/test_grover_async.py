@@ -573,3 +573,135 @@ class TestGroverAsyncUnsupportedFiles:
         # Writes to /.grover/ should not create graph nodes
         await grover.fs.write("/.grover/internal.txt", "metadata")
         assert not grover.graph.has_node("/.grover/internal.txt")
+
+
+# ==================================================================
+# Authenticated mount + sharing
+# ==================================================================
+
+
+@pytest.fixture
+async def auth_grover(tmp_path: Path) -> GroverAsync:
+    """GroverAsync with an authenticated engine-based mount."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    data = tmp_path / "grover_data"
+    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+    await g.mount("/ws", engine=engine, authenticated=True)
+    yield g  # type: ignore[misc]
+    await g.close()
+
+
+class TestGroverAsyncAuthenticatedMount:
+    @pytest.mark.asyncio
+    async def test_authenticated_mount_write_read(self, auth_grover: GroverAsync):
+        result = await auth_grover.write("/ws/notes.md", "hello", user_id="alice")
+        assert result.success is True
+        read = await auth_grover.read("/ws/notes.md", user_id="alice")
+        assert read.success is True
+        assert read.content == "hello"
+
+    @pytest.mark.asyncio
+    async def test_user_isolation(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/notes.md", "alice data", user_id="alice")
+        await auth_grover.write("/ws/notes.md", "bob data", user_id="bob")
+        r1 = await auth_grover.read("/ws/notes.md", user_id="alice")
+        r2 = await auth_grover.read("/ws/notes.md", user_id="bob")
+        assert r1.content == "alice data"
+        assert r2.content == "bob data"
+
+    @pytest.mark.asyncio
+    async def test_move_and_copy(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/src.md", "content", user_id="alice")
+        copy_result = await auth_grover.copy(
+            "/ws/src.md", "/ws/copy.md", user_id="alice"
+        )
+        assert copy_result.success is True
+        move_result = await auth_grover.move(
+            "/ws/src.md", "/ws/moved.md", user_id="alice"
+        )
+        assert move_result.success is True
+        assert await auth_grover.exists("/ws/copy.md", user_id="alice")
+        assert await auth_grover.exists("/ws/moved.md", user_id="alice")
+
+
+class TestGroverAsyncSharing:
+    @pytest.mark.asyncio
+    async def test_share_file(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/notes.md", "shared", user_id="alice")
+        result = await auth_grover.share(
+            "/ws/notes.md", "bob", "read", user_id="alice"
+        )
+        assert result.success is True
+        assert result.share is not None
+        assert result.share.grantee_id == "bob"
+        assert result.share.permission == "read"
+
+    @pytest.mark.asyncio
+    async def test_unshare_file(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/notes.md", "shared", user_id="alice")
+        await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
+        result = await auth_grover.unshare("/ws/notes.md", "bob", user_id="alice")
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_unshare_nonexistent(self, auth_grover: GroverAsync):
+        result = await auth_grover.unshare("/ws/x.md", "bob", user_id="alice")
+        assert result.success is False
+
+    @pytest.mark.asyncio
+    async def test_list_shares(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/notes.md", "data", user_id="alice")
+        await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
+        await auth_grover.share("/ws/notes.md", "charlie", "write", user_id="alice")
+        result = await auth_grover.list_shares("/ws/notes.md", user_id="alice")
+        assert result.success is True
+        assert len(result.shares) == 2
+        grantees = {s.grantee_id for s in result.shares}
+        assert grantees == {"bob", "charlie"}
+
+    @pytest.mark.asyncio
+    async def test_list_shared_with_me(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/a.md", "a", user_id="alice")
+        await auth_grover.share("/ws/a.md", "bob", "read", user_id="alice")
+        result = await auth_grover.list_shared_with_me(user_id="bob")
+        assert result.success is True
+        assert len(result.shares) == 1
+        # Path should be an @shared path, not a raw stored path
+        assert result.shares[0].path == "/ws/@shared/alice/a.md"
+
+    @pytest.mark.asyncio
+    async def test_share_requires_authenticated_mount(
+        self, workspace: Path, tmp_path: Path
+    ):
+        data = tmp_path / "grover_data"
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.mount(
+            "/app",
+            LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
+        )
+        result = await g.share("/app/test.md", "bob", user_id="alice")
+        assert result.success is False
+        assert "authenticated" in result.message.lower()
+        await g.close()
+
+    @pytest.mark.asyncio
+    async def test_share_invalid_permission_returns_failure(self, auth_grover: GroverAsync):
+        await auth_grover.write("/ws/notes.md", "data", user_id="alice")
+        result = await auth_grover.share(
+            "/ws/notes.md", "bob", "execute", user_id="alice"
+        )
+        assert result.success is False
+        assert "permission" in result.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_shared_read_via_at_shared(self, auth_grover: GroverAsync):
+        """End-to-end: share → read via @shared path."""
+        await auth_grover.write("/ws/notes.md", "secret", user_id="alice")
+        await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
+        result = await auth_grover.read(
+            "/ws/@shared/alice/notes.md", user_id="bob"
+        )
+        assert result.success is True
+        assert result.content == "secret"

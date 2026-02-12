@@ -12,15 +12,20 @@ from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
+from grover.fs.sharing import SharingService
 from grover.fs.types import (
     DeleteResult,
     EditResult,
     GetVersionContentResult,
     GlobResult,
     GrepResult,
+    ListSharesResult,
     ListVersionsResult,
+    MoveResult,
     ReadResult,
     RestoreResult,
+    ShareInfo,
+    ShareResult,
     TreeResult,
     WriteResult,
 )
@@ -30,6 +35,7 @@ from grover.graph.analyzers import AnalyzerRegistry
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
+from grover.models.shares import FileShare
 from grover.search._index import SearchIndex, SearchResult
 from grover.search.extractors import extract_from_chunks, extract_from_file
 
@@ -124,6 +130,7 @@ class GroverAsync:
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
+        authenticated: bool = False,
     ) -> None:
         """Mount a backend at *path*."""
         sf: Callable[..., AsyncSession] | None = None
@@ -147,6 +154,10 @@ class GroverAsync:
                 await conn.run_sync(
                     lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
                 )
+                if authenticated:
+                    await conn.run_sync(
+                        lambda c: FileShare.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                    )
 
         elif session_factory is not None:
             sf = session_factory
@@ -161,6 +172,7 @@ class GroverAsync:
             )
             if mount_type is None:
                 mount_type = "vfs"
+            sharing = SharingService(FileShare) if authenticated else None
             config = MountConfig(
                 mount_path=path,
                 backend=backend,
@@ -169,6 +181,8 @@ class GroverAsync:
                 permission=permission,
                 label=label,
                 hidden=hidden,
+                authenticated=authenticated,
+                sharing=sharing,
             )
         else:
             if backend is None:
@@ -183,6 +197,7 @@ class GroverAsync:
                 await backend.open()
                 local_sf = backend._session_factory
 
+            sharing = SharingService(FileShare) if authenticated else None
             config = MountConfig(
                 mount_path=path,
                 backend=backend,
@@ -191,6 +206,8 @@ class GroverAsync:
                 permission=permission,
                 label=label,
                 hidden=hidden,
+                authenticated=authenticated,
+                sharing=sharing,
             )
 
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
@@ -418,43 +435,74 @@ class GroverAsync:
     # FS Operations
     # ------------------------------------------------------------------
 
-    async def read(self, path: str) -> ReadResult:
-        return await self._vfs.read(path)
+    async def read(
+        self, path: str, *, user_id: str | None = None
+    ) -> ReadResult:
+        return await self._vfs.read(path, user_id=user_id)
 
-    async def write(self, path: str, content: str) -> WriteResult:
+    async def write(
+        self, path: str, content: str, *, user_id: str | None = None
+    ) -> WriteResult:
         try:
-            return await self._vfs.write(path, content)
+            return await self._vfs.write(path, content, user_id=user_id)
         except Exception as e:
             return WriteResult(success=False, message=f"Write failed: {e}")
 
-    async def edit(self, path: str, old: str, new: str) -> EditResult:
+    async def edit(
+        self, path: str, old: str, new: str, *, user_id: str | None = None
+    ) -> EditResult:
         try:
-            return await self._vfs.edit(path, old, new)
+            return await self._vfs.edit(path, old, new, user_id=user_id)
         except Exception as e:
             return EditResult(success=False, message=f"Edit failed: {e}")
 
-    async def delete(self, path: str, permanent: bool = False) -> DeleteResult:
+    async def delete(
+        self, path: str, permanent: bool = False, *, user_id: str | None = None
+    ) -> DeleteResult:
         try:
-            return await self._vfs.delete(path, permanent)
+            return await self._vfs.delete(path, permanent, user_id=user_id)
         except Exception as e:
             return DeleteResult(success=False, message=f"Delete failed: {e}")
 
-    async def list_dir(self, path: str = "/") -> list[dict[str, Any]]:
-        result = await self._vfs.list_dir(path)
+    async def list_dir(
+        self, path: str = "/", *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        result = await self._vfs.list_dir(path, user_id=user_id)
         return [
-            {"path": e.path, "name": e.name, "is_directory": e.is_directory} for e in result.entries
+            {"path": e.path, "name": e.name, "is_directory": e.is_directory}
+            for e in result.entries
         ]
 
-    async def exists(self, path: str) -> bool:
-        return await self._vfs.exists(path)
+    async def exists(
+        self, path: str, *, user_id: str | None = None
+    ) -> bool:
+        return await self._vfs.exists(path, user_id=user_id)
+
+    async def move(
+        self, src: str, dest: str, *, user_id: str | None = None
+    ) -> MoveResult:
+        try:
+            return await self._vfs.move(src, dest, user_id=user_id)
+        except Exception as e:
+            return MoveResult(success=False, message=f"Move failed: {e}")
+
+    async def copy(
+        self, src: str, dest: str, *, user_id: str | None = None
+    ) -> WriteResult:
+        try:
+            return await self._vfs.copy(src, dest, user_id=user_id)
+        except Exception as e:
+            return WriteResult(success=False, message=f"Copy failed: {e}")
 
     # ------------------------------------------------------------------
     # Search / Query operations
     # ------------------------------------------------------------------
 
-    async def glob(self, pattern: str, path: str = "/") -> GlobResult:
+    async def glob(
+        self, pattern: str, path: str = "/", *, user_id: str | None = None
+    ) -> GlobResult:
         try:
-            return await self._vfs.glob(pattern, path)
+            return await self._vfs.glob(pattern, path, user_id=user_id)
         except Exception as e:
             return GlobResult(
                 success=False, message=f"Glob failed: {e}", pattern=pattern, path=path
@@ -475,6 +523,7 @@ class GroverAsync:
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        user_id: str | None = None,
     ) -> GrepResult:
         try:
             return await self._vfs.grep(
@@ -490,15 +539,18 @@ class GroverAsync:
                 max_results_per_file=max_results_per_file,
                 count_only=count_only,
                 files_only=files_only,
+                user_id=user_id,
             )
         except Exception as e:
             return GrepResult(
                 success=False, message=f"Grep failed: {e}", pattern=pattern, path=path
             )
 
-    async def tree(self, path: str = "/", *, max_depth: int | None = None) -> TreeResult:
+    async def tree(
+        self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
+    ) -> TreeResult:
         try:
-            return await self._vfs.tree(path, max_depth=max_depth)
+            return await self._vfs.tree(path, max_depth=max_depth, user_id=user_id)
         except Exception as e:
             return TreeResult(success=False, message=f"Tree failed: {e}", path=path)
 
@@ -506,21 +558,27 @@ class GroverAsync:
     # Version operations (normalize exceptions to Results)
     # ------------------------------------------------------------------
 
-    async def list_versions(self, path: str) -> ListVersionsResult:
+    async def list_versions(
+        self, path: str, *, user_id: str | None = None
+    ) -> ListVersionsResult:
         try:
-            return await self._vfs.list_versions(path)
+            return await self._vfs.list_versions(path, user_id=user_id)
         except CapabilityNotSupportedError as e:
             return ListVersionsResult(success=False, versions=[], message=str(e))
 
-    async def get_version_content(self, path: str, version: int) -> GetVersionContentResult:
+    async def get_version_content(
+        self, path: str, version: int, *, user_id: str | None = None
+    ) -> GetVersionContentResult:
         try:
-            return await self._vfs.get_version_content(path, version)
+            return await self._vfs.get_version_content(path, version, user_id=user_id)
         except CapabilityNotSupportedError as e:
             return GetVersionContentResult(success=False, content=None, message=str(e))
 
-    async def restore_version(self, path: str, version: int) -> RestoreResult:
+    async def restore_version(
+        self, path: str, version: int, *, user_id: str | None = None
+    ) -> RestoreResult:
         try:
-            return await self._vfs.restore_version(path, version)
+            return await self._vfs.restore_version(path, version, user_id=user_id)
         except CapabilityNotSupportedError as e:
             return RestoreResult(success=False, message=str(e))
 
@@ -528,17 +586,206 @@ class GroverAsync:
     # Trash operations (normalize exceptions to Results)
     # ------------------------------------------------------------------
 
-    async def list_trash(self) -> Any:
-        return await self._vfs.list_trash()
+    async def list_trash(self, *, user_id: str | None = None) -> Any:
+        return await self._vfs.list_trash(user_id=user_id)
 
-    async def restore_from_trash(self, path: str) -> RestoreResult:
+    async def restore_from_trash(
+        self, path: str, *, user_id: str | None = None
+    ) -> RestoreResult:
         try:
-            return await self._vfs.restore_from_trash(path)
+            return await self._vfs.restore_from_trash(path, user_id=user_id)
         except CapabilityNotSupportedError as e:
             return RestoreResult(success=False, message=str(e))
 
-    async def empty_trash(self) -> DeleteResult:
-        return await self._vfs.empty_trash()
+    async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
+        return await self._vfs.empty_trash(user_id=user_id)
+
+    # ------------------------------------------------------------------
+    # Share operations
+    # ------------------------------------------------------------------
+
+    async def share(
+        self,
+        path: str,
+        grantee_id: str,
+        permission: str = "read",
+        *,
+        user_id: str,
+        expires_at: Any = None,
+    ) -> ShareResult:
+        """Share a file or directory with another user.
+
+        Only the file owner can create shares. Requires an authenticated mount.
+        """
+        from grover.fs.utils import normalize_path
+
+        path = normalize_path(path)
+        try:
+            mount, rel_path = self._registry.resolve(path)
+        except MountNotFoundError as e:
+            return ShareResult(success=False, message=str(e))
+
+        if not mount.authenticated or mount.sharing is None:
+            return ShareResult(
+                success=False,
+                message="Sharing requires an authenticated mount with sharing enabled",
+            )
+
+        # Resolve to stored path (/{user_id}/...)
+        try:
+            stored_path = self._vfs._resolve_user_path(mount, rel_path, user_id)
+        except (ValueError, Exception) as e:
+            return ShareResult(success=False, message=str(e))
+
+        async with self._vfs._session_for(mount) as sess:
+            assert sess is not None
+            try:
+                share = await mount.sharing.create_share(
+                    sess,
+                    stored_path,
+                    grantee_id,
+                    permission,
+                    user_id,
+                    expires_at=expires_at,
+                )
+            except ValueError as e:
+                return ShareResult(success=False, message=str(e))
+
+        return ShareResult(
+            success=True,
+            message=f"Shared {path} with {grantee_id} ({permission})",
+            share=ShareInfo(
+                path=path,
+                grantee_id=share.grantee_id,
+                permission=share.permission,
+                granted_by=share.granted_by,
+                created_at=share.created_at,
+                expires_at=share.expires_at,
+            ),
+        )
+
+    async def unshare(
+        self,
+        path: str,
+        grantee_id: str,
+        *,
+        user_id: str,
+    ) -> ShareResult:
+        """Remove a share for a file or directory."""
+        from grover.fs.utils import normalize_path
+
+        path = normalize_path(path)
+        try:
+            mount, rel_path = self._registry.resolve(path)
+        except MountNotFoundError as e:
+            return ShareResult(success=False, message=str(e))
+
+        if not mount.authenticated or mount.sharing is None:
+            return ShareResult(
+                success=False,
+                message="Sharing requires an authenticated mount with sharing enabled",
+            )
+
+        try:
+            stored_path = self._vfs._resolve_user_path(mount, rel_path, user_id)
+        except (ValueError, Exception) as e:
+            return ShareResult(success=False, message=str(e))
+
+        async with self._vfs._session_for(mount) as sess:
+            assert sess is not None
+            removed = await mount.sharing.remove_share(sess, stored_path, grantee_id)
+
+        if removed:
+            return ShareResult(
+                success=True,
+                message=f"Removed share on {path} for {grantee_id}",
+            )
+        return ShareResult(
+            success=False,
+            message=f"No share found on {path} for {grantee_id}",
+        )
+
+    async def list_shares(
+        self,
+        path: str,
+        *,
+        user_id: str,
+    ) -> ListSharesResult:
+        """List all shares on a given path."""
+        from grover.fs.utils import normalize_path
+
+        path = normalize_path(path)
+        try:
+            mount, rel_path = self._registry.resolve(path)
+        except MountNotFoundError as e:
+            return ListSharesResult(success=False, message=str(e))
+
+        if not mount.authenticated or mount.sharing is None:
+            return ListSharesResult(
+                success=False,
+                message="Sharing requires an authenticated mount with sharing enabled",
+            )
+
+        try:
+            stored_path = self._vfs._resolve_user_path(mount, rel_path, user_id)
+        except (ValueError, Exception) as e:
+            return ListSharesResult(success=False, message=str(e))
+
+        async with self._vfs._session_for(mount) as sess:
+            assert sess is not None
+            shares = await mount.sharing.list_shares_on_path(sess, stored_path)
+
+        return ListSharesResult(
+            success=True,
+            message=f"Found {len(shares)} share(s)",
+            shares=[
+                ShareInfo(
+                    path=path,
+                    grantee_id=s.grantee_id,
+                    permission=s.permission,
+                    granted_by=s.granted_by,
+                    created_at=s.created_at,
+                    expires_at=s.expires_at,
+                )
+                for s in shares
+            ],
+        )
+
+    async def list_shared_with_me(
+        self,
+        *,
+        user_id: str,
+    ) -> ListSharesResult:
+        """List all files shared with the current user across all mounts."""
+        all_shares: list[ShareInfo] = []
+        for mount in self._registry.list_mounts():
+            if not mount.authenticated or mount.sharing is None:
+                continue
+            async with self._vfs._session_for(mount) as sess:
+                assert sess is not None
+                shares = await mount.sharing.list_shared_with(sess, user_id)
+            for s in shares:
+                # Stored path is /{owner}/rest — extract owner, build @shared path
+                parts = s.path.lstrip("/").split("/", 1)
+                owner = parts[0]
+                rest = "/" + parts[1] if len(parts) > 1 else ""
+                user_path = f"{mount.mount_path}/@shared/{owner}{rest}"
+                all_shares.append(
+                    ShareInfo(
+                        path=user_path,
+                        grantee_id=s.grantee_id,
+                        permission=s.permission,
+                        granted_by=s.granted_by,
+                        created_at=s.created_at,
+                        expires_at=s.expires_at,
+                    )
+                )
+
+        return ListSharesResult(
+            success=True,
+            message=f"Found {len(all_shares)} share(s)",
+            shares=all_shares,
+        )
 
     # ------------------------------------------------------------------
     # Reconciliation

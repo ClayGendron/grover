@@ -389,3 +389,68 @@ class TestGroverEdgeCases:
         grover.write("/project/bad.py", bad_code)
         # Should not raise
         assert grover.graph.has_node("/project/bad.py")
+
+
+# ==================================================================
+# Sync authenticated mount + sharing
+# ==================================================================
+
+
+@pytest.fixture
+def auth_grover(tmp_path: Path) -> Iterator[Grover]:
+    """Sync Grover with an authenticated engine-based mount."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    data = tmp_path / "grover_data"
+    g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
+    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+    g.mount("/ws", engine=engine, authenticated=True)
+    yield g
+    g.close()
+
+
+class TestGroverSyncAuthenticated:
+    def test_authenticated_mount(self, auth_grover: Grover):
+        auth_grover.write("/ws/notes.md", "hello", user_id="alice")
+        result = auth_grover.read("/ws/notes.md", user_id="alice")
+        assert result.success is True
+        assert result.content == "hello"
+
+    def test_share_unshare(self, auth_grover: Grover):
+        auth_grover.write("/ws/notes.md", "data", user_id="alice")
+        share_result = auth_grover.share(
+            "/ws/notes.md", "bob", "read", user_id="alice"
+        )
+        assert share_result.success is True
+
+        unshare_result = auth_grover.unshare(
+            "/ws/notes.md", "bob", user_id="alice"
+        )
+        assert unshare_result.success is True
+
+    def test_list_shares(self, auth_grover: Grover):
+        auth_grover.write("/ws/notes.md", "data", user_id="alice")
+        auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
+        result = auth_grover.list_shares("/ws/notes.md", user_id="alice")
+        assert result.success is True
+        assert len(result.shares) == 1
+
+    def test_list_shared_with_me(self, auth_grover: Grover):
+        auth_grover.write("/ws/a.md", "a", user_id="alice")
+        auth_grover.share("/ws/a.md", "bob", "read", user_id="alice")
+        result = auth_grover.list_shared_with_me(user_id="bob")
+        assert result.success is True
+        assert len(result.shares) == 1
+        # Path should be an @shared path, not a raw stored path
+        assert result.shares[0].path == "/ws/@shared/alice/a.md"
+
+    def test_move_and_copy(self, auth_grover: Grover):
+        auth_grover.write("/ws/src.md", "content", user_id="alice")
+        copy_result = auth_grover.copy(
+            "/ws/src.md", "/ws/copy.md", user_id="alice"
+        )
+        assert copy_result.success is True
+        move_result = auth_grover.move(
+            "/ws/src.md", "/ws/moved.md", user_id="alice"
+        )
+        assert move_result.success is True
