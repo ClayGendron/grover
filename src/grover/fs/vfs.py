@@ -352,23 +352,94 @@ class VFS:
         owner = segments[1]
         sub_path = "/" + "/".join(segments[2:]) if len(segments) > 2 else "/"
         stored_path = f"/{owner}{sub_path}" if sub_path != "/" else f"/{owner}"
+        shared_prefix = f"{mount.mount_path}/@shared/{owner}"
 
         async with self._session_for(mount) as sess:
             assert sess is not None
-            # Check that user has read access to this owner's path
-            await self._check_share_access(sess, mount, stored_path, user_id, "read")
-            result = await mount.backend.list_dir(stored_path, session=sess)
 
-        # Rewrite paths: /{owner}/x → {mount}/@shared/{owner}/x
-        shared_prefix = f"{mount.mount_path}/@shared/{owner}"
-        result.path = shared_prefix + sub_path if sub_path != "/" else shared_prefix
-        for entry in result.entries:
-            # Strip /{owner} prefix and prepend @shared/{owner}
-            stripped = self._strip_user_prefix(entry.path, owner)
-            entry.path = shared_prefix + stripped if stripped != "/" else shared_prefix
-            entry.mount_type = mount.mount_type
-            entry.permission = mount.permission.value
-        return result
+            # Fast path: directory-level share covers this path → list everything
+            try:
+                await self._check_share_access(sess, mount, stored_path, user_id, "read")
+                result = await mount.backend.list_dir(stored_path, session=sess)
+
+                # Rewrite paths: /{owner}/x → {mount}/@shared/{owner}/x
+                result.path = shared_prefix + sub_path if sub_path != "/" else shared_prefix
+                for entry in result.entries:
+                    stripped = self._strip_user_prefix(entry.path, owner)
+                    entry.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+                    entry.mount_type = mount.mount_type
+                    entry.permission = mount.permission.value
+                return result
+
+            except PermissionError:
+                pass  # Fall through to filtered listing
+
+            # Filtered fallback: show only files/dirs the user has specific shares on
+            shares = await mount.sharing.list_shares_under_prefix(
+                sess, user_id, stored_path
+            )
+            if not shares:
+                raise PermissionError(
+                    f"Access denied: {user_id!r} does not have 'read' "
+                    f"permission on shared path"
+                )
+
+            # Classify each share's relative path into direct entries vs intermediate dirs
+            direct_files: set[str] = set()
+            child_dirs: set[str] = set()
+            prefix_with_slash = stored_path + "/"
+            for share in shares:
+                remainder = share.path[len(prefix_with_slash):]
+                if "/" in remainder:
+                    # Intermediate directory — take first segment
+                    child_dirs.add(remainder.split("/", 1)[0])
+                else:
+                    # Direct file/dir at this level
+                    direct_files.add(remainder)
+
+            entries: list[FileInfo] = []
+            # Base path for entries at this listing level
+            base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
+
+            # Direct files: try to get rich metadata from backend
+            for name in sorted(direct_files):
+                file_stored = f"{stored_path}/{name}"
+                try:
+                    info = await mount.backend.get_info(file_stored, session=sess)
+                except Exception:
+                    info = None
+                if info is not None:
+                    stripped = self._strip_user_prefix(info.path, owner)
+                    info.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+                    info.mount_type = mount.mount_type
+                    info.permission = mount.permission.value
+                    entries.append(info)
+                else:
+                    # File may have been deleted — show synthetic entry
+                    entries.append(FileInfo(
+                        path=f"{base}/{name}",
+                        name=name,
+                        is_directory=False,
+                        permission=mount.permission.value,
+                        mount_type=mount.mount_type,
+                    ))
+
+            # Intermediate dirs: synthetic entries (no backend call needed)
+            for name in sorted(child_dirs):
+                entries.append(FileInfo(
+                    path=f"{base}/{name}",
+                    name=name,
+                    is_directory=True,
+                    permission=mount.permission.value,
+                    mount_type=mount.mount_type,
+                ))
+
+        return ListResult(
+            success=True,
+            message=f"Found {len(entries)} shared item(s)",
+            entries=entries,
+            path=shared_prefix + sub_path if sub_path != "/" else shared_prefix,
+        )
 
     def _list_root(self) -> ListResult:
         entries: list[FileInfo] = []

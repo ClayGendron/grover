@@ -634,6 +634,109 @@ class TestVFSSharedListDir:
                 "/ws/@shared/alice", user_id="bob"
             )
 
+    async def test_list_dir_shared_owner_file_shares(
+        self, shared_vfs: VFS, async_session: AsyncSession
+    ):
+        """File-level shares show just those files when listing owner dir."""
+        await shared_vfs.write("/ws/doc1.md", "doc1", user_id="alice")
+        await shared_vfs.write("/ws/doc2.md", "doc2", user_id="alice")
+        await shared_vfs.write("/ws/secret.md", "secret", user_id="alice")
+        await self._create_share(
+            shared_vfs, async_session, "/alice/doc1.md", "bob", "read"
+        )
+        await self._create_share(
+            shared_vfs, async_session, "/alice/doc2.md", "bob", "read"
+        )
+
+        result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
+        assert result.success is True
+        names = {e.name for e in result.entries}
+        assert names == {"doc1.md", "doc2.md"}
+        # secret.md should NOT appear
+        assert "secret.md" not in names
+
+    async def test_list_dir_shared_owner_mixed_shares(
+        self, shared_vfs: VFS, async_session: AsyncSession
+    ):
+        """Directory share lists everything; file shares outside that dir also appear."""
+        await shared_vfs.write("/ws/projects/a.py", "a", user_id="alice")
+        await shared_vfs.write("/ws/projects/b.py", "b", user_id="alice")
+        await shared_vfs.write("/ws/readme.md", "readme", user_id="alice")
+        # Directory share on /alice/projects gives full listing at that level
+        await self._create_share(
+            shared_vfs, async_session, "/alice/projects", "bob", "read"
+        )
+        # File share on readme
+        await self._create_share(
+            shared_vfs, async_session, "/alice/readme.md", "bob", "read"
+        )
+
+        # At the /alice level, bob should see both projects/ dir and readme.md
+        result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
+        assert result.success is True
+        names = {e.name for e in result.entries}
+        assert "projects" in names
+        assert "readme.md" in names
+
+    async def test_list_dir_shared_deep_navigation(
+        self, shared_vfs: VFS, async_session: AsyncSession
+    ):
+        """Deep file share shows intermediate dirs at each level."""
+        await shared_vfs.write(
+            "/ws/deep/nested/file.md", "deep content", user_id="alice"
+        )
+        await self._create_share(
+            shared_vfs, async_session, "/alice/deep/nested/file.md", "bob", "read"
+        )
+
+        # Level 1: /@shared/alice → shows "deep/"
+        result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
+        assert result.success is True
+        names = {e.name for e in result.entries}
+        assert names == {"deep"}
+        assert result.entries[0].is_directory is True
+
+        # Level 2: /@shared/alice/deep → shows "nested/"
+        result = await shared_vfs.list_dir("/ws/@shared/alice/deep", user_id="bob")
+        assert result.success is True
+        names = {e.name for e in result.entries}
+        assert names == {"nested"}
+        assert result.entries[0].is_directory is True
+
+        # Level 3: /@shared/alice/deep/nested → shows "file.md"
+        result = await shared_vfs.list_dir(
+            "/ws/@shared/alice/deep/nested", user_id="bob"
+        )
+        assert result.success is True
+        names = {e.name for e in result.entries}
+        assert names == {"file.md"}
+        assert result.entries[0].is_directory is False
+
+    async def test_list_dir_shared_directory_share_unchanged(
+        self, shared_vfs: VFS, async_session: AsyncSession
+    ):
+        """Existing directory share behavior is preserved (fast path)."""
+        await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
+        await shared_vfs.write("/ws/readme.md", "readme", user_id="alice")
+        # Share the entire alice root
+        await self._create_share(
+            shared_vfs, async_session, "/alice", "bob", "read"
+        )
+
+        result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
+        assert result.success is True
+        names = {e.name for e in result.entries}
+        assert "notes.md" in names
+        assert "readme.md" in names
+
+    async def test_list_dir_shared_no_shares_still_raises(
+        self, shared_vfs: VFS, async_session: AsyncSession
+    ):
+        """No shares at all still raises PermissionError."""
+        await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
+
 
 # ---------------------------------------------------------------------------
 # Integration: move/copy via @shared paths

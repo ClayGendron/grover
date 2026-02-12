@@ -106,6 +106,50 @@ class SharingService:
         )
         return list(result.scalars().all())
 
+    async def list_shares_under_prefix(
+        self,
+        session: AsyncSession,
+        grantee_id: str,
+        prefix: str,
+    ) -> list[FileShareBase]:
+        """List non-expired shares for *grantee_id* strictly under *prefix*.
+
+        Returns shares whose path starts with ``prefix + "/"``.  Shares
+        exactly at *prefix* are excluded (those are handled by the fast-path
+        ``check_permission`` call).
+        """
+        prefix = normalize_path(prefix)
+        model = self._share_model
+        now = datetime.now(UTC)
+
+        # Escape SQL LIKE wildcards in the prefix itself
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pattern = escaped + "/%"
+        prefix_slash = prefix + "/"
+
+        result = await session.execute(
+            select(model).where(
+                model.grantee_id == grantee_id,
+                model.path.like(like_pattern, escape="\\"),  # type: ignore[union-attr]
+            )
+        )
+        shares = result.scalars().all()
+
+        # Filter out expired shares and verify prefix in Python for defense-in-depth
+        active: list[FileShareBase] = []
+        for share in shares:
+            if not share.path.startswith(prefix_slash):
+                continue
+            if share.expires_at is not None:
+                exp = share.expires_at
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=UTC)
+                if exp <= now:
+                    continue
+            active.append(share)
+
+        return active
+
     async def check_permission(
         self,
         session: AsyncSession,

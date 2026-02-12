@@ -179,6 +179,147 @@ class TestListSharedWith:
 
 
 # ---------------------------------------------------------------------------
+# list_shares_under_prefix
+# ---------------------------------------------------------------------------
+
+
+class TestListSharesUnderPrefix:
+    async def test_list_shares_under_prefix_basic(
+        self, sharing: SharingService, async_session: AsyncSession
+    ):
+        """Returns shares strictly under the prefix."""
+        await sharing.create_share(
+            async_session,
+            "/alice/doc1.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        await sharing.create_share(
+            async_session,
+            "/alice/doc2.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        shares = await sharing.list_shares_under_prefix(
+            async_session, "bob", "/alice"
+        )
+        assert len(shares) == 2
+        paths = {s.path for s in shares}
+        assert paths == {"/alice/doc1.md", "/alice/doc2.md"}
+
+    async def test_list_shares_under_prefix_no_matches(
+        self, sharing: SharingService, async_session: AsyncSession
+    ):
+        """Returns empty list when no shares exist under prefix."""
+        shares = await sharing.list_shares_under_prefix(
+            async_session, "bob", "/alice"
+        )
+        assert shares == []
+
+    async def test_list_shares_under_prefix_excludes_expired(
+        self, sharing: SharingService, async_session: AsyncSession
+    ):
+        """Expired shares are excluded."""
+        expired = datetime.now(UTC) - timedelta(hours=1)
+        await sharing.create_share(
+            async_session,
+            "/alice/expired.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+            expires_at=expired,
+        )
+        await sharing.create_share(
+            async_session,
+            "/alice/valid.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        shares = await sharing.list_shares_under_prefix(
+            async_session, "bob", "/alice"
+        )
+        assert len(shares) == 1
+        assert shares[0].path == "/alice/valid.md"
+
+    async def test_list_shares_under_prefix_excludes_other_grantees(
+        self, sharing: SharingService, async_session: AsyncSession
+    ):
+        """Only returns shares for the specified grantee."""
+        await sharing.create_share(
+            async_session,
+            "/alice/doc.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        await sharing.create_share(
+            async_session,
+            "/alice/doc2.md",
+            grantee_id="charlie",
+            permission="read",
+            granted_by="alice",
+        )
+        shares = await sharing.list_shares_under_prefix(
+            async_session, "bob", "/alice"
+        )
+        assert len(shares) == 1
+        assert shares[0].path == "/alice/doc.md"
+
+    async def test_list_shares_under_prefix_excludes_exact(
+        self, sharing: SharingService, async_session: AsyncSession
+    ):
+        """Shares exactly at the prefix are NOT returned (fast path handles those)."""
+        await sharing.create_share(
+            async_session,
+            "/alice",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        await sharing.create_share(
+            async_session,
+            "/alice/doc.md",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        shares = await sharing.list_shares_under_prefix(
+            async_session, "bob", "/alice"
+        )
+        assert len(shares) == 1
+        assert shares[0].path == "/alice/doc.md"
+
+    async def test_list_shares_under_prefix_like_wildcards_escaped(
+        self, sharing: SharingService, async_session: AsyncSession
+    ):
+        """LIKE wildcards (_/%) in prefix are escaped and don't match broadly."""
+        # Share with underscore in path
+        await sharing.create_share(
+            async_session,
+            "/alice/my_project/file.py",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        # Share that would match if _ were a LIKE wildcard
+        await sharing.create_share(
+            async_session,
+            "/alice/myXproject/file.py",
+            grantee_id="bob",
+            permission="read",
+            granted_by="alice",
+        )
+        shares = await sharing.list_shares_under_prefix(
+            async_session, "bob", "/alice/my_project"
+        )
+        assert len(shares) == 1
+        assert shares[0].path == "/alice/my_project/file.py"
+
+
+# ---------------------------------------------------------------------------
 # check_permission
 # ---------------------------------------------------------------------------
 
