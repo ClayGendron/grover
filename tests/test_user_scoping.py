@@ -707,3 +707,99 @@ class TestVFSSharedMoveAndCopy:
             "/ws/@shared/alice/old.md", "/ws/@shared/alice/new.md", user_id="bob"
         )
         assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Trash scoping tests
+# ---------------------------------------------------------------------------
+
+
+class TestTrashScoping:
+    """Trash operations scoped by owner_id on authenticated mounts."""
+
+    async def test_list_trash_scoped_by_owner(self, auth_vfs: VFS):
+        """Each user only sees their own trashed files."""
+        await auth_vfs.write("/ws/a.md", "alice's file", user_id="alice")
+        await auth_vfs.write("/ws/b.md", "bob's file", user_id="bob")
+
+        await auth_vfs.delete("/ws/a.md", user_id="alice")
+        await auth_vfs.delete("/ws/b.md", user_id="bob")
+
+        alice_trash = await auth_vfs.list_trash(user_id="alice")
+        assert alice_trash.success
+        assert len(alice_trash.entries) == 1
+        assert alice_trash.entries[0].name == "a.md"
+
+        bob_trash = await auth_vfs.list_trash(user_id="bob")
+        assert bob_trash.success
+        assert len(bob_trash.entries) == 1
+        assert bob_trash.entries[0].name == "b.md"
+
+    async def test_list_trash_regular_mount_shows_all(self, regular_vfs: VFS):
+        """Non-authenticated mount shows all trashed files regardless."""
+        await regular_vfs.write("/ws/a.md", "file a")
+        await regular_vfs.write("/ws/b.md", "file b")
+        await regular_vfs.delete("/ws/a.md")
+        await regular_vfs.delete("/ws/b.md")
+
+        trash = await regular_vfs.list_trash()
+        assert trash.success
+        assert len(trash.entries) == 2
+
+    async def test_restore_own_file(self, auth_vfs: VFS):
+        """User can restore their own trashed file."""
+        await auth_vfs.write("/ws/mine.md", "my data", user_id="alice")
+        await auth_vfs.delete("/ws/mine.md", user_id="alice")
+
+        result = await auth_vfs.restore_from_trash("/ws/mine.md", user_id="alice")
+        assert result.success is True
+
+        r = await auth_vfs.read("/ws/mine.md", user_id="alice")
+        assert r.success
+        assert r.content == "my data"
+
+    async def test_restore_other_user_denied(self, auth_vfs: VFS):
+        """User cannot restore another user's trashed file."""
+        await auth_vfs.write("/ws/secret.md", "alice's secret", user_id="alice")
+        await auth_vfs.delete("/ws/secret.md", user_id="alice")
+
+        result = await auth_vfs.restore_from_trash("/ws/secret.md", user_id="bob")
+        assert result.success is False
+        assert "not in trash" in result.message.lower()
+
+    async def test_empty_trash_scoped(self, auth_vfs: VFS):
+        """Emptying trash only deletes the requesting user's files."""
+        await auth_vfs.write("/ws/a.md", "alice", user_id="alice")
+        await auth_vfs.write("/ws/b.md", "bob", user_id="bob")
+        await auth_vfs.delete("/ws/a.md", user_id="alice")
+        await auth_vfs.delete("/ws/b.md", user_id="bob")
+
+        # Alice empties her trash
+        result = await auth_vfs.empty_trash(user_id="alice")
+        assert result.success
+        assert result.total_deleted == 1
+
+        # Bob's trash still has his file
+        bob_trash = await auth_vfs.list_trash(user_id="bob")
+        assert bob_trash.success
+        assert len(bob_trash.entries) == 1
+        assert bob_trash.entries[0].name == "b.md"
+
+        # Alice's trash is now empty
+        alice_trash = await auth_vfs.list_trash(user_id="alice")
+        assert alice_trash.success
+        assert len(alice_trash.entries) == 0
+
+    async def test_empty_trash_regular_mount_deletes_all(self, regular_vfs: VFS):
+        """Non-authenticated mount empties all trash."""
+        await regular_vfs.write("/ws/a.md", "file a")
+        await regular_vfs.write("/ws/b.md", "file b")
+        await regular_vfs.delete("/ws/a.md")
+        await regular_vfs.delete("/ws/b.md")
+
+        result = await regular_vfs.empty_trash()
+        assert result.success
+        assert result.total_deleted == 2
+
+        trash = await regular_vfs.list_trash()
+        assert len(trash.entries) == 0

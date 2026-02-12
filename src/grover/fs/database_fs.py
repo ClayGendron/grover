@@ -744,23 +744,28 @@ class DatabaseFileSystem:
         self,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> ListResult:
         sess = self._require_session(session)
-        return await self.trash.list_trash(sess)
+        return await self.trash.list_trash(sess, owner_id=owner_id)
 
     async def restore_from_trash(
         self,
         path: str,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> RestoreResult:
         sess = self._require_session(session)
-        return await self.trash.restore_from_trash(sess, path, self.metadata.get_file)
+        return await self.trash.restore_from_trash(
+            sess, path, self.metadata.get_file, owner_id=owner_id
+        )
 
     async def empty_trash(
         self,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
-        return await self.trash.empty_trash(sess)
+        return await self.trash.empty_trash(sess, owner_id=owner_id)

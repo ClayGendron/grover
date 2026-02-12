@@ -40,14 +40,15 @@ class TrashService:
         self._versioning = versioning
         self._delete_content_cb = delete_content_cb
 
-    async def list_trash(self, session: AsyncSession) -> ListResult:
-        """List all soft-deleted files."""
+    async def list_trash(
+        self, session: AsyncSession, *, owner_id: str | None = None
+    ) -> ListResult:
+        """List soft-deleted files, optionally scoped to *owner_id*."""
         model = self._file_model
-        result = await session.execute(
-            select(model).where(
-                model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
-            )
-        )
+        conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
+        if owner_id is not None:
+            conditions.append(model.owner_id == owner_id)
+        result = await session.execute(select(model).where(*conditions))
         files = result.scalars().all()
 
         entries = [
@@ -75,17 +76,20 @@ class TrashService:
         session: AsyncSession,
         path: str,
         get_file: GetFile,
+        *,
+        owner_id: str | None = None,
     ) -> RestoreResult:
-        """Restore a file from trash."""
+        """Restore a file from trash, optionally verifying *owner_id*."""
         path = normalize_path(path)
 
         model = self._file_model
-        result = await session.execute(
-            select(model).where(
-                model.original_path == path,
-                model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
-            )
-        )
+        conditions = [
+            model.original_path == path,
+            model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
+        ]
+        if owner_id is not None:
+            conditions.append(model.owner_id == owner_id)
+        result = await session.execute(select(model).where(*conditions))
         file = result.scalar_one_or_none()
 
         if not file:
@@ -140,14 +144,15 @@ class TrashService:
             file_path=path,
         )
 
-    async def empty_trash(self, session: AsyncSession) -> DeleteResult:
-        """Permanently delete all files in trash."""
+    async def empty_trash(
+        self, session: AsyncSession, *, owner_id: str | None = None
+    ) -> DeleteResult:
+        """Permanently delete trashed files, optionally scoped to *owner_id*."""
         model = self._file_model
-        result = await session.execute(
-            select(model).where(
-                model.deleted_at.is_not(None),  # type: ignore[unresolved-attribute]
-            )
-        )
+        conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]
+        if owner_id is not None:
+            conditions.append(model.owner_id == owner_id)
+        result = await session.execute(select(model).where(*conditions))
         files = result.scalars().all()
 
         count = len(files)

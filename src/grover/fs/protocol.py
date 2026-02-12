@@ -225,6 +225,7 @@ class SupportsTrash(Protocol):
         self,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> ListResult: ...
 
     async def restore_from_trash(
@@ -232,12 +233,14 @@ class SupportsTrash(Protocol):
         path: str,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> RestoreResult: ...
 
     async def empty_trash(
         self,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> DeleteResult: ...
 
 

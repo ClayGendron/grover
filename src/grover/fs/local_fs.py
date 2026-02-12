@@ -1123,19 +1123,23 @@ class LocalFileSystem:
         self,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> ListResult:
         sess = self._require_session(session)
-        return await self.trash.list_trash(sess)
+        return await self.trash.list_trash(sess, owner_id=owner_id)
 
     async def restore_from_trash(
         self,
         path: str,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> RestoreResult:
         """Restore a file from trash, writing content back to disk."""
         sess = self._require_session(session)
-        result = await self.trash.restore_from_trash(sess, path, self.metadata.get_file)
+        result = await self.trash.restore_from_trash(
+            sess, path, self.metadata.get_file, owner_id=owner_id
+        )
         if not result.success:
             return result
 
@@ -1174,9 +1178,10 @@ class LocalFileSystem:
         self,
         *,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
-        return await self.trash.empty_trash(sess)
+        return await self.trash.empty_trash(sess, owner_id=owner_id)
 
     # ------------------------------------------------------------------
     # Capability: SupportsReconcile

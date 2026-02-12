@@ -1020,14 +1020,18 @@ class VFS:
     # ------------------------------------------------------------------
 
     async def list_trash(self, *, user_id: str | None = None) -> ListResult:
-        """List all items in trash across all mounts (skips unsupported)."""
+        """List all items in trash across all mounts (skips unsupported).
+
+        On authenticated mounts, only shows trash owned by *user_id*.
+        """
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
             cap = self._get_capability(mount.backend, SupportsTrash)
             if cap is None:
                 continue  # Skip unsupported mounts silently
+            owner_id = user_id if mount.authenticated else None
             async with self._session_for(mount) as sess:
-                result = await cap.list_trash(session=sess)
+                result = await cap.list_trash(session=sess, owner_id=owner_id)
             if result.success:
                 prefixed_entries = [
                     self._restore_file_info(entry, mount, user_id)
@@ -1056,23 +1060,30 @@ class VFS:
         cap = self._get_capability(mount.backend, SupportsTrash)
         if cap is None:
             raise CapabilityNotSupportedError(f"Mount at {mount.mount_path} does not support trash")
+        owner_id = user_id if mount.authenticated else None
         async with self._session_for(mount) as sess:
-            result = await cap.restore_from_trash(rel_path, session=sess)
+            result = await cap.restore_from_trash(
+                rel_path, session=sess, owner_id=owner_id
+            )
         result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
         return result
 
     async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
-        """Empty trash across all mounts (skips unsupported)."""
+        """Empty trash across all mounts (skips unsupported).
+
+        On authenticated mounts, only empties trash owned by *user_id*.
+        """
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
             cap = self._get_capability(mount.backend, SupportsTrash)
             if cap is None:
                 continue  # Skip unsupported mounts silently
+            owner_id = user_id if mount.authenticated else None
             async with self._session_for(mount) as sess:
-                result = await cap.empty_trash(session=sess)
+                result = await cap.empty_trash(session=sess, owner_id=owner_id)
             if not result.success:
                 return result
             total_deleted += result.total_deleted or 0
