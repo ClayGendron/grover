@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover.events import EventBus, EventType, FileEvent
 
-from .exceptions import CapabilityNotSupportedError, MountNotFoundError
+from .exceptions import AuthenticationRequiredError, CapabilityNotSupportedError, MountNotFoundError
 from .permissions import Permission
 from .protocol import SupportsReconcile, SupportsTrash, SupportsVersions
 from .types import (
@@ -132,6 +132,74 @@ class VFS:
             raise PermissionError(f"Cannot write to read-only path: {virtual_path}")
 
     # ------------------------------------------------------------------
+    # User-scoped path resolution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_shared_access(rel_path: str) -> tuple[bool, str | None, str | None]:
+        """Parse ``/@shared/{owner}/{rest}`` from a relative path.
+
+        Returns ``(is_shared, owner, rest_path)``.
+        """
+        segments = rel_path.strip("/").split("/")
+        if len(segments) >= 2 and segments[0] == "@shared":
+            owner = segments[1]
+            rest = "/" + "/".join(segments[2:]) if len(segments) > 2 else "/"
+            return True, owner, rest
+        return False, None, None
+
+    def _resolve_user_path(
+        self, mount: MountConfig, rel_path: str, user_id: str | None
+    ) -> str:
+        """Rewrite *rel_path* for an authenticated mount.
+
+        - Regular mounts: pass through unchanged.
+        - Authenticated mounts: prepend ``/{user_id}/`` to the path.
+        - ``@shared/{owner}/`` paths: resolve to ``/{owner}/``.
+        - Missing ``user_id`` on authenticated mount: raise.
+        """
+        if not mount.authenticated:
+            return rel_path
+
+        if not user_id:
+            raise AuthenticationRequiredError(
+                "user_id is required for authenticated mount"
+            )
+
+        is_shared, owner, rest = self._is_shared_access(rel_path)
+        if is_shared and owner is not None and rest is not None:
+            return f"/{owner}{rest}" if rest != "/" else f"/{owner}"
+
+        if rel_path == "/":
+            return f"/{user_id}"
+        return f"/{user_id}{rel_path}"
+
+    @staticmethod
+    def _strip_user_prefix(path: str, user_id: str) -> str:
+        """Remove ``/{user_id}`` prefix from a backend path."""
+        prefix = f"/{user_id}/"
+        if path.startswith(prefix):
+            return "/" + path[len(prefix):]
+        if path == f"/{user_id}":
+            return "/"
+        return path
+
+    def _restore_user_path(
+        self, stored_path: str | None, mount: MountConfig, user_id: str | None
+    ) -> str | None:
+        """Convert a stored backend path back to a user-facing virtual path.
+
+        Strips the ``/{user_id}/`` prefix for authenticated mounts and
+        re-applies the mount prefix.
+        """
+        if stored_path is None:
+            return None
+        if not mount.authenticated or user_id is None:
+            return self._prefix_path(stored_path, mount.mount_path)
+        stripped = self._strip_user_prefix(stored_path, user_id)
+        return self._prefix_path(stripped, mount.mount_path)
+
+    # ------------------------------------------------------------------
     # Read Operations
     # ------------------------------------------------------------------
 
@@ -140,12 +208,15 @@ class VFS:
         path: str,
         offset: int = 0,
         limit: int = 2000,
+        *,
+        user_id: str | None = None,
     ) -> ReadResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
+        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
             result = await mount.backend.read(rel_path, offset, limit, session=sess)
-        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         return result
 
     async def list_dir(self, path: str = "/") -> ListResult:
@@ -436,6 +507,7 @@ class VFS:
         created_by: str = "agent",
         *,
         overwrite: bool = True,
+        user_id: str | None = None,
     ) -> WriteResult:
         path = normalize_path(path)
         try:
@@ -444,11 +516,15 @@ class VFS:
             return WriteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
+        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
+            write_kwargs: dict[str, Any] = {"overwrite": overwrite, "session": sess}
+            if mount.authenticated and user_id is not None:
+                write_kwargs["owner_id"] = user_id
             result = await mount.backend.write(
-                rel_path, content, created_by, overwrite=overwrite, session=sess
+                rel_path, content, created_by, **write_kwargs
             )
-        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         if result.success:
             await self._emit(
                 FileEvent(event_type=EventType.FILE_WRITTEN, path=path, content=content)

@@ -364,6 +364,7 @@ class LocalFileSystem:
         *,
         overwrite: bool = True,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await write_file(
@@ -378,6 +379,7 @@ class LocalFileSystem:
             file_model=self._file_model,
             read_content=self._read_content,
             write_content=self._write_content,
+            owner_id=owner_id,
         )
 
     async def edit(

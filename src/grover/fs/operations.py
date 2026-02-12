@@ -103,6 +103,7 @@ async def write_file(
     file_model: type[FileBase],
     read_content: ContentReader,
     write_content: ContentWriter,
+    owner_id: str | None = None,
 ) -> WriteResult:
     """Orchestrate a file write: validate → version → write → flush."""
     valid, error = validate_path(path)
@@ -172,6 +173,7 @@ async def write_file(
             path=path,
             name=name,
             parent_path=split_path(path)[0],
+            owner_id=owner_id,
             content_hash=content_hash,
             size_bytes=size_bytes,
             mime_type=guess_mime_type(name),

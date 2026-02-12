@@ -102,6 +102,7 @@ class StorageBackend(Protocol):
         *,
         overwrite: bool = True,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
     ) -> WriteResult: ...
 
     async def edit(

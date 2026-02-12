@@ -23,3 +23,7 @@ class ConsistencyError(GroverError):
 
 class CapabilityNotSupportedError(GroverError):
     """Raised when a backend doesn't support a requested capability."""
+
+
+class AuthenticationRequiredError(GroverError):
+    """Raised when an authenticated mount is accessed without a user_id."""
