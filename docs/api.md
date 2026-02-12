@@ -30,7 +30,7 @@ GroverAsync(*, data_dir=None, embedding_provider=None)
 g.mount(path, backend=None, *, engine=None, session_factory=None,
         dialect="sqlite", file_model=None, file_version_model=None,
         db_schema=None, mount_type=None, permission=Permission.READ_WRITE,
-        label="", hidden=False)
+        label="", hidden=False, authenticated=False)
 g.unmount(path)
 ```
 
@@ -54,18 +54,21 @@ Mount a storage backend at a virtual path. You can pass either:
 | `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |
 | `label` | `str` | `""` | Human-readable mount label |
 | `hidden` | `bool` | `False` | Hidden mounts are excluded from listing and indexing |
+| `authenticated` | `bool` | `False` | Enable user-scoped paths. All operations require `user_id`. |
 
 ### Filesystem Operations
 
+All filesystem methods accept an optional `user_id` keyword argument. On authenticated mounts, `user_id` is **required** — paths are automatically namespaced per user (e.g., `/notes.md` → `/{user_id}/notes.md` in the backend). On regular mounts, `user_id` is ignored.
+
 ```python
-g.read(path) -> ReadResult
-g.write(path, content) -> WriteResult
-g.edit(path, old, new) -> EditResult
-g.delete(path, permanent=False) -> DeleteResult
-g.list_dir(path="/") -> list[dict]
-g.exists(path) -> bool
-g.move(src, dest, *, follow=False) -> MoveResult
-g.copy(src, dest) -> WriteResult
+g.read(path, *, user_id=None) -> ReadResult
+g.write(path, content, *, user_id=None) -> WriteResult
+g.edit(path, old, new, *, user_id=None) -> EditResult
+g.delete(path, permanent=False, *, user_id=None) -> DeleteResult
+g.list_dir(path="/", *, user_id=None) -> list[dict]
+g.exists(path, *, user_id=None) -> bool
+g.move(src, dest, *, user_id=None, follow=False) -> MoveResult
+g.copy(src, dest, *, user_id=None) -> WriteResult
 ```
 
 | Method | Description |
@@ -74,7 +77,7 @@ g.copy(src, dest) -> WriteResult
 | `write(path, content)` | Write content to a file. Creates the file if it doesn't exist, creates a new version if it does. Returns `WriteResult` with `success`, `created`, `version`. |
 | `edit(path, old, new)` | Find-and-replace within a file. Returns `EditResult` with `success` and `version`. |
 | `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
-| `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. |
+| `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. On authenticated mounts, the user's root listing includes a virtual `@shared/` entry. |
 | `exists(path)` | Check if a path exists. Returns `bool`. |
 | `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
 | `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
@@ -127,16 +130,50 @@ g.restore_version(path, version) -> RestoreResult
 ### Trash
 
 ```python
-g.list_trash() -> list
-g.restore_from_trash(path) -> RestoreResult
-g.empty_trash() -> DeleteResult
+g.list_trash(*, user_id=None) -> list
+g.restore_from_trash(path, *, user_id=None) -> RestoreResult
+g.empty_trash(*, user_id=None) -> DeleteResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `list_trash()` | List all soft-deleted files across all mounts. |
-| `restore_from_trash(path)` | Restore a previously deleted file by its original path. Returns `RestoreResult`. |
-| `empty_trash()` | Permanently delete all trashed files. Returns `DeleteResult`. |
+| `list_trash()` | List all soft-deleted files across all mounts. On authenticated mounts, scoped to the requesting user's files only. |
+| `restore_from_trash(path)` | Restore a previously deleted file by its original path. On authenticated mounts, only the file owner can restore. Returns `RestoreResult`. |
+| `empty_trash()` | Permanently delete trashed files. On authenticated mounts, only deletes the requesting user's trashed files. Returns `DeleteResult`. |
+
+### Sharing
+
+Available on authenticated mounts. Share files or directories with other users.
+
+```python
+g.share(path, grantee_id, permission="read", *, user_id) -> ShareResult
+g.unshare(path, grantee_id, *, user_id) -> ShareResult
+g.list_shares(path, *, user_id) -> ListSharesResult
+g.list_shared_with_me(*, user_id) -> ListSharesResult
+```
+
+| Method | Description |
+|--------|-------------|
+| `share(path, grantee_id, permission, *, user_id)` | Share a file or directory. `permission` is `"read"` or `"write"`. Only the file owner can create shares. Returns `ShareResult`. |
+| `unshare(path, grantee_id, *, user_id)` | Remove a share. Returns `ShareResult`. |
+| `list_shares(path, *, user_id)` | List all shares on a given path. Returns `ListSharesResult`. |
+| `list_shared_with_me(*, user_id)` | List all files shared with the current user. Paths are returned with `@shared/{owner}/` prefix. Returns `ListSharesResult`. |
+
+Shared files are accessible via the `@shared/` virtual namespace:
+
+```python
+# Alice shares a file with Bob
+g.share("/ws/notes.md", "bob", user_id="alice")
+
+# Bob reads it via @shared/
+content = g.read("/ws/@shared/alice/notes.md", user_id="bob")
+
+# Bob can browse @shared/ like a directory
+shared_owners = g.list_dir("/ws/@shared", user_id="bob")
+alice_files = g.list_dir("/ws/@shared/alice", user_id="bob")
+```
+
+Directory shares grant access to all descendants (prefix matching).
 
 ### Reconciliation
 
@@ -268,6 +305,10 @@ Every result has a `success: bool` and `message: str` field. Check `success` to 
 | `TreeResult` | `entries` (list of `FileInfo`), `path`, `total_files`, `total_dirs` |
 | `FileInfo` | `path`, `name`, `is_directory`, `size_bytes`, `mime_type`, `version` |
 | `VersionInfo` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
+| `MoveResult` | `old_path`, `new_path` |
+| `ShareResult` | `share` (`ShareInfo | None`) |
+| `ListSharesResult` | `shares` (list of `ShareInfo`) |
+| `ShareInfo` | `path`, `grantee_id`, `permission`, `granted_by`, `created_at`, `expires_at` |
 
 ---
 
@@ -339,6 +380,7 @@ from grover.fs import (
     StorageError,                   # Backend I/O failure
     ConsistencyError,               # Metadata/content mismatch
     CapabilityNotSupportedError,    # Backend doesn't support this operation
+    AuthenticationRequiredError,    # user_id missing on authenticated mount
 )
 ```
 

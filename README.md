@@ -147,6 +147,25 @@ g.mount("/code", LocalFileSystem(workspace_dir="./my-project"))
 g.mount("/docs", DatabaseFileSystem(dialect="postgresql"))
 ```
 
+### Authenticated mounts
+
+For multi-tenant deployments, mount with `authenticated=True` to enable per-user namespacing:
+
+```python
+g = GroverAsync()
+await g.mount("/ws", engine=engine, authenticated=True)
+
+# Each user has their own namespace
+await g.write("/ws/notes.md", "hello", user_id="alice")
+await g.write("/ws/notes.md", "world", user_id="bob")
+r1 = await g.read("/ws/notes.md", user_id="alice")  # "hello"
+r2 = await g.read("/ws/notes.md", user_id="bob")    # "world"
+
+# Share files between users
+await g.share("/ws/notes.md", "bob", user_id="alice")
+r3 = await g.read("/ws/@shared/alice/notes.md", user_id="bob")  # "hello"
+```
+
 ## What's in `.grover/`
 
 When you use Grover, a `.grover/` directory is created to store internal state:
@@ -166,9 +185,10 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 
 | Category | Methods |
 |----------|---------|
-| **Filesystem** | `read`, `write`, `edit`, `delete`, `list_dir`, `exists` |
+| **Filesystem** | `read`, `write`, `edit`, `delete`, `list_dir`, `exists`, `move`, `copy` |
 | **Versioning** | `list_versions`, `get_version_content`, `restore_version` |
 | **Trash** | `list_trash`, `restore_from_trash`, `empty_trash` |
+| **Sharing** | `share`, `unshare`, `list_shares`, `list_shared_with_me` |
 | **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains` |
 | **Search** | `search` |
 | **Lifecycle** | `mount`, `unmount`, `index`, `save`, `close` |

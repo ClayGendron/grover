@@ -10,6 +10,8 @@ For the high-level architecture diagram and component relationships, see [fs_arc
 
 - [Write Order of Operations](#write-order-of-operations)
 - [Delete Order of Operations](#delete-order-of-operations)
+- [Move Semantics](#move-semantics)
+- [Authenticated Mounts](#authenticated-mounts)
 - [Session Lifecycle](#session-lifecycle)
 - [Capability Protocols](#capability-protocols)
 - [Version Snapshotting](#version-snapshotting)
@@ -132,6 +134,62 @@ For directories, all children have their paths updated in-place as well. Parent 
 ### Overwrite Case
 
 When the destination already exists, both modes behave the same: the source content overwrites the destination (new version created), and the source is soft-deleted. With `follow=True`, share paths are also updated.
+
+---
+
+## Authenticated Mounts
+
+When `MountConfig.authenticated=True`, VFS enforces user-scoped paths. Every public VFS method accepts `user_id: str | None = None`. On authenticated mounts, `user_id` is required.
+
+### Path Resolution Flow
+
+```
+User calls:  g.read("/ws/notes.md", user_id="alice")
+                    │
+                    ▼
+VFS._resolve_user_path(mount, "/notes.md", "alice")
+                    │
+                    ▼
+Backend sees:  "/alice/notes.md"
+                    │
+                    ▼
+VFS._strip_user_prefix(result.path, "alice")
+                    │
+                    ▼
+User gets:  "/ws/notes.md"
+```
+
+For `@shared/{owner}/` paths:
+
+```
+User calls:  g.read("/ws/@shared/bob/doc.md", user_id="alice")
+                    │
+                    ▼
+VFS._resolve_user_path → "/bob/doc.md"
+VFS._check_share_access(session, "/bob/doc.md", "alice", "read")
+                    │
+                    ▼
+Backend sees:  "/bob/doc.md"
+```
+
+### Share Table Schema
+
+```
+grover_file_shares
+├── id          (str, PK — UUID)
+├── path        (str, indexed — stored path with user prefix)
+├── grantee_id  (str, indexed)
+├── permission  (str — "read" or "write")
+├── granted_by  (str)
+├── created_at  (datetime)
+└── expires_at  (datetime | None)
+```
+
+`SharingService` is stateless (like `MetadataService`). It takes a model at construction and a session at call time. Permission resolution walks ancestor paths (e.g., share on `/alice/projects/` grants access to `/alice/projects/docs/file.md`).
+
+### Trash Scoping
+
+On authenticated mounts, VFS passes `owner_id=user_id` to all trash operations. The `owner_id` filter is added to the SQL WHERE clause so each user only sees and manages their own trashed files. On regular mounts, `owner_id` is `None` and all trash is visible.
 
 ---
 

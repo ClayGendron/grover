@@ -170,6 +170,43 @@ Chunks are stored as files in `.grover/chunks/` with stable paths based on symbo
 
 Analyzers should be pure functions of `(path, content)`. They should never raise on malformed input — return an empty result instead.
 
+## User-scoped file systems
+
+Grover supports **authenticated mounts** where every operation requires a `user_id`. This enables multi-tenant deployments where multiple users share the same database but operate in isolated namespaces.
+
+### Path rewriting at VFS level
+
+User scoping is implemented entirely at the VFS layer. Backends remain unaware of users — they see ordinary paths like `/alice/notes.md`.
+
+When a mount has `authenticated=True`:
+
+1. **Write:** `g.write("/ws/notes.md", "hello", user_id="alice")` → backend sees `/alice/notes.md`
+2. **Read:** `g.read("/ws/notes.md", user_id="alice")` → backend reads `/alice/notes.md`
+3. **Results:** Backend returns `/alice/notes.md` → VFS strips prefix, user sees `/ws/notes.md`
+
+This design keeps path rewriting localized to VFS and prevents AI agents from escaping their namespace.
+
+### `@shared/` virtual namespace
+
+Files shared between users are browseable via `@shared/{owner}/`:
+
+```
+/ws/                    ← user's own files
+/ws/@shared/            ← virtual directory listing shared owners
+/ws/@shared/alice/      ← alice's files shared with the current user
+/ws/@shared/alice/doc.md ← resolves to /alice/doc.md in the backend
+```
+
+Access to `@shared/` paths is permission-checked via `SharingService`. Directory shares grant access to all descendants (prefix matching). Write access requires an explicit `"write"` share.
+
+### Move semantics (path is identity)
+
+Following the git model, **path is identity**. The default `move()` creates a clean break — a new file record at the destination with no version history. Use `follow=True` for rename semantics where the file record, versions, and share paths follow the move. See [internals/fs.md](internals/fs.md#move-semantics) for details.
+
+### Trash scoping
+
+On authenticated mounts, trash operations are scoped by `owner_id`. Each user can only list, restore, and empty their own trashed files. Regular mounts are unaffected.
+
 ## Adding a new embedding provider
 
 1. Create `src/grover/search/providers/your_provider.py`.
