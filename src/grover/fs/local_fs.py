@@ -8,12 +8,15 @@ import os
 import re
 import shutil
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import select
+
+from grover.models.files import File, FileVersion
 
 from .directories import DirectoryService
 from .exceptions import GroverError
@@ -50,6 +53,7 @@ from .utils import (
     is_binary_file,
     normalize_path,
     split_path,
+    to_trash_path,
     validate_path,
 )
 from .versioning import VersioningService
@@ -93,8 +97,6 @@ class LocalFileSystem:
         file_version_model: type[FileVersionBase] | None = None,
         schema: str | None = None,
     ) -> None:
-        from grover.models.files import File, FileVersion
-
         fm: type[FileBase] = file_model or File
         fvm: type[FileVersionBase] = file_version_model or FileVersion
 
@@ -124,7 +126,8 @@ class LocalFileSystem:
     def file_version_model(self) -> type[FileVersionBase]:
         return self._file_version_model
 
-    def _require_session(self, session: AsyncSession | None) -> AsyncSession:
+    @staticmethod
+    def _require_session(session: AsyncSession | None) -> AsyncSession:
         if session is None:
             raise GroverError("LocalFileSystem requires a session")
         return session
@@ -1243,10 +1246,6 @@ class LocalFileSystem:
                 exists = await self._content_exists(file.path)
                 if not exists:
                     # DB record but no disk file — phantom metadata, soft-delete
-                    from datetime import UTC, datetime
-
-                    from .utils import to_trash_path
-
                     file.original_path = file.path
                     file.path = to_trash_path(file.path, file.id)
                     file.deleted_at = datetime.now(UTC)

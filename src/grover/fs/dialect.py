@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import text
+from sqlalchemy import func, text
+from sqlalchemy.dialects import postgresql as pg_dialect
+from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+from grover.models.files import File
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -46,8 +50,6 @@ async def upsert_file(
     - MSSQL: MERGE INTO ... WITH (HOLDLOCK)
     """
     if model is None:
-        from grover.models.files import File
-
         model = File
 
     if dialect == "mssql":
@@ -80,12 +82,8 @@ async def _upsert_sqlite_pg(
     update_keys: list[str] | None = None,
 ) -> int:
     """SQLite / PostgreSQL upsert using INSERT ... ON CONFLICT DO UPDATE."""
-    from sqlalchemy.dialects import sqlite as sqlite_dialect
-
     dialect_module = sqlite_dialect
     if dialect == "postgresql":
-        from sqlalchemy.dialects import postgresql as pg_dialect
-
         dialect_module = pg_dialect
 
     stmt = dialect_module.insert(model).values(**values)
@@ -157,8 +155,6 @@ def now_expression(dialect: str) -> Any:
     - PostgreSQL: func.now()
     - MSSQL: func.sysdatetimeoffset()
     """
-    from sqlalchemy import func
-
     if dialect == "sqlite":
         return func.datetime("now")
     if dialect == "mssql":

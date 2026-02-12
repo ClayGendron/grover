@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func
 from sqlmodel import select
 
+from grover.models.files import File, FileVersion
+
 from .directories import DirectoryService
 from .exceptions import GroverError
 from .metadata import MetadataService
@@ -76,8 +78,6 @@ class DatabaseFileSystem:
         file_version_model: type[FileVersionBase] | None = None,
         schema: str | None = None,
     ) -> None:
-        from grover.models.files import File, FileVersion
-
         fm: type[FileBase] = file_model or File
         fvm: type[FileVersionBase] = file_version_model or FileVersion
 
@@ -100,7 +100,8 @@ class DatabaseFileSystem:
     def file_version_model(self) -> type[FileVersionBase]:
         return self._file_version_model
 
-    def _require_session(self, session: AsyncSession | None) -> AsyncSession:
+    @staticmethod
+    def _require_session(session: AsyncSession | None) -> AsyncSession:
         if session is None:
             raise GroverError("DatabaseFileSystem requires a session")
         return session
