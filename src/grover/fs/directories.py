@@ -36,7 +36,12 @@ class DirectoryService:
         self.dialect = dialect
         self.schema = schema
 
-    async def ensure_parent_dirs(self, session: AsyncSession, path: str) -> None:
+    async def ensure_parent_dirs(
+        self,
+        session: AsyncSession,
+        path: str,
+        owner_id: str | None = None,
+    ) -> None:
         """Ensure all parent directories exist in the database."""
         parts = path.split("/")
         for i in range(2, len(parts)):
@@ -46,19 +51,22 @@ class DirectoryService:
 
             dir_name = parts[i - 1]
             parent = "/".join(parts[: i - 1]) or "/"
+            values: dict[str, object] = {
+                "id": str(uuid.uuid4()),
+                "path": dir_path,
+                "name": dir_name,
+                "parent_path": parent,
+                "is_directory": True,
+                "current_version": 1,
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            }
+            if owner_id is not None:
+                values["owner_id"] = owner_id
             await upsert_file(
                 session,
                 self.dialect,
-                values={
-                    "id": str(uuid.uuid4()),
-                    "path": dir_path,
-                    "name": dir_name,
-                    "parent_path": parent,
-                    "is_directory": True,
-                    "current_version": 1,
-                    "created_at": datetime.now(UTC),
-                    "updated_at": datetime.now(UTC),
-                },
+                values=values,
                 conflict_keys=["path"],
                 model=self._file_model,
                 schema=self.schema,
@@ -71,6 +79,7 @@ class DirectoryService:
         path: str,
         parents: bool,
         get_file: GetFile,
+        owner_id: str | None = None,
     ) -> tuple[list[str], str | None]:
         """Create a directory using dialect-aware upsert.
 
@@ -106,19 +115,22 @@ class DirectoryService:
         created_dirs: list[str] = []
         for dir_path in dirs_to_create:
             parent, name = split_path(dir_path)
+            values: dict[str, object] = {
+                "id": str(uuid.uuid4()),
+                "path": dir_path,
+                "name": name,
+                "parent_path": parent,
+                "is_directory": True,
+                "current_version": 1,
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            }
+            if owner_id is not None:
+                values["owner_id"] = owner_id
             rowcount = await upsert_file(
                 session,
                 self.dialect,
-                values={
-                    "id": str(uuid.uuid4()),
-                    "path": dir_path,
-                    "name": name,
-                    "parent_path": parent,
-                    "is_directory": True,
-                    "current_version": 1,
-                    "created_at": datetime.now(UTC),
-                    "updated_at": datetime.now(UTC),
-                },
+                values=values,
                 conflict_keys=["path"],
                 model=self._file_model,
                 schema=self.schema,

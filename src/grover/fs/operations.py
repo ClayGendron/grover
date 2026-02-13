@@ -168,7 +168,7 @@ async def write_file(
         created = False
         version = existing.current_version
     else:
-        await directories.ensure_parent_dirs(session, path)
+        await directories.ensure_parent_dirs(session, path, owner_id=owner_id)
 
         new_file = file_model(
             path=path,
