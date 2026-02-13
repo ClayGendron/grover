@@ -582,13 +582,19 @@ class TestGroverAsyncUnsupportedFiles:
 
 @pytest.fixture
 async def auth_grover(tmp_path: Path) -> GroverAsync:
-    """GroverAsync with an authenticated engine-based mount."""
+    """GroverAsync with a UserScopedFileSystem backend."""
     from sqlalchemy.ext.asyncio import create_async_engine
+
+    from grover.fs.sharing import SharingService
+    from grover.fs.user_scoped_fs import UserScopedFileSystem
+    from grover.models.shares import FileShare
 
     data = tmp_path / "grover_data"
     g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-    await g.mount("/ws", engine=engine, authenticated=True)
+    sharing = SharingService(FileShare)
+    backend = UserScopedFileSystem(sharing=sharing)
+    await g.mount("/ws", backend, engine=engine)
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -683,7 +689,7 @@ class TestGroverAsyncSharing:
         )
         result = await g.share("/app/test.md", "bob", user_id="alice")
         assert result.success is False
-        assert "authenticated" in result.message.lower()
+        assert "sharing" in result.message.lower()
         await g.close()
 
     @pytest.mark.asyncio

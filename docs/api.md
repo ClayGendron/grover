@@ -30,7 +30,7 @@ GroverAsync(*, data_dir=None, embedding_provider=None)
 g.mount(path, backend=None, *, engine=None, session_factory=None,
         dialect="sqlite", file_model=None, file_version_model=None,
         db_schema=None, mount_type=None, permission=Permission.READ_WRITE,
-        label="", hidden=False, authenticated=False)
+        label="", hidden=False)
 g.unmount(path)
 ```
 
@@ -54,11 +54,12 @@ Mount a storage backend at a virtual path. You can pass either:
 | `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |
 | `label` | `str` | `""` | Human-readable mount label |
 | `hidden` | `bool` | `False` | Hidden mounts are excluded from listing and indexing |
-| `authenticated` | `bool` | `False` | Enable user-scoped paths. All operations require `user_id`. |
+
+For user-scoped mounts, pass a `UserScopedFileSystem` as the backend (see [architecture.md](architecture.md#user-scoped-file-systems)).
 
 ### Filesystem Operations
 
-All filesystem methods accept an optional `user_id` keyword argument. On authenticated mounts, `user_id` is **required** — paths are automatically namespaced per user (e.g., `/notes.md` → `/{user_id}/notes.md` in the backend). On regular mounts, `user_id` is ignored.
+All filesystem methods accept an optional `user_id` keyword argument. On user-scoped mounts (using `UserScopedFileSystem`), `user_id` is **required** — paths are automatically namespaced per user (e.g., `/notes.md` → `/{user_id}/notes.md` in the backend). On regular mounts, `user_id` is accepted but ignored.
 
 ```python
 g.read(path, *, user_id=None) -> ReadResult
@@ -77,7 +78,7 @@ g.copy(src, dest, *, user_id=None) -> WriteResult
 | `write(path, content)` | Write content to a file. Creates the file if it doesn't exist, creates a new version if it does. Returns `WriteResult` with `success`, `created`, `version`. |
 | `edit(path, old, new)` | Find-and-replace within a file. Returns `EditResult` with `success` and `version`. |
 | `delete(path, permanent=False)` | Delete a file. Default is soft-delete (moves to trash). Pass `permanent=True` for permanent deletion. Returns `DeleteResult`. |
-| `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. On authenticated mounts, the user's root listing includes a virtual `@shared/` entry. |
+| `list_dir(path)` | List directory entries. Returns a list of dicts with `path`, `name`, `is_directory`. On user-scoped mounts, the user's root listing includes a virtual `@shared/` entry. |
 | `exists(path)` | Check if a path exists. Returns `bool`. |
 | `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
 | `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
@@ -137,13 +138,13 @@ g.empty_trash(*, user_id=None) -> DeleteResult
 
 | Method | Description |
 |--------|-------------|
-| `list_trash()` | List all soft-deleted files across all mounts. On authenticated mounts, scoped to the requesting user's files only. |
-| `restore_from_trash(path)` | Restore a previously deleted file by its original path. On authenticated mounts, only the file owner can restore. Returns `RestoreResult`. |
-| `empty_trash()` | Permanently delete trashed files. On authenticated mounts, only deletes the requesting user's trashed files. Returns `DeleteResult`. |
+| `list_trash()` | List all soft-deleted files across all mounts. On user-scoped mounts, scoped to the requesting user's files only. |
+| `restore_from_trash(path)` | Restore a previously deleted file by its original path. On user-scoped mounts, only the file owner can restore. Returns `RestoreResult`. |
+| `empty_trash()` | Permanently delete trashed files. On user-scoped mounts, only deletes the requesting user's trashed files. Returns `DeleteResult`. |
 
 ### Sharing
 
-Available on authenticated mounts. Share files or directories with other users.
+Available on mounts whose backend implements `SupportsReBAC` (e.g., `UserScopedFileSystem`). Share files or directories with other users.
 
 ```python
 g.share(path, grantee_id, permission="read", *, user_id) -> ShareResult
@@ -380,7 +381,7 @@ from grover.fs import (
     StorageError,                   # Backend I/O failure
     ConsistencyError,               # Metadata/content mismatch
     CapabilityNotSupportedError,    # Backend doesn't support this operation
-    AuthenticationRequiredError,    # user_id missing on authenticated mount
+    AuthenticationRequiredError,    # user_id missing on user-scoped mount
 )
 ```
 

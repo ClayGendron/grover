@@ -12,7 +12,7 @@ from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
-from grover.fs.sharing import SharingService
+from grover.fs.protocol import SupportsReBAC
 from grover.fs.types import (
     DeleteResult,
     EditResult,
@@ -130,9 +130,14 @@ class GroverAsync:
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
-        authenticated: bool = False,
     ) -> None:
-        """Mount a backend at *path*."""
+        """Mount a backend at *path*.
+
+        When *engine* is provided, a session factory is created from it.
+        If *backend* is also provided, that backend is used; otherwise a
+        plain ``DatabaseFileSystem`` is created.  For user-scoped mounts,
+        pass a ``UserScopedFileSystem`` as *backend* together with *engine*.
+        """
         sf: Callable[..., AsyncSession] | None = None
 
         if engine is not None:
@@ -144,7 +149,7 @@ class GroverAsync:
             sf = async_sessionmaker(engine, class_=_AsyncSession, expire_on_commit=False)
             dialect = engine.dialect.name
 
-            # Ensure tables exist
+            # Ensure base tables exist
             fm = file_model or File
             fvm = file_version_model or FileVersion
             async with engine.begin() as conn:
@@ -154,25 +159,25 @@ class GroverAsync:
                 await conn.run_sync(
                     lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
                 )
-                if authenticated:
+
+            # Create backend if not provided by caller
+            if backend is None:
+                backend = DatabaseFileSystem(
+                    dialect=dialect,
+                    file_model=file_model,
+                    file_version_model=file_version_model,
+                    schema=db_schema,
+                )
+
+            # Create share table if backend supports sharing
+            if isinstance(backend, SupportsReBAC):
+                async with engine.begin() as conn:
                     await conn.run_sync(
                         lambda c: FileShare.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
                     )
 
-        elif session_factory is not None:
-            sf = session_factory
-
-        if sf is not None:
-            # Create stateless DFS as backend
-            backend = DatabaseFileSystem(
-                dialect=dialect,
-                file_model=file_model,
-                file_version_model=file_version_model,
-                schema=db_schema,
-            )
             if mount_type is None:
                 mount_type = "vfs"
-            sharing = SharingService(FileShare) if authenticated else None
             config = MountConfig(
                 mount_path=path,
                 backend=backend,
@@ -181,8 +186,27 @@ class GroverAsync:
                 permission=permission,
                 label=label,
                 hidden=hidden,
-                authenticated=authenticated,
-                sharing=sharing,
+            )
+
+        elif session_factory is not None:
+            sf = session_factory
+            if backend is None:
+                backend = DatabaseFileSystem(
+                    dialect=dialect,
+                    file_model=file_model,
+                    file_version_model=file_version_model,
+                    schema=db_schema,
+                )
+            if mount_type is None:
+                mount_type = "vfs"
+            config = MountConfig(
+                mount_path=path,
+                backend=backend,
+                session_factory=sf,
+                mount_type=mount_type,
+                permission=permission,
+                label=label,
+                hidden=hidden,
             )
         else:
             if backend is None:
@@ -197,7 +221,6 @@ class GroverAsync:
                 await backend.open()
                 local_sf = backend._session_factory
 
-            sharing = SharingService(FileShare) if authenticated else None
             config = MountConfig(
                 mount_path=path,
                 backend=backend,
@@ -206,8 +229,6 @@ class GroverAsync:
                 permission=permission,
                 label=label,
                 hidden=hidden,
-                authenticated=authenticated,
-                sharing=sharing,
             )
 
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
@@ -615,7 +636,7 @@ class GroverAsync:
     ) -> ShareResult:
         """Share a file or directory with another user.
 
-        Only the file owner can create shares. Requires an authenticated mount.
+        Requires a backend that supports sharing (e.g. ``UserScopedFileSystem``).
         """
         from grover.fs.utils import normalize_path
 
@@ -625,27 +646,22 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        if not mount.authenticated or mount.sharing is None:
+        cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+        if cap is None:
             return ShareResult(
                 success=False,
-                message="Sharing requires an authenticated mount with sharing enabled",
+                message="Backend does not support sharing",
             )
-
-        # Resolve to stored path (/{user_id}/...)
-        try:
-            stored_path = self._vfs._resolve_user_path(mount, rel_path, user_id)
-        except (ValueError, Exception) as e:
-            return ShareResult(success=False, message=str(e))
 
         async with self._vfs._session_for(mount) as sess:
             assert sess is not None
             try:
-                share = await mount.sharing.create_share(
-                    sess,
-                    stored_path,
+                share_info = await cap.share(
+                    rel_path,
                     grantee_id,
                     permission,
-                    user_id,
+                    user_id=user_id,
+                    session=sess,
                     expires_at=expires_at,
                 )
             except ValueError as e:
@@ -656,11 +672,11 @@ class GroverAsync:
             message=f"Shared {path} with {grantee_id} ({permission})",
             share=ShareInfo(
                 path=path,
-                grantee_id=share.grantee_id,
-                permission=share.permission,
-                granted_by=share.granted_by,
-                created_at=share.created_at,
-                expires_at=share.expires_at,
+                grantee_id=share_info.grantee_id,
+                permission=share_info.permission,
+                granted_by=share_info.granted_by,
+                created_at=share_info.created_at,
+                expires_at=share_info.expires_at,
             ),
         )
 
@@ -680,20 +696,18 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        if not mount.authenticated or mount.sharing is None:
+        cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+        if cap is None:
             return ShareResult(
                 success=False,
-                message="Sharing requires an authenticated mount with sharing enabled",
+                message="Backend does not support sharing",
             )
-
-        try:
-            stored_path = self._vfs._resolve_user_path(mount, rel_path, user_id)
-        except (ValueError, Exception) as e:
-            return ShareResult(success=False, message=str(e))
 
         async with self._vfs._session_for(mount) as sess:
             assert sess is not None
-            removed = await mount.sharing.remove_share(sess, stored_path, grantee_id)
+            removed = await cap.unshare(
+                rel_path, grantee_id, user_id=user_id, session=sess
+            )
 
         if removed:
             return ShareResult(
@@ -720,20 +734,18 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ListSharesResult(success=False, message=str(e))
 
-        if not mount.authenticated or mount.sharing is None:
+        cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+        if cap is None:
             return ListSharesResult(
                 success=False,
-                message="Sharing requires an authenticated mount with sharing enabled",
+                message="Backend does not support sharing",
             )
-
-        try:
-            stored_path = self._vfs._resolve_user_path(mount, rel_path, user_id)
-        except (ValueError, Exception) as e:
-            return ListSharesResult(success=False, message=str(e))
 
         async with self._vfs._session_for(mount) as sess:
             assert sess is not None
-            shares = await mount.sharing.list_shares_on_path(sess, stored_path)
+            shares = await cap.list_shares_on_path(
+                rel_path, user_id=user_id, session=sess
+            )
 
         return ListSharesResult(
             success=True,
@@ -759,20 +771,20 @@ class GroverAsync:
         """List all files shared with the current user across all mounts."""
         all_shares: list[ShareInfo] = []
         for mount in self._registry.list_mounts():
-            if not mount.authenticated or mount.sharing is None:
+            cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+            if cap is None:
                 continue
             async with self._vfs._session_for(mount) as sess:
                 assert sess is not None
-                shares = await mount.sharing.list_shared_with(sess, user_id)
+                shares = await cap.list_shared_with_me(
+                    user_id=user_id, session=sess
+                )
             for s in shares:
-                # Stored path is /{owner}/rest — extract owner, build @shared path
-                parts = s.path.lstrip("/").split("/", 1)
-                owner = parts[0]
-                rest = "/" + parts[1] if len(parts) > 1 else ""
-                user_path = f"{mount.mount_path}/@shared/{owner}{rest}"
+                # Backend returns paths like /@shared/alice/a.md — prepend mount
+                full_path = mount.mount_path + s.path if s.path != "/" else mount.mount_path
                 all_shares.append(
                     ShareInfo(
-                        path=user_path,
+                        path=full_path,
                         grantee_id=s.grantee_id,
                         permission=s.permission,
                         granted_by=s.granted_by,

@@ -398,13 +398,19 @@ class TestGroverEdgeCases:
 
 @pytest.fixture
 def auth_grover(tmp_path: Path) -> Iterator[Grover]:
-    """Sync Grover with an authenticated engine-based mount."""
+    """Sync Grover with a UserScopedFileSystem backend."""
     from sqlalchemy.ext.asyncio import create_async_engine
+
+    from grover.fs.sharing import SharingService
+    from grover.fs.user_scoped_fs import UserScopedFileSystem
+    from grover.models.shares import FileShare
 
     data = tmp_path / "grover_data"
     g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-    g.mount("/ws", engine=engine, authenticated=True)
+    sharing = SharingService(FileShare)
+    backend = UserScopedFileSystem(sharing=sharing)
+    g.mount("/ws", backend, engine=engine)
     yield g
     g.close()
 

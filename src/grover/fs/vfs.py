@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover.events import EventBus, EventType, FileEvent
 
-from .exceptions import AuthenticationRequiredError, CapabilityNotSupportedError, MountNotFoundError
+from .exceptions import CapabilityNotSupportedError, MountNotFoundError
 from .permissions import Permission
 from .protocol import SupportsReconcile, SupportsTrash, SupportsVersions
 from .types import (
@@ -48,6 +48,10 @@ class VFS:
     Presents a single namespace to callers while delegating to the
     appropriate backend based on the path prefix. Enforces permissions,
     handles cross-mount copy/move, and provides capability gating.
+
+    All user-scoping (per-user path namespacing, ``@shared`` resolution,
+    share permission checks) is handled by the backend — typically
+    ``UserScopedFileSystem``.  VFS just passes ``user_id`` through.
 
     Session lifecycle is per-operation only.  No transaction mode.
     """
@@ -132,111 +136,6 @@ class VFS:
             raise PermissionError(f"Cannot write to read-only path: {virtual_path}")
 
     # ------------------------------------------------------------------
-    # User-scoped path resolution
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _is_shared_access(rel_path: str) -> tuple[bool, str | None, str | None]:
-        """Parse ``/@shared/{owner}/{rest}`` from a relative path.
-
-        Returns ``(is_shared, owner, rest_path)``.
-        """
-        segments = rel_path.strip("/").split("/")
-        if len(segments) >= 2 and segments[0] == "@shared":
-            owner = segments[1]
-            rest = "/" + "/".join(segments[2:]) if len(segments) > 2 else "/"
-            return True, owner, rest
-        return False, None, None
-
-    def _resolve_user_path(
-        self, mount: MountConfig, rel_path: str, user_id: str | None
-    ) -> str:
-        """Rewrite *rel_path* for an authenticated mount.
-
-        - Regular mounts: pass through unchanged.
-        - Authenticated mounts: prepend ``/{user_id}/`` to the path.
-        - ``@shared/{owner}/`` paths: resolve to ``/{owner}/``.
-        - Missing ``user_id`` on authenticated mount: raise.
-        """
-        if not mount.authenticated:
-            return rel_path
-
-        if not user_id:
-            raise AuthenticationRequiredError(
-                "user_id is required for authenticated mount"
-            )
-
-        is_shared, owner, rest = self._is_shared_access(rel_path)
-        if is_shared and owner is not None and rest is not None:
-            return f"/{owner}{rest}" if rest != "/" else f"/{owner}"
-
-        if rel_path == "/":
-            return f"/{user_id}"
-        return f"/{user_id}{rel_path}"
-
-    @staticmethod
-    def _strip_user_prefix(path: str, user_id: str) -> str:
-        """Remove ``/{user_id}`` prefix from a backend path."""
-        prefix = f"/{user_id}/"
-        if path.startswith(prefix):
-            return "/" + path[len(prefix):]
-        if path == f"/{user_id}":
-            return "/"
-        return path
-
-    def _restore_user_path(
-        self, stored_path: str | None, mount: MountConfig, user_id: str | None
-    ) -> str | None:
-        """Convert a stored backend path back to a user-facing virtual path.
-
-        Strips the ``/{user_id}/`` prefix for authenticated mounts and
-        re-applies the mount prefix.
-        """
-        if stored_path is None:
-            return None
-        if not mount.authenticated or user_id is None:
-            return self._prefix_path(stored_path, mount.mount_path)
-        stripped = self._strip_user_prefix(stored_path, user_id)
-        return self._prefix_path(stripped, mount.mount_path)
-
-    def _restore_file_info(
-        self, info: FileInfo, mount: MountConfig, user_id: str | None
-    ) -> FileInfo:
-        """Like ``_prefix_file_info`` but strips user prefix for authenticated mounts."""
-        if not mount.authenticated or user_id is None:
-            return self._prefix_file_info(info, mount)
-        stripped = self._strip_user_prefix(info.path, user_id)
-        info.path = self._prefix_path(stripped, mount.mount_path) or info.path
-        info.mount_type = mount.mount_type
-        info.permission = self._registry.get_permission(mount.mount_path).value
-        return info
-
-    async def _check_share_access(
-        self,
-        session: AsyncSession | None,
-        mount: MountConfig,
-        stored_path: str,
-        user_id: str,
-        required: str = "read",
-    ) -> None:
-        """Verify that *user_id* has shared access to *stored_path*.
-
-        Raises ``PermissionError`` if the mount has a SharingService and
-        the user lacks the required permission.  No-op if no SharingService
-        is configured.
-        """
-        if mount.sharing is None or session is None:
-            return
-        has_access = await mount.sharing.check_permission(
-            session, stored_path, user_id, required=required,
-        )
-        if not has_access:
-            raise PermissionError(
-                f"Access denied: {user_id!r} does not have {required!r} "
-                f"permission on shared path"
-            )
-
-    # ------------------------------------------------------------------
     # Read Operations
     # ------------------------------------------------------------------
 
@@ -250,15 +149,11 @@ class VFS:
     ) -> ReadResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "read")
             result = await mount.backend.read(
                 rel_path, offset, limit, session=sess, user_id=user_id
             )
-        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         return result
 
     async def list_dir(
@@ -269,179 +164,16 @@ class VFS:
         if path == "/":
             return self._list_root()
 
-        mount, original_rel = self._registry.resolve(path)
-
-        # Handle @shared virtual directories on authenticated mounts
-        if mount.authenticated and user_id:
-            segments = original_rel.strip("/").split("/")
-            if segments[0] == "@shared":
-                return await self._list_shared_dir(mount, segments, user_id)
-
-        rel_path = self._resolve_user_path(mount, original_rel, user_id)
+        mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
             result = await mount.backend.list_dir(rel_path, session=sess, user_id=user_id)
 
-        result.path = self._restore_user_path(result.path, mount, user_id) or path
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [
-            self._restore_file_info(entry, mount, user_id)
+            self._prefix_file_info(entry, mount)
             for entry in result.entries
         ]
-
-        # On authenticated mount root, add virtual @shared/ entry
-        if mount.authenticated and user_id is not None and original_rel == "/":
-            result.entries.append(
-                FileInfo(
-                    path=mount.mount_path + "/@shared",
-                    name="@shared",
-                    is_directory=True,
-                    permission=mount.permission.value,
-                    mount_type=mount.mount_type,
-                )
-            )
-
         return result
-
-    async def _list_shared_dir(
-        self,
-        mount: MountConfig,
-        segments: list[str],
-        user_id: str,
-    ) -> ListResult:
-        """List virtual ``@shared/`` directories.
-
-        - ``/@shared`` → list distinct owners who shared with *user_id*
-        - ``/@shared/{owner}`` → list that owner's shared files accessible to *user_id*
-        - ``/@shared/{owner}/sub/...`` → list_dir on the owner's sub-path (permission-checked)
-        """
-        if mount.sharing is None:
-            return ListResult(
-                success=True,
-                message="No sharing configured",
-                entries=[],
-                path=mount.mount_path + "/@shared",
-            )
-
-        if len(segments) == 1:
-            # /@shared — list distinct owners
-            async with self._session_for(mount) as sess:
-                assert sess is not None
-                shares = await mount.sharing.list_shared_with(sess, user_id)
-            # Extract distinct owners from share paths
-            owners: set[str] = set()
-            for share in shares:
-                # Share paths are stored as /{owner}/... — extract owner
-                parts = share.path.strip("/").split("/")
-                if parts:
-                    owners.add(parts[0])
-            entries = [
-                FileInfo(
-                    path=f"{mount.mount_path}/@shared/{owner}",
-                    name=owner,
-                    is_directory=True,
-                    permission=mount.permission.value,
-                    mount_type=mount.mount_type,
-                )
-                for owner in sorted(owners)
-            ]
-            return ListResult(
-                success=True,
-                message=f"Found {len(entries)} shared owner(s)",
-                entries=entries,
-                path=mount.mount_path + "/@shared",
-            )
-
-        # /@shared/{owner}/... — resolve to /{owner}/... and list
-        owner = segments[1]
-        sub_path = "/" + "/".join(segments[2:]) if len(segments) > 2 else "/"
-        stored_path = f"/{owner}{sub_path}" if sub_path != "/" else f"/{owner}"
-        shared_prefix = f"{mount.mount_path}/@shared/{owner}"
-
-        async with self._session_for(mount) as sess:
-            assert sess is not None
-
-            # Fast path: directory-level share covers this path → list everything
-            try:
-                await self._check_share_access(sess, mount, stored_path, user_id, "read")
-                result = await mount.backend.list_dir(stored_path, session=sess, user_id=user_id)
-
-                # Rewrite paths: /{owner}/x → {mount}/@shared/{owner}/x
-                result.path = shared_prefix + sub_path if sub_path != "/" else shared_prefix
-                for entry in result.entries:
-                    stripped = self._strip_user_prefix(entry.path, owner)
-                    entry.path = shared_prefix + stripped if stripped != "/" else shared_prefix
-                    entry.mount_type = mount.mount_type
-                    entry.permission = mount.permission.value
-                return result
-
-            except PermissionError:
-                pass  # Fall through to filtered listing
-
-            # Filtered fallback: show only files/dirs the user has specific shares on
-            shares = await mount.sharing.list_shares_under_prefix(
-                sess, user_id, stored_path
-            )
-            if not shares:
-                raise PermissionError(
-                    f"Access denied: {user_id!r} does not have 'read' "
-                    f"permission on shared path"
-                )
-
-            # Classify each share's relative path into direct entries vs intermediate dirs
-            direct_files: set[str] = set()
-            child_dirs: set[str] = set()
-            prefix_with_slash = stored_path + "/"
-            for share in shares:
-                remainder = share.path[len(prefix_with_slash):]
-                if "/" in remainder:
-                    # Intermediate directory — take first segment
-                    child_dirs.add(remainder.split("/", 1)[0])
-                else:
-                    # Direct file/dir at this level
-                    direct_files.add(remainder)
-
-            entries: list[FileInfo] = []
-            # Base path for entries at this listing level
-            base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
-
-            # Direct files: try to get rich metadata from backend
-            for name in sorted(direct_files):
-                file_stored = f"{stored_path}/{name}"
-                try:
-                    info = await mount.backend.get_info(file_stored, session=sess, user_id=user_id)
-                except Exception:
-                    info = None
-                if info is not None:
-                    stripped = self._strip_user_prefix(info.path, owner)
-                    info.path = shared_prefix + stripped if stripped != "/" else shared_prefix
-                    info.mount_type = mount.mount_type
-                    info.permission = mount.permission.value
-                    entries.append(info)
-                else:
-                    # File may have been deleted — show synthetic entry
-                    entries.append(FileInfo(
-                        path=f"{base}/{name}",
-                        name=name,
-                        is_directory=False,
-                        permission=mount.permission.value,
-                        mount_type=mount.mount_type,
-                    ))
-
-            # Intermediate dirs: synthetic entries (no backend call needed)
-            for name in sorted(child_dirs):
-                entries.append(FileInfo(
-                    path=f"{base}/{name}",
-                    name=name,
-                    is_directory=True,
-                    permission=mount.permission.value,
-                    mount_type=mount.mount_type,
-                ))
-
-        return ListResult(
-            success=True,
-            message=f"Found {len(entries)} shared item(s)",
-            entries=entries,
-            path=shared_prefix + sub_path if sub_path != "/" else shared_prefix,
-        )
 
     def _list_root(self) -> ListResult:
         entries: list[FileInfo] = []
@@ -479,14 +211,7 @@ class VFS:
         except MountNotFoundError:
             return False
 
-        is_shared = self._is_shared_access(rel_path)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                try:
-                    await self._check_share_access(sess, mount, rel_path, user_id, "read")
-                except PermissionError:
-                    return False
             return await mount.backend.exists(rel_path, session=sess, user_id=user_id)
 
     async def get_info(
@@ -511,17 +236,10 @@ class VFS:
         except MountNotFoundError:
             return None
 
-        is_shared = self._is_shared_access(rel_path)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                try:
-                    await self._check_share_access(sess, mount, rel_path, user_id, "read")
-                except PermissionError:
-                    return None
             info = await mount.backend.get_info(rel_path, session=sess, user_id=user_id)
         if info is not None:
-            info = self._restore_file_info(info, mount, user_id)
+            info = self._prefix_file_info(info, mount)
         return info
 
     def get_permission_info(self, path: str) -> tuple[str, bool]:
@@ -548,16 +266,13 @@ class VFS:
             # Aggregate across all visible mounts (exclude hidden)
             all_entries: list[FileInfo] = []
             for mount in self._registry.list_visible_mounts():
-                glob_path = "/"
-                if mount.authenticated and user_id:
-                    glob_path = f"/{user_id}"
                 async with self._session_for(mount) as sess:
                     result = await mount.backend.glob(
-                        pattern, glob_path, session=sess, user_id=user_id
+                        pattern, "/", session=sess, user_id=user_id
                     )
                 if result.success:
                     all_entries.extend(
-                        self._restore_file_info(e, mount, user_id)
+                        self._prefix_file_info(e, mount)
                         for e in result.entries
                     )
             return GlobResult(
@@ -569,12 +284,11 @@ class VFS:
             )
 
         mount, rel_path = self._registry.resolve(path)
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
             result = await mount.backend.glob(pattern, rel_path, session=sess, user_id=user_id)
-        result.path = self._restore_user_path(result.path, mount, user_id) or path
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [
-            self._restore_file_info(e, mount, user_id) for e in result.entries
+            self._prefix_file_info(e, mount) for e in result.entries
         ]
         return result
 
@@ -611,13 +325,10 @@ class VFS:
                 if max_results > 0 and remaining <= 0:
                     truncated = True
                     break
-                grep_path = "/"
-                if mount.authenticated and user_id:
-                    grep_path = f"/{user_id}"
                 async with self._session_for(mount) as sess:
                     result = await mount.backend.grep(
                         pattern,
-                        grep_path,
+                        "/",
                         session=sess,
                         glob_filter=glob_filter,
                         case_sensitive=case_sensitive,
@@ -633,8 +344,9 @@ class VFS:
                     )
                 if result.success:
                     for m in result.matches:
-                        restored = self._restore_user_path(m.file_path, mount, user_id)
-                        m.file_path = restored or m.file_path
+                        m.file_path = (
+                            self._prefix_path(m.file_path, mount.mount_path) or m.file_path
+                        )
                     all_matches.extend(result.matches)
                     total_searched += result.files_searched
                     total_matched += result.files_matched
@@ -666,7 +378,6 @@ class VFS:
             )
 
         mount, rel_path = self._registry.resolve(path)
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
             result = await mount.backend.grep(
                 pattern,
@@ -684,10 +395,9 @@ class VFS:
                 files_only=files_only,
                 user_id=user_id,
             )
-        result.path = self._restore_user_path(result.path, mount, user_id) or path
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
         for m in result.matches:
-            restored = self._restore_user_path(m.file_path, mount, user_id)
-            m.file_path = restored or m.file_path
+            m.file_path = self._prefix_path(m.file_path, mount.mount_path) or m.file_path
         return result
 
     async def tree(
@@ -718,19 +428,16 @@ class VFS:
             # unchanged — the mount roots are added above at VFS level.
             if max_depth is None or max_depth > 0:
                 for mount in self._registry.list_visible_mounts():
-                    tree_path = "/"
-                    if mount.authenticated and user_id:
-                        tree_path = f"/{user_id}"
                     async with self._session_for(mount) as sess:
                         result = await mount.backend.tree(
-                            tree_path,
+                            "/",
                             max_depth=max_depth,
                             session=sess,
                             user_id=user_id,
                         )
                     if result.success:
                         all_entries.extend(
-                            self._restore_file_info(e, mount, user_id)
+                            self._prefix_file_info(e, mount)
                             for e in result.entries
                         )
                         total_files += result.total_files
@@ -747,14 +454,13 @@ class VFS:
             )
 
         mount, rel_path = self._registry.resolve(path)
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
             result = await mount.backend.tree(
                 rel_path, max_depth=max_depth, session=sess, user_id=user_id
             )
-        result.path = self._restore_user_path(result.path, mount, user_id) or path
+        result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [
-            self._restore_file_info(e, mount, user_id) for e in result.entries
+            self._prefix_file_info(e, mount) for e in result.entries
         ]
         return result
 
@@ -778,20 +484,12 @@ class VFS:
             return WriteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "write")
-            write_kwargs: dict[str, Any] = {
-                "overwrite": overwrite, "session": sess, "user_id": user_id,
-            }
-            if mount.authenticated and user_id is not None:
-                write_kwargs["owner_id"] = user_id
             result = await mount.backend.write(
-                rel_path, content, created_by, **write_kwargs
+                rel_path, content, created_by,
+                overwrite=overwrite, session=sess, user_id=user_id,
             )
-        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
                 FileEvent(event_type=EventType.FILE_WRITTEN, path=path, content=content)
@@ -815,16 +513,12 @@ class VFS:
             return EditResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "write")
             result = await mount.backend.edit(
                 rel_path, old_string, new_string, replace_all, created_by,
-                session=sess, user_id=user_id
+                session=sess, user_id=user_id,
             )
-        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=path))
         return result
@@ -843,8 +537,6 @@ class VFS:
             return DeleteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
 
         # If backend doesn't support trash and permanent=False, explicit failure
         if not permanent and not self._get_capability(mount.backend, SupportsTrash):
@@ -855,10 +547,8 @@ class VFS:
             )
 
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "write")
             result = await mount.backend.delete(rel_path, permanent, session=sess, user_id=user_id)
-        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_DELETED, path=path))
         return result
@@ -877,12 +567,11 @@ class VFS:
             return MkdirResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
             result = await mount.backend.mkdir(rel_path, parents, session=sess, user_id=user_id)
-        result.path = self._restore_user_path(result.path, mount, user_id)
+        result.path = self._prefix_path(result.path, mount.mount_path)
         result.created_dirs = [
-            self._restore_user_path(d, mount, user_id) or d
+            self._prefix_path(d, mount.mount_path) or d
             for d in result.created_dirs
         ]
         return result
@@ -904,30 +593,17 @@ class VFS:
         except PermissionError as e:
             return MoveResult(success=False, message=str(e))
 
-        src_mount, src_rel_orig = self._registry.resolve(src)
-        dest_mount, dest_rel_orig = self._registry.resolve(dest)
-
-        src_shared = self._is_shared_access(src_rel_orig)[0] if src_mount.authenticated else False
-        dest_shared = (
-            self._is_shared_access(dest_rel_orig)[0] if dest_mount.authenticated else False
-        )
-
-        src_rel = self._resolve_user_path(src_mount, src_rel_orig, user_id)
-        dest_rel = self._resolve_user_path(dest_mount, dest_rel_orig, user_id)
+        src_mount, src_rel = self._registry.resolve(src)
+        dest_mount, dest_rel = self._registry.resolve(dest)
 
         if src_mount is dest_mount:
             async with self._session_for(src_mount) as sess:
-                if src_shared and user_id:
-                    await self._check_share_access(sess, src_mount, src_rel, user_id, "write")
-                if dest_shared and user_id:
-                    await self._check_share_access(sess, dest_mount, dest_rel, user_id, "write")
                 result = await src_mount.backend.move(
                     src_rel, dest_rel, session=sess,
-                    follow=follow, sharing=src_mount.sharing,
-                    user_id=user_id,
+                    follow=follow, user_id=user_id,
                 )
-            result.old_path = self._restore_user_path(result.old_path, src_mount, user_id)
-            result.new_path = self._restore_user_path(result.new_path, dest_mount, user_id)
+            result.old_path = self._prefix_path(result.old_path, src_mount.mount_path)
+            result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src)
@@ -992,29 +668,21 @@ class VFS:
         except PermissionError as e:
             return WriteResult(success=False, message=str(e))
 
-        src_mount, src_rel_orig = self._registry.resolve(src)
+        src_mount, src_rel = self._registry.resolve(src)
         dest_mount, dest_rel = self._registry.resolve(dest)
-
-        src_shared = self._is_shared_access(src_rel_orig)[0] if src_mount.authenticated else False
-        src_rel = self._resolve_user_path(src_mount, src_rel_orig, user_id)
-        dest_rel = self._resolve_user_path(dest_mount, dest_rel, user_id)
 
         if src_mount is dest_mount:
             async with self._session_for(src_mount) as sess:
-                if src_shared and user_id:
-                    await self._check_share_access(sess, src_mount, src_rel, user_id, "read")
                 result = await src_mount.backend.copy(
                     src_rel, dest_rel, session=sess, user_id=user_id
                 )
-            result.file_path = self._restore_user_path(result.file_path, dest_mount, user_id)
+            result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
             if result.success:
                 await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
             return result
 
         # Cross-mount copy: read → write
         async with self._session_for(src_mount) as src_sess:
-            if src_shared and user_id:
-                await self._check_share_access(src_sess, src_mount, src_rel, user_id, "read")
             read_result = await src_mount.backend.read(src_rel, session=src_sess, user_id=user_id)
         if not read_result.success:
             return WriteResult(
@@ -1032,7 +700,7 @@ class VFS:
             result = await dest_mount.backend.write(
                 dest_rel, read_result.content, session=dest_sess, user_id=user_id
             )
-        result.file_path = self._restore_user_path(result.file_path, dest_mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
         return result
@@ -1045,26 +713,20 @@ class VFS:
         self, path: str, *, user_id: str | None = None
     ) -> ListVersionsResult:
         path = normalize_path(path)
-        mount, rel_path_orig = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path_orig)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path_orig, user_id)
+        mount, rel_path = self._registry.resolve(path)
         cap = self._get_capability(mount.backend, SupportsVersions)
         if cap is None:
             raise CapabilityNotSupportedError(
                 f"Mount at {mount.mount_path} does not support versioning"
             )
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "read")
             return await cap.list_versions(rel_path, session=sess, user_id=user_id)
 
     async def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
     ) -> RestoreResult:
         path = normalize_path(path)
-        mount, rel_path_orig = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path_orig)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path_orig, user_id)
+        mount, rel_path = self._registry.resolve(path)
         try:
             self._check_writable(path)
         except PermissionError as e:
@@ -1076,10 +738,8 @@ class VFS:
                 f"Mount at {mount.mount_path} does not support versioning"
             )
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "write")
             result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
-        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
         return result
@@ -1088,17 +748,13 @@ class VFS:
         self, path: str, version: int, *, user_id: str | None = None
     ) -> GetVersionContentResult:
         path = normalize_path(path)
-        mount, rel_path_orig = self._registry.resolve(path)
-        is_shared = self._is_shared_access(rel_path_orig)[0] if mount.authenticated else False
-        rel_path = self._resolve_user_path(mount, rel_path_orig, user_id)
+        mount, rel_path = self._registry.resolve(path)
         cap = self._get_capability(mount.backend, SupportsVersions)
         if cap is None:
             raise CapabilityNotSupportedError(
                 f"Mount at {mount.mount_path} does not support versioning"
             )
         async with self._session_for(mount) as sess:
-            if is_shared and user_id:
-                await self._check_share_access(sess, mount, rel_path, user_id, "read")
             return await cap.get_version_content(rel_path, version, session=sess, user_id=user_id)
 
     # ------------------------------------------------------------------
@@ -1106,24 +762,19 @@ class VFS:
     # ------------------------------------------------------------------
 
     async def list_trash(self, *, user_id: str | None = None) -> ListResult:
-        """List all items in trash across all mounts (skips unsupported).
-
-        On authenticated mounts, only shows trash owned by *user_id*.
-        """
+        """List all items in trash across all mounts (skips unsupported)."""
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
             cap = self._get_capability(mount.backend, SupportsTrash)
             if cap is None:
                 continue  # Skip unsupported mounts silently
-            owner_id = user_id if mount.authenticated else None
             async with self._session_for(mount) as sess:
-                result = await cap.list_trash(session=sess, owner_id=owner_id, user_id=user_id)
+                result = await cap.list_trash(session=sess, user_id=user_id)
             if result.success:
-                prefixed_entries = [
-                    self._restore_file_info(entry, mount, user_id)
+                all_entries.extend(
+                    self._prefix_file_info(entry, mount)
                     for entry in result.entries
-                ]
-                all_entries.extend(prefixed_entries)
+                )
 
         return ListResult(
             success=True,
@@ -1142,34 +793,28 @@ class VFS:
             return RestoreResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        rel_path = self._resolve_user_path(mount, rel_path, user_id)
         cap = self._get_capability(mount.backend, SupportsTrash)
         if cap is None:
             raise CapabilityNotSupportedError(f"Mount at {mount.mount_path} does not support trash")
-        owner_id = user_id if mount.authenticated else None
         async with self._session_for(mount) as sess:
             result = await cap.restore_from_trash(
-                rel_path, session=sess, owner_id=owner_id, user_id=user_id
+                rel_path, session=sess, user_id=user_id
             )
-        result.file_path = self._restore_user_path(result.file_path, mount, user_id)
+        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
         return result
 
     async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
-        """Empty trash across all mounts (skips unsupported).
-
-        On authenticated mounts, only empties trash owned by *user_id*.
-        """
+        """Empty trash across all mounts (skips unsupported)."""
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
             cap = self._get_capability(mount.backend, SupportsTrash)
             if cap is None:
                 continue  # Skip unsupported mounts silently
-            owner_id = user_id if mount.authenticated else None
             async with self._session_for(mount) as sess:
-                result = await cap.empty_trash(session=sess, owner_id=owner_id, user_id=user_id)
+                result = await cap.empty_trash(session=sess, user_id=user_id)
             if not result.success:
                 return result
             total_deleted += result.total_deleted or 0

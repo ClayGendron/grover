@@ -1,7 +1,9 @@
-"""Tests for user-scoped file system operations.
+"""Tests for user-scoped file system operations via VFS.
 
-Covers VFS path resolution, authenticated mounts, user isolation,
+Covers VFS routing with UserScopedFileSystem backend, user isolation,
 and shared access via @shared/ virtual namespace.
+
+Unit tests for path resolution helpers live in test_user_scoped_fs.py.
 """
 
 from __future__ import annotations
@@ -12,10 +14,10 @@ import pytest
 from sqlmodel import select
 
 from grover.events import EventBus
-from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import AuthenticationRequiredError
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.sharing import SharingService
+from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.vfs import VFS
 from grover.models.files import File
 from grover.models.shares import FileShare
@@ -31,10 +33,10 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 async def auth_vfs(async_engine: AsyncEngine) -> VFS:
-    """VFS with a single authenticated DatabaseFileSystem mount."""
+    """VFS with a single UserScopedFileSystem mount (no sharing service)."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    backend = DatabaseFileSystem()
+    backend = UserScopedFileSystem()
     registry = MountRegistry()
 
     session_factory = async_sessionmaker(
@@ -45,7 +47,6 @@ async def auth_vfs(async_engine: AsyncEngine) -> VFS:
         mount_path="/ws",
         backend=backend,
         session_factory=session_factory,
-        authenticated=True,
     )
     registry.add_mount(config)
     return VFS(registry, EventBus())
@@ -53,12 +54,12 @@ async def auth_vfs(async_engine: AsyncEngine) -> VFS:
 
 @pytest.fixture
 async def shared_vfs(async_engine: AsyncEngine) -> VFS:
-    """VFS with authenticated mount and SharingService configured."""
+    """VFS with UserScopedFileSystem mount and SharingService configured."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    backend = DatabaseFileSystem()
-    registry = MountRegistry()
     sharing = SharingService(FileShare)
+    backend = UserScopedFileSystem(sharing=sharing)
+    registry = MountRegistry()
 
     session_factory = async_sessionmaker(
         async_engine, class_=AsyncSession, expire_on_commit=False
@@ -68,8 +69,6 @@ async def shared_vfs(async_engine: AsyncEngine) -> VFS:
         mount_path="/ws",
         backend=backend,
         session_factory=session_factory,
-        authenticated=True,
-        sharing=sharing,
     )
     registry.add_mount(config)
     return VFS(registry, EventBus())
@@ -77,8 +76,10 @@ async def shared_vfs(async_engine: AsyncEngine) -> VFS:
 
 @pytest.fixture
 async def regular_vfs(async_engine: AsyncEngine) -> VFS:
-    """VFS with a single non-authenticated DatabaseFileSystem mount."""
+    """VFS with a single plain DatabaseFileSystem mount (no user scoping)."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from grover.fs.database_fs import DatabaseFileSystem
 
     backend = DatabaseFileSystem()
     registry = MountRegistry()
@@ -91,156 +92,13 @@ async def regular_vfs(async_engine: AsyncEngine) -> VFS:
         mount_path="/ws",
         backend=backend,
         session_factory=session_factory,
-        authenticated=False,
     )
     registry.add_mount(config)
     return VFS(registry, EventBus())
 
 
 # ---------------------------------------------------------------------------
-# _resolve_user_path unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestResolveUserPath:
-    def test_regular_mount_passthrough(self):
-        """Non-authenticated mounts pass paths through unchanged."""
-        registry = MountRegistry()
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=False,
-        )
-        registry.add_mount(config)
-        vfs = VFS(registry)
-
-        result = vfs._resolve_user_path(config, "/notes.md", user_id="alice")
-        assert result == "/notes.md"
-
-    def test_prepends_user_id(self):
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=True,
-        )
-        vfs = VFS(MountRegistry())
-
-        result = vfs._resolve_user_path(config, "/notes.md", user_id="alice")
-        assert result == "/alice/notes.md"
-
-    def test_root_path(self):
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=True,
-        )
-        vfs = VFS(MountRegistry())
-
-        result = vfs._resolve_user_path(config, "/", user_id="alice")
-        assert result == "/alice"
-
-    def test_no_user_id_raises(self):
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=True,
-        )
-        vfs = VFS(MountRegistry())
-
-        with pytest.raises(AuthenticationRequiredError):
-            vfs._resolve_user_path(config, "/notes.md", user_id=None)
-
-    def test_empty_user_id_raises(self):
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=True,
-        )
-        vfs = VFS(MountRegistry())
-
-        with pytest.raises(AuthenticationRequiredError):
-            vfs._resolve_user_path(config, "/notes.md", user_id="")
-
-    def test_shared_access(self):
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=True,
-        )
-        vfs = VFS(MountRegistry())
-
-        result = vfs._resolve_user_path(
-            config, "/@shared/alice/notes.md", user_id="bob"
-        )
-        assert result == "/alice/notes.md"
-
-    def test_shared_access_root(self):
-        config = MountConfig(
-            mount_path="/ws",
-            backend=DatabaseFileSystem(),
-            authenticated=True,
-        )
-        vfs = VFS(MountRegistry())
-
-        result = vfs._resolve_user_path(
-            config, "/@shared/alice", user_id="bob"
-        )
-        assert result == "/alice"
-
-
-# ---------------------------------------------------------------------------
-# _strip_user_prefix unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestStripUserPrefix:
-    def test_strip_prefix(self):
-        assert VFS._strip_user_prefix("/alice/notes.md", "alice") == "/notes.md"
-
-    def test_strip_prefix_root(self):
-        assert VFS._strip_user_prefix("/alice", "alice") == "/"
-
-    def test_no_match(self):
-        assert VFS._strip_user_prefix("/bob/notes.md", "alice") == "/bob/notes.md"
-
-    def test_nested_path(self):
-        result = VFS._strip_user_prefix("/alice/projects/src/main.py", "alice")
-        assert result == "/projects/src/main.py"
-
-
-# ---------------------------------------------------------------------------
-# _is_shared_access unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestIsSharedAccess:
-    def test_shared_path(self):
-        is_shared, owner, rest = VFS._is_shared_access("/@shared/alice/notes.md")
-        assert is_shared is True
-        assert owner == "alice"
-        assert rest == "/notes.md"
-
-    def test_shared_root(self):
-        is_shared, owner, rest = VFS._is_shared_access("/@shared/alice")
-        assert is_shared is True
-        assert owner == "alice"
-        assert rest == "/"
-
-    def test_not_shared(self):
-        is_shared, owner, rest = VFS._is_shared_access("/notes.md")
-        assert is_shared is False
-        assert owner is None
-        assert rest is None
-
-    def test_shared_nested(self):
-        is_shared, owner, rest = VFS._is_shared_access("/@shared/alice/projects/docs/file.md")
-        assert is_shared is True
-        assert owner == "alice"
-        assert rest == "/projects/docs/file.md"
-
-
-# ---------------------------------------------------------------------------
-# Integration: VFS read/write with authenticated mount
+# Integration: VFS read/write with UserScopedFileSystem backend
 # ---------------------------------------------------------------------------
 
 
@@ -289,7 +147,7 @@ class TestVFSAuthenticatedReadWrite:
         assert result.success is False  # File not found for bob
 
     async def test_regular_mount_ignores_user_id(self, regular_vfs: VFS):
-        """Regular (non-authenticated) mounts ignore user_id."""
+        """Regular (non-user-scoped) mounts ignore user_id."""
         await regular_vfs.write("/ws/notes.md", "shared content", user_id="alice")
         result = await regular_vfs.read("/ws/notes.md", user_id="bob")
         assert result.success is True
@@ -310,7 +168,7 @@ class TestVFSAuthenticatedReadWrite:
 
 
 # ---------------------------------------------------------------------------
-# Integration: edit, delete, mkdir on authenticated mount
+# Integration: edit, delete, mkdir on user-scoped mount
 # ---------------------------------------------------------------------------
 
 
@@ -364,7 +222,7 @@ class TestVFSAuthenticatedOtherOps:
         assert read_result.content == "content"
 
     async def test_list_dir_shows_shared_entry(self, auth_vfs: VFS):
-        """Authenticated mount root listing includes virtual @shared/ entry."""
+        """User-scoped mount root listing includes virtual @shared/ entry."""
         await auth_vfs.write("/ws/notes.md", "content", user_id="alice")
         result = await auth_vfs.list_dir("/ws", user_id="alice")
         names = {e.name for e in result.entries}
@@ -414,8 +272,10 @@ class TestVFSSharedAccess:
     ) -> None:
         """Helper to create a share record directly via SharingService."""
         mount = vfs._registry.list_mounts()[0]
-        assert mount.sharing is not None
-        await mount.sharing.create_share(
+        backend = mount.backend
+        assert isinstance(backend, UserScopedFileSystem)
+        assert backend._sharing is not None
+        await backend._sharing.create_share(
             async_session, path, grantee_id, permission, granted_by
         )
         await async_session.commit()
@@ -570,8 +430,10 @@ class TestVFSSharedListDir:
         granted_by: str = "alice",
     ) -> None:
         mount = vfs._registry.list_mounts()[0]
-        assert mount.sharing is not None
-        await mount.sharing.create_share(
+        backend = mount.backend
+        assert isinstance(backend, UserScopedFileSystem)
+        assert backend._sharing is not None
+        await backend._sharing.create_share(
             async_session, path, grantee_id, permission, granted_by
         )
         await async_session.commit()
@@ -754,8 +616,10 @@ class TestVFSSharedMoveAndCopy:
         granted_by: str = "alice",
     ) -> None:
         mount = vfs._registry.list_mounts()[0]
-        assert mount.sharing is not None
-        await mount.sharing.create_share(
+        backend = mount.backend
+        assert isinstance(backend, UserScopedFileSystem)
+        assert backend._sharing is not None
+        await backend._sharing.create_share(
             async_session, path, grantee_id, permission, granted_by
         )
         await async_session.commit()
@@ -818,7 +682,7 @@ class TestVFSSharedMoveAndCopy:
 
 
 class TestTrashScoping:
-    """Trash operations scoped by owner_id on authenticated mounts."""
+    """Trash operations scoped by owner_id on user-scoped mounts."""
 
     async def test_list_trash_scoped_by_owner(self, auth_vfs: VFS):
         """Each user only sees their own trashed files."""
@@ -839,7 +703,7 @@ class TestTrashScoping:
         assert bob_trash.entries[0].name == "b.md"
 
     async def test_list_trash_regular_mount_shows_all(self, regular_vfs: VFS):
-        """Non-authenticated mount shows all trashed files regardless."""
+        """Non-user-scoped mount shows all trashed files regardless."""
         await regular_vfs.write("/ws/a.md", "file a")
         await regular_vfs.write("/ws/b.md", "file b")
         await regular_vfs.delete("/ws/a.md")
@@ -894,7 +758,7 @@ class TestTrashScoping:
         assert len(alice_trash.entries) == 0
 
     async def test_empty_trash_regular_mount_deletes_all(self, regular_vfs: VFS):
-        """Non-authenticated mount empties all trash."""
+        """Non-user-scoped mount empties all trash."""
         await regular_vfs.write("/ws/a.md", "file a")
         await regular_vfs.write("/ws/b.md", "file b")
         await regular_vfs.delete("/ws/a.md")

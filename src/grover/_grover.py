@@ -112,7 +112,6 @@ class Grover:
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
-        authenticated: bool = False,
     ) -> None:
         """Mount a backend at *path*."""
         self._run(
@@ -129,7 +128,6 @@ class Grover:
                 permission=permission,
                 label=label,
                 hidden=hidden,
-                authenticated=authenticated,
             )
         )
 

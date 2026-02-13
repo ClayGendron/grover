@@ -45,14 +45,6 @@ class TestMountConfig:
         cfg = MountConfig(mount_path="/x", backend=FakeBackend())
         assert cfg.mount_type == "vfs"
 
-    def test_mount_config_authenticated_default_false(self):
-        cfg = MountConfig(mount_path="/x", backend=FakeBackend())
-        assert cfg.authenticated is False
-
-    def test_mount_config_authenticated_true(self):
-        cfg = MountConfig(mount_path="/x", backend=FakeBackend(), authenticated=True)
-        assert cfg.authenticated is True
-
 
 # ---------------------------------------------------------------------------
 # MountRegistry — Basic Operations

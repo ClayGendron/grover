@@ -9,6 +9,7 @@ import pytest
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.sharing import SharingService
+from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.vfs import VFS
 from grover.models.shares import FileShare
 
@@ -54,21 +55,20 @@ def sharing() -> SharingService:
 
 @pytest.fixture
 def vfs_with_sharing(
-    dfs: DatabaseFileSystem, session_factory, sharing: SharingService, engine: AsyncEngine
+    session_factory, sharing: SharingService, engine: AsyncEngine
 ) -> VFS:
-    """VFS with an authenticated mount that has a SharingService."""
+    """VFS with a UserScopedFileSystem backend that has a SharingService."""
     from grover.events import EventBus
 
     registry = MountRegistry()
     bus = EventBus()
     v = VFS(registry, bus)
+    backend = UserScopedFileSystem(sharing=sharing)
     config = MountConfig(
         mount_path="/ws",
-        backend=dfs,
+        backend=backend,
         session_factory=session_factory,
         mount_type="vfs",
-        authenticated=True,
-        sharing=sharing,
     )
     registry.add_mount(config)
     return v
@@ -397,10 +397,12 @@ class TestVFSMoveFollow:
         await vfs.write("/ws/doc.md", "content", user_id="alice")
 
         # Create share at stored path level
+        backend = mount.backend
+        assert isinstance(backend, UserScopedFileSystem)
         async with vfs._session_for(mount) as sess:
             assert sess is not None
-            assert mount.sharing is not None
-            await mount.sharing.create_share(
+            assert backend._sharing is not None
+            await backend._sharing.create_share(
                 sess, "/alice/doc.md", "bob", "read", "alice"
             )
 
@@ -412,12 +414,12 @@ class TestVFSMoveFollow:
         # Verify share updated
         async with vfs._session_for(mount) as sess:
             assert sess is not None
-            assert mount.sharing is not None
-            new_shares = await mount.sharing.list_shares_on_path(
+            assert backend._sharing is not None
+            new_shares = await backend._sharing.list_shares_on_path(
                 sess, "/alice/renamed.md"
             )
             assert len(new_shares) == 1
-            old_shares = await mount.sharing.list_shares_on_path(
+            old_shares = await backend._sharing.list_shares_on_path(
                 sess, "/alice/doc.md"
             )
             assert len(old_shares) == 0

@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from .protocol import StorageBackend
-    from .sharing import SharingService
 
 
 @dataclass
@@ -43,13 +42,6 @@ class MountConfig:
 
     hidden: bool = False
     """If True, this mount is excluded from ``list_visible_mounts()``."""
-
-    authenticated: bool = False
-    """If True, operations require ``user_id`` and paths are auto-namespaced per user."""
-
-    sharing: SharingService | None = None
-    """SharingService instance for permission checks on shared paths.  Set automatically
-    when ``authenticated=True`` and a share model is provided during mount setup."""
 
     read_only_paths: set[str] = field(default_factory=set)
     """Paths within this mount that are forced read-only."""

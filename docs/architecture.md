@@ -172,19 +172,30 @@ Analyzers should be pure functions of `(path, content)`. They should never raise
 
 ## User-scoped file systems
 
-Grover supports **authenticated mounts** where every operation requires a `user_id`. This enables multi-tenant deployments where multiple users share the same database but operate in isolated namespaces.
+Grover supports **user-scoped mounts** where every operation requires a `user_id`. This enables multi-tenant deployments where multiple users share the same database but operate in isolated namespaces.
 
-### Path rewriting at VFS level
+### UserScopedFileSystem
 
-User scoping is implemented entirely at the VFS layer. Backends remain unaware of users — they see ordinary paths like `/alice/notes.md`.
+User scoping is implemented in `UserScopedFileSystem`, a subclass of `DatabaseFileSystem`. VFS is a pure mount router — it passes `user_id` through to the backend, and the backend handles all path rewriting, share checks, and trash scoping.
 
-When a mount has `authenticated=True`:
+To create a user-scoped mount, pass a `UserScopedFileSystem` as the backend:
 
-1. **Write:** `g.write("/ws/notes.md", "hello", user_id="alice")` → backend sees `/alice/notes.md`
+```python
+from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.fs.sharing import SharingService
+from grover.models.shares import FileShare
+
+backend = UserScopedFileSystem(sharing=SharingService(FileShare))
+await g.mount("/ws", backend, engine=engine)
+```
+
+When `user_id` is provided:
+
+1. **Write:** `g.write("/ws/notes.md", "hello", user_id="alice")` → backend stores at `/alice/notes.md`
 2. **Read:** `g.read("/ws/notes.md", user_id="alice")` → backend reads `/alice/notes.md`
-3. **Results:** Backend returns `/alice/notes.md` → VFS strips prefix, user sees `/ws/notes.md`
+3. **Results:** Backend returns paths with `/{user_id}/` stripped, user sees `/ws/notes.md`
 
-This design keeps path rewriting localized to VFS and prevents AI agents from escaping their namespace.
+This design keeps path rewriting localized to the backend and prevents AI agents from escaping their namespace.
 
 ### `@shared/` virtual namespace
 
@@ -199,13 +210,17 @@ Files shared between users are browseable via `@shared/{owner}/`:
 
 Access to `@shared/` paths is permission-checked via `SharingService`. Directory shares grant access to all descendants (prefix matching). Write access requires an explicit `"write"` share.
 
+### SupportsReBAC capability protocol
+
+Share dispatch in `GroverAsync` uses the `SupportsReBAC` runtime-checkable protocol. Any backend implementing `share()`, `unshare()`, `list_shares_on_path()`, and `list_shared_with_me()` can participate in share operations. `UserScopedFileSystem` implements this protocol. Plain `DatabaseFileSystem` and `LocalFileSystem` do not — calling `g.share()` on those mounts returns a failure result.
+
 ### Move semantics (path is identity)
 
 Following the git model, **path is identity**. The default `move()` creates a clean break — a new file record at the destination with no version history. Use `follow=True` for rename semantics where the file record, versions, and share paths follow the move. See [internals/fs.md](internals/fs.md#move-semantics) for details.
 
 ### Trash scoping
 
-On authenticated mounts, trash operations are scoped by `owner_id`. Each user can only list, restore, and empty their own trashed files. Regular mounts are unaffected.
+On user-scoped mounts, trash operations are scoped by `owner_id`. Each user can only list, restore, and empty their own trashed files. Regular mounts are unaffected.
 
 ## Adding a new embedding provider
 

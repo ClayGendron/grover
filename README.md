@@ -147,13 +147,18 @@ g.mount("/code", LocalFileSystem(workspace_dir="./my-project"))
 g.mount("/docs", DatabaseFileSystem(dialect="postgresql"))
 ```
 
-### Authenticated mounts
+### User-scoped mounts
 
-For multi-tenant deployments, mount with `authenticated=True` to enable per-user namespacing:
+For multi-tenant deployments, mount a `UserScopedFileSystem` to enable per-user namespacing:
 
 ```python
+from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.fs.sharing import SharingService
+from grover.models.shares import FileShare
+
 g = GroverAsync()
-await g.mount("/ws", engine=engine, authenticated=True)
+backend = UserScopedFileSystem(sharing=SharingService(FileShare))
+await g.mount("/ws", backend, engine=engine)
 
 # Each user has their own namespace
 await g.write("/ws/notes.md", "hello", user_id="alice")
