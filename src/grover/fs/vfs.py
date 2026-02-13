@@ -255,7 +255,9 @@ class VFS:
         async with self._session_for(mount) as sess:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "read")
-            result = await mount.backend.read(rel_path, offset, limit, session=sess)
+            result = await mount.backend.read(
+                rel_path, offset, limit, session=sess, user_id=user_id
+            )
         result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         return result
 
@@ -277,7 +279,7 @@ class VFS:
 
         rel_path = self._resolve_user_path(mount, original_rel, user_id)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.list_dir(rel_path, session=sess)
+            result = await mount.backend.list_dir(rel_path, session=sess, user_id=user_id)
 
         result.path = self._restore_user_path(result.path, mount, user_id) or path
         result.entries = [
@@ -360,7 +362,7 @@ class VFS:
             # Fast path: directory-level share covers this path → list everything
             try:
                 await self._check_share_access(sess, mount, stored_path, user_id, "read")
-                result = await mount.backend.list_dir(stored_path, session=sess)
+                result = await mount.backend.list_dir(stored_path, session=sess, user_id=user_id)
 
                 # Rewrite paths: /{owner}/x → {mount}/@shared/{owner}/x
                 result.path = shared_prefix + sub_path if sub_path != "/" else shared_prefix
@@ -405,7 +407,7 @@ class VFS:
             for name in sorted(direct_files):
                 file_stored = f"{stored_path}/{name}"
                 try:
-                    info = await mount.backend.get_info(file_stored, session=sess)
+                    info = await mount.backend.get_info(file_stored, session=sess, user_id=user_id)
                 except Exception:
                     info = None
                 if info is not None:
@@ -485,7 +487,7 @@ class VFS:
                     await self._check_share_access(sess, mount, rel_path, user_id, "read")
                 except PermissionError:
                     return False
-            return await mount.backend.exists(rel_path, session=sess)
+            return await mount.backend.exists(rel_path, session=sess, user_id=user_id)
 
     async def get_info(
         self, path: str, *, user_id: str | None = None
@@ -517,7 +519,7 @@ class VFS:
                     await self._check_share_access(sess, mount, rel_path, user_id, "read")
                 except PermissionError:
                     return None
-            info = await mount.backend.get_info(rel_path, session=sess)
+            info = await mount.backend.get_info(rel_path, session=sess, user_id=user_id)
         if info is not None:
             info = self._restore_file_info(info, mount, user_id)
         return info
@@ -550,7 +552,9 @@ class VFS:
                 if mount.authenticated and user_id:
                     glob_path = f"/{user_id}"
                 async with self._session_for(mount) as sess:
-                    result = await mount.backend.glob(pattern, glob_path, session=sess)
+                    result = await mount.backend.glob(
+                        pattern, glob_path, session=sess, user_id=user_id
+                    )
                 if result.success:
                     all_entries.extend(
                         self._restore_file_info(e, mount, user_id)
@@ -567,7 +571,7 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.glob(pattern, rel_path, session=sess)
+            result = await mount.backend.glob(pattern, rel_path, session=sess, user_id=user_id)
         result.path = self._restore_user_path(result.path, mount, user_id) or path
         result.entries = [
             self._restore_file_info(e, mount, user_id) for e in result.entries
@@ -625,6 +629,7 @@ class VFS:
                         max_results_per_file=max_results_per_file,
                         count_only=False,
                         files_only=files_only,
+                        user_id=user_id,
                     )
                 if result.success:
                     for m in result.matches:
@@ -677,6 +682,7 @@ class VFS:
                 max_results_per_file=max_results_per_file,
                 count_only=count_only,
                 files_only=files_only,
+                user_id=user_id,
             )
         result.path = self._restore_user_path(result.path, mount, user_id) or path
         for m in result.matches:
@@ -720,6 +726,7 @@ class VFS:
                             tree_path,
                             max_depth=max_depth,
                             session=sess,
+                            user_id=user_id,
                         )
                     if result.success:
                         all_entries.extend(
@@ -742,7 +749,9 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.tree(rel_path, max_depth=max_depth, session=sess)
+            result = await mount.backend.tree(
+                rel_path, max_depth=max_depth, session=sess, user_id=user_id
+            )
         result.path = self._restore_user_path(result.path, mount, user_id) or path
         result.entries = [
             self._restore_file_info(e, mount, user_id) for e in result.entries
@@ -774,7 +783,9 @@ class VFS:
         async with self._session_for(mount) as sess:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "write")
-            write_kwargs: dict[str, Any] = {"overwrite": overwrite, "session": sess}
+            write_kwargs: dict[str, Any] = {
+                "overwrite": overwrite, "session": sess, "user_id": user_id,
+            }
             if mount.authenticated and user_id is not None:
                 write_kwargs["owner_id"] = user_id
             result = await mount.backend.write(
@@ -810,7 +821,8 @@ class VFS:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "write")
             result = await mount.backend.edit(
-                rel_path, old_string, new_string, replace_all, created_by, session=sess
+                rel_path, old_string, new_string, replace_all, created_by,
+                session=sess, user_id=user_id
             )
         result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         if result.success:
@@ -845,7 +857,7 @@ class VFS:
         async with self._session_for(mount) as sess:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "write")
-            result = await mount.backend.delete(rel_path, permanent, session=sess)
+            result = await mount.backend.delete(rel_path, permanent, session=sess, user_id=user_id)
         result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_DELETED, path=path))
@@ -867,7 +879,7 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         rel_path = self._resolve_user_path(mount, rel_path, user_id)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.mkdir(rel_path, parents, session=sess)
+            result = await mount.backend.mkdir(rel_path, parents, session=sess, user_id=user_id)
         result.path = self._restore_user_path(result.path, mount, user_id)
         result.created_dirs = [
             self._restore_user_path(d, mount, user_id) or d
@@ -912,6 +924,7 @@ class VFS:
                 result = await src_mount.backend.move(
                     src_rel, dest_rel, session=sess,
                     follow=follow, sharing=src_mount.sharing,
+                    user_id=user_id,
                 )
             result.old_path = self._restore_user_path(result.old_path, src_mount, user_id)
             result.new_path = self._restore_user_path(result.new_path, dest_mount, user_id)
@@ -923,7 +936,7 @@ class VFS:
 
         # Cross-mount move: read → write → delete (non-atomic).
         async with self._session_for(src_mount) as src_sess:
-            read_result = await src_mount.backend.read(src_rel, session=src_sess)
+            read_result = await src_mount.backend.read(src_rel, session=src_sess, user_id=user_id)
         if not read_result.success:
             return MoveResult(
                 success=False,
@@ -938,7 +951,7 @@ class VFS:
 
         async with self._session_for(dest_mount) as dest_sess:
             write_result = await dest_mount.backend.write(
-                dest_rel, read_result.content, session=dest_sess
+                dest_rel, read_result.content, session=dest_sess, user_id=user_id
             )
         if not write_result.success:
             return MoveResult(
@@ -948,7 +961,7 @@ class VFS:
 
         async with self._session_for(src_mount) as src_sess:
             delete_result = await src_mount.backend.delete(
-                src_rel, permanent=False, session=src_sess
+                src_rel, permanent=False, session=src_sess, user_id=user_id
             )
         if not delete_result.success:
             return MoveResult(
@@ -990,7 +1003,9 @@ class VFS:
             async with self._session_for(src_mount) as sess:
                 if src_shared and user_id:
                     await self._check_share_access(sess, src_mount, src_rel, user_id, "read")
-                result = await src_mount.backend.copy(src_rel, dest_rel, session=sess)
+                result = await src_mount.backend.copy(
+                    src_rel, dest_rel, session=sess, user_id=user_id
+                )
             result.file_path = self._restore_user_path(result.file_path, dest_mount, user_id)
             if result.success:
                 await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
@@ -1000,7 +1015,7 @@ class VFS:
         async with self._session_for(src_mount) as src_sess:
             if src_shared and user_id:
                 await self._check_share_access(src_sess, src_mount, src_rel, user_id, "read")
-            read_result = await src_mount.backend.read(src_rel, session=src_sess)
+            read_result = await src_mount.backend.read(src_rel, session=src_sess, user_id=user_id)
         if not read_result.success:
             return WriteResult(
                 success=False,
@@ -1015,7 +1030,7 @@ class VFS:
 
         async with self._session_for(dest_mount) as dest_sess:
             result = await dest_mount.backend.write(
-                dest_rel, read_result.content, session=dest_sess
+                dest_rel, read_result.content, session=dest_sess, user_id=user_id
             )
         result.file_path = self._restore_user_path(result.file_path, dest_mount, user_id)
         if result.success:
@@ -1041,7 +1056,7 @@ class VFS:
         async with self._session_for(mount) as sess:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "read")
-            return await cap.list_versions(rel_path, session=sess)
+            return await cap.list_versions(rel_path, session=sess, user_id=user_id)
 
     async def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
@@ -1063,7 +1078,7 @@ class VFS:
         async with self._session_for(mount) as sess:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "write")
-            result = await cap.restore_version(rel_path, version, session=sess)
+            result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
         result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
@@ -1084,7 +1099,7 @@ class VFS:
         async with self._session_for(mount) as sess:
             if is_shared and user_id:
                 await self._check_share_access(sess, mount, rel_path, user_id, "read")
-            return await cap.get_version_content(rel_path, version, session=sess)
+            return await cap.get_version_content(rel_path, version, session=sess, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Trash Operations (capability-gated)
@@ -1102,7 +1117,7 @@ class VFS:
                 continue  # Skip unsupported mounts silently
             owner_id = user_id if mount.authenticated else None
             async with self._session_for(mount) as sess:
-                result = await cap.list_trash(session=sess, owner_id=owner_id)
+                result = await cap.list_trash(session=sess, owner_id=owner_id, user_id=user_id)
             if result.success:
                 prefixed_entries = [
                     self._restore_file_info(entry, mount, user_id)
@@ -1134,7 +1149,7 @@ class VFS:
         owner_id = user_id if mount.authenticated else None
         async with self._session_for(mount) as sess:
             result = await cap.restore_from_trash(
-                rel_path, session=sess, owner_id=owner_id
+                rel_path, session=sess, owner_id=owner_id, user_id=user_id
             )
         result.file_path = self._restore_user_path(result.file_path, mount, user_id)
         if result.success:
@@ -1154,7 +1169,7 @@ class VFS:
                 continue  # Skip unsupported mounts silently
             owner_id = user_id if mount.authenticated else None
             async with self._session_for(mount) as sess:
-                result = await cap.empty_trash(session=sess, owner_id=owner_id)
+                result = await cap.empty_trash(session=sess, owner_id=owner_id, user_id=user_id)
             if not result.success:
                 return result
             total_deleted += result.total_deleted or 0

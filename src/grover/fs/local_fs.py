@@ -315,6 +315,7 @@ class LocalFileSystem:
         limit: int = 2000,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ReadResult:
         """Read file with binary check and similar file suggestions."""
         sess = self._require_session(session)
@@ -367,6 +368,7 @@ class LocalFileSystem:
         overwrite: bool = True,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await write_file(
@@ -393,6 +395,7 @@ class LocalFileSystem:
         created_by: str = "agent",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> EditResult:
         sess = self._require_session(session)
         return await edit_file(
@@ -414,6 +417,7 @@ class LocalFileSystem:
         permanent: bool = False,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult:
         """Delete file, backing up content to the database first.
 
@@ -467,6 +471,7 @@ class LocalFileSystem:
         parents: bool = True,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> MkdirResult:
         """Create directory in database and on disk."""
         sess = self._require_session(session)
@@ -502,6 +507,7 @@ class LocalFileSystem:
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListResult:
         """List directory, including files only on disk."""
         sess = self._require_session(session)
@@ -566,6 +572,7 @@ class LocalFileSystem:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> bool:
         sess = self._require_session(session)
         return await self.metadata.exists(sess, path)
@@ -575,6 +582,7 @@ class LocalFileSystem:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> FileInfo | None:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
@@ -587,6 +595,7 @@ class LocalFileSystem:
         session: AsyncSession | None = None,
         follow: bool = False,
         sharing: SharingService | None = None,
+        user_id: str | None = None,
     ) -> MoveResult:
         sess = self._require_session(session)
         return await move_file(
@@ -610,6 +619,7 @@ class LocalFileSystem:
         dest: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await copy_file(
@@ -631,6 +641,7 @@ class LocalFileSystem:
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GlobResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -757,6 +768,7 @@ class LocalFileSystem:
         count_only: bool = False,
         files_only: bool = False,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GrepResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -930,6 +942,7 @@ class LocalFileSystem:
         *,
         max_depth: int | None = None,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> TreeResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -1048,6 +1061,7 @@ class LocalFileSystem:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListVersionsResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -1067,6 +1081,7 @@ class LocalFileSystem:
         version: int,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GetVersionContentResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -1090,6 +1105,7 @@ class LocalFileSystem:
         version: int,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> RestoreResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -1124,6 +1140,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> ListResult:
         sess = self._require_session(session)
         return await self.trash.list_trash(sess, owner_id=owner_id)
@@ -1134,6 +1151,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> RestoreResult:
         """Restore a file from trash, writing content back to disk."""
         sess = self._require_session(session)
@@ -1179,6 +1197,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
         return await self.trash.empty_trash(sess, owner_id=owner_id)

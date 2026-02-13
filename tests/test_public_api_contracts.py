@@ -62,6 +62,7 @@ class InMemoryBackend:
         limit: int = 2000,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> ReadResult:
         content = self._files.get(path)
         if content is None:
@@ -73,6 +74,7 @@ class InMemoryBackend:
         path: str = "/",
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> ListResult:
         return ListResult(success=True, message="OK", entries=[], path=path)
 
@@ -81,6 +83,7 @@ class InMemoryBackend:
         path: str,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> bool:
         return path in self._files
 
@@ -89,6 +92,7 @@ class InMemoryBackend:
         path: str,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> FileInfo | None:
         if path not in self._files:
             return None
@@ -102,6 +106,8 @@ class InMemoryBackend:
         *,
         overwrite: bool = True,
         session: object | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         self._files[path] = content
         return WriteResult(success=True, message="OK", file_path=path)
@@ -115,6 +121,7 @@ class InMemoryBackend:
         created_by: str = "agent",
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> EditResult:
         content = self._files.get(path)
         if content is None:
@@ -128,6 +135,7 @@ class InMemoryBackend:
         permanent: bool = False,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult:
         if path not in self._files:
             return DeleteResult(success=False, message=f"Not found: {path}")
@@ -140,6 +148,7 @@ class InMemoryBackend:
         parents: bool = True,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> MkdirResult:
         return MkdirResult(success=True, message="OK", path=path)
 
@@ -149,6 +158,7 @@ class InMemoryBackend:
         dest: str,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> MoveResult:
         content = self._files.pop(src, None)
         if content is None:
@@ -162,6 +172,7 @@ class InMemoryBackend:
         dest: str,
         *,
         session: object | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         content = self._files.get(src)
         if content is None:

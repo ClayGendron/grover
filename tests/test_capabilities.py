@@ -61,6 +61,7 @@ class MinimalBackend:
         limit: int = 2000,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ReadResult:
         content = self._files.get(path)
         if content is None:
@@ -75,6 +76,8 @@ class MinimalBackend:
         *,
         overwrite: bool = True,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         self._files[path] = content
         return WriteResult(success=True, message="OK", file_path=path)
@@ -88,6 +91,7 @@ class MinimalBackend:
         created_by: str = "agent",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> EditResult:
         content = self._files.get(path)
         if content is None:
@@ -101,6 +105,7 @@ class MinimalBackend:
         permanent: bool = False,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult:
         if path in self._files:
             del self._files[path]
@@ -113,6 +118,7 @@ class MinimalBackend:
         parents: bool = True,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> MkdirResult:
         return MkdirResult(success=True, message="OK", path=path)
 
@@ -122,6 +128,7 @@ class MinimalBackend:
         dest: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> MoveResult:
         content = self._files.pop(src, None)
         if content is None:
@@ -135,6 +142,7 @@ class MinimalBackend:
         dest: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         content = self._files.get(src)
         if content is None:
@@ -148,6 +156,7 @@ class MinimalBackend:
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GlobResult:
         return GlobResult(success=True, message="OK")
 
@@ -167,6 +176,7 @@ class MinimalBackend:
         count_only: bool = False,
         files_only: bool = False,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GrepResult:
         return GrepResult(success=True, message="OK")
 
@@ -176,6 +186,7 @@ class MinimalBackend:
         *,
         max_depth: int | None = None,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> TreeResult:
         return TreeResult(success=True, message="OK")
 
@@ -184,6 +195,7 @@ class MinimalBackend:
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListResult:
         entries = []
         prefix = path.rstrip("/") + "/"
@@ -208,6 +220,7 @@ class MinimalBackend:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> bool:
         return path in self._files
 
@@ -216,6 +229,7 @@ class MinimalBackend:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> FileInfo | None:
         if path not in self._files:
             return None
@@ -425,6 +439,8 @@ class _FailingBackend(MinimalBackend):
         *,
         overwrite: bool = True,
         session: AsyncSession | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         raise RuntimeError("Simulated backend failure")
 

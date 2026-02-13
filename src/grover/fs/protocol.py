@@ -67,6 +67,7 @@ class StorageBackend(Protocol):
         limit: int = 2000,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ReadResult: ...
 
     async def list_dir(
@@ -74,6 +75,7 @@ class StorageBackend(Protocol):
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListResult: ...
 
     async def exists(
@@ -81,6 +83,7 @@ class StorageBackend(Protocol):
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> bool: ...
 
     async def get_info(
@@ -88,6 +91,7 @@ class StorageBackend(Protocol):
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> FileInfo | None: ...
 
     # ------------------------------------------------------------------
@@ -103,6 +107,7 @@ class StorageBackend(Protocol):
         overwrite: bool = True,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> WriteResult: ...
 
     async def edit(
@@ -114,6 +119,7 @@ class StorageBackend(Protocol):
         created_by: str = "agent",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> EditResult: ...
 
     async def delete(
@@ -122,6 +128,7 @@ class StorageBackend(Protocol):
         permanent: bool = False,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult: ...
 
     async def mkdir(
@@ -130,6 +137,7 @@ class StorageBackend(Protocol):
         parents: bool = True,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> MkdirResult: ...
 
     async def move(
@@ -140,6 +148,7 @@ class StorageBackend(Protocol):
         session: AsyncSession | None = None,
         follow: bool = False,
         sharing: Any = None,
+        user_id: str | None = None,
     ) -> MoveResult: ...
 
     async def copy(
@@ -148,6 +157,7 @@ class StorageBackend(Protocol):
         dest: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> WriteResult: ...
 
     # ------------------------------------------------------------------
@@ -160,6 +170,7 @@ class StorageBackend(Protocol):
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GlobResult: ...
 
     async def grep(
@@ -178,6 +189,7 @@ class StorageBackend(Protocol):
         count_only: bool = False,
         files_only: bool = False,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GrepResult: ...
 
     async def tree(
@@ -186,6 +198,7 @@ class StorageBackend(Protocol):
         *,
         max_depth: int | None = None,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> TreeResult: ...
 
 
@@ -198,6 +211,7 @@ class SupportsVersions(Protocol):
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListVersionsResult: ...
 
     async def get_version_content(
@@ -206,6 +220,7 @@ class SupportsVersions(Protocol):
         version: int,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GetVersionContentResult: ...
 
     async def restore_version(
@@ -214,6 +229,7 @@ class SupportsVersions(Protocol):
         version: int,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> RestoreResult: ...
 
 
@@ -226,6 +242,7 @@ class SupportsTrash(Protocol):
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> ListResult: ...
 
     async def restore_from_trash(
@@ -234,6 +251,7 @@ class SupportsTrash(Protocol):
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> RestoreResult: ...
 
     async def empty_trash(
@@ -241,7 +259,53 @@ class SupportsTrash(Protocol):
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult: ...
+
+
+@runtime_checkable
+class SupportsReBAC(Protocol):
+    """Opt-in: relationship-based access control (user-scoped paths + sharing).
+
+    Backends implementing this protocol handle per-user path namespacing,
+    ``@shared`` virtual directory resolution, and share CRUD.  VFS delegates
+    all user-scoping to backends that satisfy this protocol.
+    """
+
+    async def share(
+        self,
+        path: str,
+        grantee_id: str,
+        permission: str,
+        *,
+        user_id: str,
+        session: AsyncSession | None = None,
+        expires_at: Any | None = None,
+    ) -> Any: ...
+
+    async def unshare(
+        self,
+        path: str,
+        grantee_id: str,
+        *,
+        user_id: str,
+        session: AsyncSession | None = None,
+    ) -> bool: ...
+
+    async def list_shares_on_path(
+        self,
+        path: str,
+        *,
+        user_id: str,
+        session: AsyncSession | None = None,
+    ) -> list[Any]: ...
+
+    async def list_shared_with_me(
+        self,
+        *,
+        user_id: str,
+        session: AsyncSession | None = None,
+    ) -> list[Any]: ...
 
 
 @runtime_checkable

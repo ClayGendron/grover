@@ -160,6 +160,7 @@ class DatabaseFileSystem:
         limit: int = 2000,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ReadResult:
         sess = self._require_session(session)
         return await read_file(
@@ -180,6 +181,7 @@ class DatabaseFileSystem:
         overwrite: bool = True,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await write_file(
@@ -206,6 +208,7 @@ class DatabaseFileSystem:
         created_by: str = "agent",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> EditResult:
         sess = self._require_session(session)
         return await edit_file(
@@ -227,6 +230,7 @@ class DatabaseFileSystem:
         permanent: bool = False,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
         return await delete_file(
@@ -245,6 +249,7 @@ class DatabaseFileSystem:
         parents: bool = True,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> MkdirResult:
         sess = self._require_session(session)
         created_dirs, error = await self.directories.mkdir(
@@ -275,6 +280,7 @@ class DatabaseFileSystem:
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListResult:
         sess = self._require_session(session)
         return await list_dir_db(
@@ -289,6 +295,7 @@ class DatabaseFileSystem:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> bool:
         sess = self._require_session(session)
         return await self.metadata.exists(sess, path)
@@ -298,6 +305,7 @@ class DatabaseFileSystem:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> FileInfo | None:
         sess = self._require_session(session)
         return await self.metadata.get_info(sess, path)
@@ -310,6 +318,7 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         follow: bool = False,
         sharing: SharingService | None = None,
+        user_id: str | None = None,
     ) -> MoveResult:
         sess = self._require_session(session)
         return await move_file(
@@ -333,6 +342,7 @@ class DatabaseFileSystem:
         dest: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> WriteResult:
         sess = self._require_session(session)
         return await copy_file(
@@ -354,6 +364,7 @@ class DatabaseFileSystem:
         path: str = "/",
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GlobResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -445,6 +456,7 @@ class DatabaseFileSystem:
         count_only: bool = False,
         files_only: bool = False,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GrepResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -595,6 +607,7 @@ class DatabaseFileSystem:
         *,
         max_depth: int | None = None,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> TreeResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -669,6 +682,7 @@ class DatabaseFileSystem:
         path: str,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> ListVersionsResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -688,6 +702,7 @@ class DatabaseFileSystem:
         version: int,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> GetVersionContentResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -711,6 +726,7 @@ class DatabaseFileSystem:
         version: int,
         *,
         session: AsyncSession | None = None,
+        user_id: str | None = None,
     ) -> RestoreResult:
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -745,6 +761,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> ListResult:
         sess = self._require_session(session)
         return await self.trash.list_trash(sess, owner_id=owner_id)
@@ -755,6 +772,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> RestoreResult:
         sess = self._require_session(session)
         return await self.trash.restore_from_trash(
@@ -766,6 +784,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         owner_id: str | None = None,
+        user_id: str | None = None,
     ) -> DeleteResult:
         sess = self._require_session(session)
         return await self.trash.empty_trash(sess, owner_id=owner_id)
