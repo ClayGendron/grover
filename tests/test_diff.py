@@ -45,6 +45,50 @@ class TestApplyDiff:
         result = apply_diff(old, diff)
         assert result == new
 
+    def test_loses_trailing_newline(self):
+        """File that loses its trailing newline round-trips correctly."""
+        old = "a\nb\n"
+        new = "a\nb"
+        diff = compute_diff(old, new)
+        assert "\\ No newline at end of file" in diff
+        result = apply_diff(old, diff)
+        assert result == new
+
+    def test_gains_trailing_newline(self):
+        """File that gains a trailing newline round-trips correctly."""
+        old = "a\nb"
+        new = "a\nb\n"
+        diff = compute_diff(old, new)
+        assert "\\ No newline at end of file" in diff
+        result = apply_diff(old, diff)
+        assert result == new
+
+    def test_both_lack_trailing_newline_last_line_changes(self):
+        """Both old and new lack trailing newline, last line changes."""
+        old = "a\nb"
+        new = "a\nc"
+        diff = compute_diff(old, new)
+        assert diff.count("\\ No newline at end of file") == 2
+        result = apply_diff(old, diff)
+        assert result == new
+
+    def test_single_line_no_newline(self):
+        """Single-line files without newlines round-trip correctly."""
+        old = "x"
+        new = "y"
+        diff = compute_diff(old, new)
+        assert diff.count("\\ No newline at end of file") == 2
+        result = apply_diff(old, diff)
+        assert result == new
+
+    def test_nonempty_to_empty(self):
+        """Removing all content produces a valid diff."""
+        old = "a\nb\n"
+        new = ""
+        diff = compute_diff(old, new)
+        result = apply_diff(old, diff)
+        assert result == new
+
     def test_add_content_to_empty(self):
         """Adding content to an empty string."""
         old = ""
