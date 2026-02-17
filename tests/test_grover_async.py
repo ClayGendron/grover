@@ -178,6 +178,39 @@ class TestGroverAsyncDirectAccess:
         await grover.write("/project/yes.txt", "yes")
         assert await grover.exists("/project/yes.txt")
 
+    @pytest.mark.asyncio
+    async def test_write_overwrite_false_fails_when_exists(self, grover: GroverAsync):
+        await grover.write("/project/exists.txt", "original")
+        result = await grover.write("/project/exists.txt", "new", overwrite=False)
+        assert not result.success
+        # Original content should be unchanged
+        assert (await grover.read("/project/exists.txt")).content == "original"
+
+    @pytest.mark.asyncio
+    async def test_write_overwrite_false_succeeds_for_new(self, grover: GroverAsync):
+        result = await grover.write("/project/brand_new.txt", "content", overwrite=False)
+        assert result.success
+        assert (await grover.read("/project/brand_new.txt")).content == "content"
+
+    @pytest.mark.asyncio
+    async def test_edit_replace_all(self, grover: GroverAsync):
+        await grover.write("/project/multi.txt", "foo bar foo baz foo")
+        result = await grover.edit("/project/multi.txt", "foo", "qux", replace_all=True)
+        assert result.success
+        assert (await grover.read("/project/multi.txt")).content == "qux bar qux baz qux"
+
+    @pytest.mark.asyncio
+    async def test_read_with_offset_and_limit(self, grover: GroverAsync):
+        lines = "\n".join(f"line {i}" for i in range(20))
+        await grover.write("/project/lines.txt", lines)
+        result = await grover.read("/project/lines.txt", offset=5, limit=3)
+        assert result.success
+        content = result.content
+        assert content is not None
+        assert "line 5" in content
+        assert "line 7" in content
+        assert "line 8" not in content
+
 
 # ==================================================================
 # Multi-Mount CRUD

@@ -139,21 +139,41 @@ class Grover:
     # Filesystem wrappers (sync)
     # ------------------------------------------------------------------
 
-    def read(self, path: str, *, user_id: str | None = None) -> ReadResult:
+    def read(
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+        user_id: str | None = None,
+    ) -> ReadResult:
         """Read file content at *path*."""
-        return self._run(self._async.read(path, user_id=user_id))
+        return self._run(self._async.read(path, offset=offset, limit=limit, user_id=user_id))
 
     def write(
-        self, path: str, content: str, *, user_id: str | None = None
+        self,
+        path: str,
+        content: str,
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
     ) -> WriteResult:
         """Write *content* to *path*."""
-        return self._run(self._async.write(path, content, user_id=user_id))
+        return self._run(self._async.write(path, content, overwrite=overwrite, user_id=user_id))
 
     def edit(
-        self, path: str, old: str, new: str, *, user_id: str | None = None
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool = False,
+        user_id: str | None = None,
     ) -> EditResult:
         """Replace *old* with *new* in the file at *path*."""
-        return self._run(self._async.edit(path, old, new, user_id=user_id))
+        return self._run(
+            self._async.edit(path, old, new, replace_all=replace_all, user_id=user_id)
+        )
 
     def delete(
         self, path: str, permanent: bool = False, *, user_id: str | None = None

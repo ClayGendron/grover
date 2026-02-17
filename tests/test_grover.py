@@ -157,6 +157,35 @@ class TestGroverFilesystem:
     def test_fs_property(self, grover: Grover):
         assert grover.fs is grover._async._vfs
 
+    def test_write_overwrite_false_fails_when_exists(self, grover: Grover):
+        grover.write("/project/exists.txt", "original")
+        result = grover.write("/project/exists.txt", "new", overwrite=False)
+        assert not result.success
+        # Original content should be unchanged
+        assert grover.read("/project/exists.txt").content == "original"
+
+    def test_write_overwrite_false_succeeds_for_new(self, grover: Grover):
+        result = grover.write("/project/brand_new.txt", "content", overwrite=False)
+        assert result.success
+        assert grover.read("/project/brand_new.txt").content == "content"
+
+    def test_edit_replace_all(self, grover: Grover):
+        grover.write("/project/multi.txt", "foo bar foo baz foo")
+        result = grover.edit("/project/multi.txt", "foo", "qux", replace_all=True)
+        assert result.success
+        assert grover.read("/project/multi.txt").content == "qux bar qux baz qux"
+
+    def test_read_with_offset_and_limit(self, grover: Grover):
+        lines = "\n".join(f"line {i}" for i in range(20))
+        grover.write("/project/lines.txt", lines)
+        result = grover.read("/project/lines.txt", offset=5, limit=3)
+        assert result.success
+        content = result.content
+        assert content is not None
+        assert "line 5" in content
+        assert "line 7" in content
+        assert "line 8" not in content
+
 
 # ==================================================================
 # Graph

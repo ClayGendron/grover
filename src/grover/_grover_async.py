@@ -457,23 +457,39 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def read(
-        self, path: str, *, user_id: str | None = None
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+        user_id: str | None = None,
     ) -> ReadResult:
-        return await self._vfs.read(path, user_id=user_id)
+        return await self._vfs.read(path, offset, limit, user_id=user_id)
 
     async def write(
-        self, path: str, content: str, *, user_id: str | None = None
+        self,
+        path: str,
+        content: str,
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
     ) -> WriteResult:
         try:
-            return await self._vfs.write(path, content, user_id=user_id)
+            return await self._vfs.write(path, content, overwrite=overwrite, user_id=user_id)
         except Exception as e:
             return WriteResult(success=False, message=f"Write failed: {e}")
 
     async def edit(
-        self, path: str, old: str, new: str, *, user_id: str | None = None
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool = False,
+        user_id: str | None = None,
     ) -> EditResult:
         try:
-            return await self._vfs.edit(path, old, new, user_id=user_id)
+            return await self._vfs.edit(path, old, new, replace_all, user_id=user_id)
         except Exception as e:
             return EditResult(success=False, message=f"Edit failed: {e}")
 
