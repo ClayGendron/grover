@@ -221,10 +221,13 @@ class SharingService:
         new_prefix = normalize_path(new_prefix)
         model = self._share_model
 
+        # Escape SQL LIKE wildcards in the prefix itself
+        escaped = old_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
         # Match exact path or path + "/" prefix
         result = await session.execute(
             select(model).where(
-                model.path.like(old_prefix + "%", escape="\\"),  # type: ignore[union-attr]
+                model.path.like(escaped + "%", escape="\\"),  # type: ignore[union-attr]
             )
         )
         shares = list(result.scalars().all())
