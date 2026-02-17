@@ -31,7 +31,8 @@ pip install grover[search]       # sentence-transformers + usearch
 pip install grover[treesitter]   # JS/TS/Go code analyzers
 pip install grover[postgres]     # PostgreSQL backend
 pip install grover[mssql]        # MSSQL backend
-pip install grover[all]          # search + treesitter + postgres
+pip install grover[deepagents]   # deepagents/LangGraph integration
+pip install grover[all]          # everything
 ```
 
 Requires Python 3.12+.
@@ -171,6 +172,22 @@ await g.share("/ws/notes.md", "bob", user_id="alice")
 r3 = await g.read("/ws/@shared/alice/notes.md", user_id="bob")  # "hello"
 ```
 
+### deepagents integration
+
+Use Grover as a storage backend for [deepagents](https://github.com/langchain-ai/deepagents) (LangGraph agent framework):
+
+```python
+from grover.integrations.deepagents import GroverBackend, GroverMiddleware
+
+# GroverBackend implements deepagents BackendProtocol
+backend = GroverBackend.from_local("/path/to/workspace")
+
+# GroverMiddleware adds version, search, graph, and trash tools
+middleware = [GroverMiddleware(backend.grover)]
+```
+
+Requires the `deepagents` extra: `pip install grover[deepagents]`
+
 ## What's in `.grover/`
 
 When you use Grover, a `.grover/` directory is created to store internal state:
@@ -218,7 +235,7 @@ Grover is in its first release cycle. Here's what's coming:
 
 - **MCP server** — expose Grover as a Model Context Protocol server for Claude Code, Cursor, and other MCP-compatible agents
 - **CLI** — `grover init`, `grover status`, `grover search`, `grover rollback`
-- **Framework integrations** — LangGraph tools, Aider plugin, fsspec adapter
+- **More framework integrations** — Aider plugin, fsspec adapter
 - **More language analyzers** — Rust, Java, C#
 - **More embedding providers** — OpenAI, Cohere, Voyage
 

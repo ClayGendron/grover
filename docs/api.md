@@ -549,3 +549,68 @@ from grover.events import EventBus, EventType, FileEvent
 | `FILE_DELETED` | A file is deleted |
 | `FILE_MOVED` | A file is moved or renamed |
 | `FILE_RESTORED` | A file is restored from trash |
+
+---
+
+## deepagents Integration
+
+```python
+from grover.integrations.deepagents import GroverBackend, GroverMiddleware
+```
+
+Requires the `deepagents` extra: `pip install grover[deepagents]`
+
+### GroverBackend
+
+Implements the deepagents `BackendProtocol`, mapping all file operations to Grover's sync API.
+
+```python
+# From an existing Grover instance
+backend = GroverBackend(grover)
+
+# Convenience factories
+backend = GroverBackend.from_local("/path/to/workspace")
+backend = GroverBackend.from_database(engine)
+```
+
+| Method | Description |
+|--------|-------------|
+| `ls_info(path)` | List directory entries as `FileInfo` dicts |
+| `read(path, offset, limit)` | Read file content in cat -n format |
+| `write(path, content)` | Create-only write (errors if file exists) |
+| `edit(path, old, new, replace_all)` | Find-and-replace within a file |
+| `grep_raw(pattern, path, glob)` | Literal string search across files |
+| `glob_info(pattern, path)` | Find files matching a glob pattern |
+| `upload_files(files)` | Batch file upload (list of `(path, bytes)` tuples) |
+| `download_files(paths)` | Batch file download (returns bytes) |
+
+All methods have async variants (`als_info`, `aread`, etc.) via `asyncio.to_thread()`.
+
+**Key semantics:**
+- `write()` uses create-only semantics (`overwrite=False`) — returns error if file exists
+- `files_update` is always `None` (Grover is external storage)
+- Path validation rejects `..`, `~`, and paths without leading `/`
+
+### GroverMiddleware
+
+A deepagents `AgentMiddleware` that adds Grover-specific tools beyond standard file ops.
+
+```python
+middleware = GroverMiddleware(grover)
+middleware = GroverMiddleware(grover, enable_search=False, enable_graph=False)
+```
+
+| Tool | Description |
+|------|-------------|
+| `list_versions` | Show version history with timestamps, sizes, hashes |
+| `get_version_content` | Read a specific past version of a file |
+| `restore_version` | Restore a file to a previous version (creates new version) |
+| `delete_file` | Soft-delete a file to trash |
+| `list_trash` | List all soft-deleted files |
+| `restore_from_trash` | Recover a file from trash |
+| `search_semantic` | Semantic similarity search (requires embedding provider) |
+| `dependencies` | Direct dependencies from the knowledge graph |
+| `dependents` | Reverse dependencies from the knowledge graph |
+| `impacts` | Transitive impact analysis |
+
+Toggle tool groups with `enable_search=False` (removes `search_semantic`) and `enable_graph=False` (removes `dependencies`, `dependents`, `impacts`).
