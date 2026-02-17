@@ -84,7 +84,7 @@ class MountRegistry:
         virtual_path = normalize_path(virtual_path)
 
         best_match: MountConfig | None = None
-        best_len = 0
+        best_len = -1
 
         for mount_path, config in self._mounts.items():
             if (virtual_path == mount_path or virtual_path.startswith(mount_path + "/")) and len(
