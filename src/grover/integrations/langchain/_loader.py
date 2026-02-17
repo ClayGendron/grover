@@ -102,25 +102,14 @@ class GroverLoader(BaseLoader):
 
     def _list_entries(self) -> list[dict[str, Any]]:
         """List file entries based on recursive setting."""
-        if self.recursive:
-            result = self.grover.tree(self.path)
-            if not result.success:
-                return []
-            return [
-                {
-                    "path": e.path,
-                    "is_directory": e.is_directory,
-                    "size_bytes": e.size_bytes,
-                }
-                for e in result.entries
-            ]
-        else:
-            raw = self.grover.list_dir(self.path)
-            return [
-                {
-                    "path": item.get("path", ""),
-                    "is_directory": item.get("is_directory", False),
-                    "size_bytes": item.get("size_bytes"),
-                }
-                for item in raw
-            ]
+        result = self.grover.tree(self.path, max_depth=None if self.recursive else 1)
+        if not result.success:
+            return []
+        return [
+            {
+                "path": e.path,
+                "is_directory": e.is_directory,
+                "size_bytes": e.size_bytes,
+            }
+            for e in result.entries
+        ]

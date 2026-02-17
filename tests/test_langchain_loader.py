@@ -127,6 +127,18 @@ class TestLoaderNonRecursive:
         assert "/project/sub/nested.txt" not in paths
 
 
+class TestLoaderSkipsBinaryFiles:
+    def test_loader_skips_binary_files(self, loader: GroverLoader, grover: Grover):
+        grover.write("/project/code.py", "print('hi')")
+        grover.write("/project/image.png", "fake binary")
+        grover.write("/project/archive.zip", "fake zip")
+        docs = loader.load()
+        paths = {doc.metadata["path"] for doc in docs}
+        assert "/project/code.py" in paths
+        assert "/project/image.png" not in paths
+        assert "/project/archive.zip" not in paths
+
+
 class TestLoaderLoadMethod:
     def test_loader_load_method(self, loader: GroverLoader, grover: Grover):
         grover.write("/project/file.txt", "content")
