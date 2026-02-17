@@ -53,7 +53,9 @@ treesitter = [
 postgres = ["asyncpg>=0.29"]
 mssql = ["aioodbc>=0.5"]
 deepagents = ["deepagents>=0.4"]
-all = ["grover[search,treesitter,postgres,deepagents]"]
+langchain = ["langchain-core>=0.3"]
+langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
+all = ["grover[search,treesitter,postgres,deepagents,langchain,langgraph]"]
 
 [dependency-groups]
 dev = [

@@ -32,6 +32,8 @@ pip install grover[treesitter]   # JS/TS/Go code analyzers
 pip install grover[postgres]     # PostgreSQL backend
 pip install grover[mssql]        # MSSQL backend
 pip install grover[deepagents]   # deepagents/LangGraph integration
+pip install grover[langchain]   # LangChain retriever + document loader
+pip install grover[langgraph]   # LangGraph persistent store
 pip install grover[all]          # everything
 ```
 
@@ -187,6 +189,29 @@ middleware = [GroverMiddleware(backend.grover)]
 ```
 
 Requires the `deepagents` extra: `pip install grover[deepagents]`
+
+### LangChain / LangGraph integration
+
+Use Grover as a LangChain retriever, document loader, or LangGraph persistent store:
+
+```python
+from grover.integrations.langchain import GroverRetriever, GroverLoader, GroverStore
+
+# Retriever — semantic search as a LangChain retriever
+retriever = GroverRetriever(grover=g, k=5)
+docs = retriever.invoke("authentication logic")
+
+# Loader — stream files as LangChain Documents
+loader = GroverLoader(grover=g, path="/project", glob_pattern="*.py")
+docs = loader.load()
+
+# Store — LangGraph persistent memory backed by Grover
+store = GroverStore(grover=g, prefix="/data/store")
+store.put(("users", "alice"), "prefs", {"theme": "dark"})
+item = store.get(("users", "alice"), "prefs")
+```
+
+Requires `pip install grover[langchain]` for retriever/loader, `pip install grover[langgraph]` for store.
 
 ## What's in `.grover/`
 

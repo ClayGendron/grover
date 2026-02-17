@@ -614,3 +614,117 @@ middleware = GroverMiddleware(grover, enable_search=False, enable_graph=False)
 | `impacts` | Transitive impact analysis |
 
 Toggle tool groups with `enable_search=False` (removes `search_semantic`) and `enable_graph=False` (removes `dependencies`, `dependents`, `impacts`).
+
+---
+
+## LangChain Integration
+
+```python
+from grover.integrations.langchain import GroverRetriever, GroverLoader
+```
+
+Requires the `langchain` extra: `pip install grover[langchain]`
+
+### GroverRetriever
+
+LangChain `BaseRetriever` backed by Grover's semantic search. Works in any LangChain chain or RAG pipeline.
+
+```python
+retriever = GroverRetriever(grover=g, k=10)
+docs = retriever.invoke("search query")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `grover` | `Grover` | required | Grover instance with search index |
+| `k` | `int` | `10` | Maximum number of results |
+
+Returns `list[Document]` with:
+- `page_content` — matched text
+- `metadata["path"]` — file path
+- `metadata["score"]` — cosine similarity (0–1)
+- `metadata["version"]` — version number (if available)
+- `metadata["parent_path"]` — parent file path (for chunks)
+- `metadata["line_start"]`, `metadata["line_end"]` — line range (for chunks)
+- `id` — file path
+
+Has async variant via `asyncio.to_thread()`. Returns empty list when search index is not available.
+
+### GroverLoader
+
+LangChain `BaseLoader` that streams Grover files as Documents. Generator-based (`lazy_load()`) for memory efficiency.
+
+```python
+# Load all text files recursively
+loader = GroverLoader(grover=g, path="/project")
+docs = loader.load()
+
+# Load only Python files
+loader = GroverLoader(grover=g, path="/project", glob_pattern="*.py")
+
+# Non-recursive (immediate children only)
+loader = GroverLoader(grover=g, path="/project", recursive=False)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `grover` | `Grover` | required | Grover instance |
+| `path` | `str` | `"/"` | Root path to load from |
+| `glob_pattern` | `str | None` | `None` | Filter files by glob pattern (e.g., `"*.py"`) |
+| `recursive` | `bool` | `True` | Walk subdirectories recursively |
+
+Returns `list[Document]` (via `load()`) or `Iterator[Document]` (via `lazy_load()`) with:
+- `page_content` — file content
+- `metadata["path"]` — file path
+- `metadata["source"]` — file path (LangChain convention)
+- `metadata["size_bytes"]` — file size
+- `id` — file path
+
+Binary files are automatically skipped.
+
+---
+
+## LangGraph Integration
+
+```python
+from grover.integrations.langchain import GroverStore
+```
+
+Requires the `langgraph` extra: `pip install grover[langgraph]`
+
+### GroverStore
+
+LangGraph `BaseStore` implementation for persistent agent memory. Namespace tuples map to directory paths, values are stored as JSON files.
+
+```python
+store = GroverStore(grover=g, prefix="/data/store")
+
+# Put and get
+store.put(("users", "alice"), "prefs", {"theme": "dark"})
+item = store.get(("users", "alice"), "prefs")
+# item.value == {"theme": "dark"}
+
+# Delete
+store.delete(("users", "alice"), "prefs")
+
+# List namespaces
+namespaces = store.list_namespaces()
+
+# Search (uses Grover's semantic search when available)
+results = store.search(("docs",), query="API reference")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `grover` | `Grover` | required | Grover instance |
+| `prefix` | `str` | `"/store"` | Path prefix for all stored items |
+
+**Namespace-to-path mapping:** Namespace `("users", "alice", "notes")` with key `"idea-1"` maps to `{prefix}/users/alice/notes/idea-1.json`.
+
+**Supported operations:**
+- `GetOp` — read a key from a namespace
+- `PutOp` — write a value (or delete with `value=None`)
+- `SearchOp` — semantic search within a namespace (falls back to listing if no search index)
+- `ListNamespacesOp` — list namespaces with match conditions and depth limiting
+
+Has async variant (`abatch`) via `asyncio.to_thread()`.
