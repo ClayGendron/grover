@@ -1191,3 +1191,382 @@ class TestProtocolCompliance:
 
         usfs = UserScopedFileSystem()
         assert isinstance(usfs, StorageBackend)
+
+
+# ---------------------------------------------------------------------------
+# Security vulnerability regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityVulnerabilities:
+    """Regression tests for 6 authorization bypass vulnerabilities."""
+
+    async def _create_share(
+        self,
+        usfs: UserScopedFileSystem,
+        session: AsyncSession,
+        path: str,
+        grantee_id: str,
+        permission: str = "read",
+        granted_by: str = "alice",
+    ) -> None:
+        assert usfs._sharing is not None
+        await usfs._sharing.create_share(
+            session, path, grantee_id, permission, granted_by
+        )
+
+    # -- Fix 1: glob/grep/tree share permission checks + path restoration --
+
+    async def test_glob_shared_no_permission_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_usfs.glob(
+                "*.md", "/@shared/alice",
+                session=async_session, user_id="bob",
+            )
+
+    async def test_glob_shared_with_permission(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        result = await shared_usfs.glob(
+            "*.md", "/@shared/alice",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+        assert len(result.entries) >= 1
+
+    async def test_glob_shared_returns_shared_paths(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        result = await shared_usfs.glob(
+            "*.md", "/@shared/alice",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+        for e in result.entries:
+            assert e.path.startswith("/@shared/alice"), f"Expected @shared path, got {e.path}"
+
+    async def test_grep_shared_no_permission_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "hello world",
+            session=async_session, user_id="alice",
+        )
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_usfs.grep(
+                "hello", "/@shared/alice",
+                session=async_session, user_id="bob",
+            )
+
+    async def test_grep_shared_with_permission(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "hello world",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        result = await shared_usfs.grep(
+            "hello", "/@shared/alice",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+        assert len(result.matches) >= 1
+
+    async def test_grep_shared_returns_shared_paths(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "hello world",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        result = await shared_usfs.grep(
+            "hello", "/@shared/alice",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+        for m in result.matches:
+            assert m.file_path.startswith("/@shared/alice"), (
+                f"Expected @shared path, got {m.file_path}"
+            )
+
+    async def test_tree_shared_no_permission_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_usfs.tree(
+                "/@shared/alice",
+                session=async_session, user_id="bob",
+            )
+
+    async def test_tree_shared_with_permission(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        result = await shared_usfs.tree(
+            "/@shared/alice",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+        assert len(result.entries) >= 1
+
+    async def test_tree_shared_returns_shared_paths(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        result = await shared_usfs.tree(
+            "/@shared/alice",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+        for e in result.entries:
+            assert e.path.startswith("/@shared/alice"), f"Expected @shared path, got {e.path}"
+
+    # -- Fix 2: copy destination share permission check --
+
+    async def test_copy_to_shared_dest_no_permission_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/src.md", "content",
+            session=async_session, user_id="bob",
+        )
+        await shared_usfs.write(
+            "/target.md", "existing",
+            session=async_session, user_id="alice",
+        )
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_usfs.copy(
+                "/src.md", "/@shared/alice/target.md",
+                session=async_session, user_id="bob",
+            )
+
+    async def test_copy_to_shared_dest_with_write_permission(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/src.md", "content",
+            session=async_session, user_id="bob",
+        )
+        await shared_usfs.write(
+            "/target.md", "existing",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session,
+            "/alice/target.md", "bob", "write",
+        )
+        result = await shared_usfs.copy(
+            "/src.md", "/@shared/alice/target.md",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+
+    # -- Fix 3: share/unshare/list_shares block @shared paths --
+
+    async def test_share_on_shared_path_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
+        )
+        with pytest.raises(PermissionError, match="Cannot manage shares"):
+            await shared_usfs.share(
+                "/@shared/alice/notes.md", "charlie", "read",
+                user_id="bob", session=async_session,
+            )
+
+    async def test_unshare_on_shared_path_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
+        )
+        with pytest.raises(PermissionError, match="Cannot manage shares"):
+            await shared_usfs.unshare(
+                "/@shared/alice/notes.md", "charlie",
+                user_id="bob", session=async_session,
+            )
+
+    async def test_list_shares_on_shared_path_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "content",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
+        )
+        with pytest.raises(PermissionError, match="Cannot manage shares"):
+            await shared_usfs.list_shares_on_path(
+                "/@shared/alice/notes.md",
+                user_id="bob", session=async_session,
+            )
+
+    # -- Fix 4: move cross-namespace block --
+
+    async def test_move_shared_to_own_namespace_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "alice's file",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
+        )
+        with pytest.raises(PermissionError, match="Cannot move shared files"):
+            await shared_usfs.move(
+                "/@shared/alice/notes.md", "/stolen.md",
+                session=async_session, user_id="bob",
+            )
+
+    async def test_move_shared_to_own_namespace_denied_follow_true(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "alice's file",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
+        )
+        with pytest.raises(PermissionError, match="Cannot move shared files"):
+            await shared_usfs.move(
+                "/@shared/alice/notes.md", "/stolen.md",
+                session=async_session, user_id="bob", follow=True,
+            )
+
+    async def test_move_within_shared_namespace_allowed(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await shared_usfs.write(
+            "/notes.md", "alice's file",
+            session=async_session, user_id="alice",
+        )
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "write"
+        )
+        result = await shared_usfs.move(
+            "/@shared/alice/notes.md", "/@shared/alice/renamed.md",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+
+    # -- Fix 5: mkdir share permission check --
+
+    async def test_mkdir_shared_no_permission_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_usfs.mkdir(
+                "/@shared/alice/newdir",
+                session=async_session, user_id="bob",
+            )
+
+    async def test_mkdir_shared_with_write_permission(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "write"
+        )
+        result = await shared_usfs.mkdir(
+            "/@shared/alice/newdir",
+            session=async_session, user_id="bob",
+        )
+        assert result.success is True
+
+    async def test_mkdir_shared_read_only_denied(
+        self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
+    ):
+        await self._create_share(
+            shared_usfs, async_session, "/alice", "bob", "read"
+        )
+        with pytest.raises(PermissionError, match="Access denied"):
+            await shared_usfs.mkdir(
+                "/@shared/alice/newdir",
+                session=async_session, user_id="bob",
+            )
+
+    # -- Fix 6: _require_user_id format validation --
+
+    def test_user_id_with_slash_rejected(self):
+        with pytest.raises(AuthenticationRequiredError, match="invalid characters"):
+            UserScopedFileSystem._require_user_id("user/name")
+
+    def test_user_id_with_backslash_rejected(self):
+        with pytest.raises(AuthenticationRequiredError, match="invalid characters"):
+            UserScopedFileSystem._require_user_id("user\\name")
+
+    def test_user_id_with_null_byte_rejected(self):
+        with pytest.raises(AuthenticationRequiredError, match="invalid characters"):
+            UserScopedFileSystem._require_user_id("user\0name")
+
+    def test_user_id_with_at_sign_rejected(self):
+        with pytest.raises(AuthenticationRequiredError, match="invalid characters"):
+            UserScopedFileSystem._require_user_id("user@name")
+
+    def test_user_id_with_dotdot_rejected(self):
+        with pytest.raises(AuthenticationRequiredError, match="invalid characters"):
+            UserScopedFileSystem._require_user_id("user..name")
+
+    def test_user_id_traversal_attack_rejected(self):
+        with pytest.raises(AuthenticationRequiredError, match="invalid characters"):
+            UserScopedFileSystem._require_user_id("../alice")
+
+    def test_valid_user_ids_still_work(self):
+        assert UserScopedFileSystem._require_user_id("alice") == "alice"
+        assert UserScopedFileSystem._require_user_id("bob-smith") == "bob-smith"
+        assert UserScopedFileSystem._require_user_id("user_name") == "user_name"
+        assert UserScopedFileSystem._require_user_id("user.name") == "user.name"
+        assert UserScopedFileSystem._require_user_id("user123") == "user123"

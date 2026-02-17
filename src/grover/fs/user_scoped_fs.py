@@ -81,11 +81,15 @@ class UserScopedFileSystem(DatabaseFileSystem):
 
     @staticmethod
     def _require_user_id(user_id: str | None) -> str:
-        """Raise if *user_id* is missing or empty."""
+        """Raise if *user_id* is missing, empty, or contains unsafe characters."""
         if not user_id:
             raise AuthenticationRequiredError(
                 "user_id is required for authenticated mount"
             )
+        if "/" in user_id or "\\" in user_id or "\0" in user_id or "@" in user_id:
+            raise AuthenticationRequiredError("user_id contains invalid characters")
+        if ".." in user_id:
+            raise AuthenticationRequiredError("user_id contains invalid characters")
         return user_id
 
     @staticmethod
@@ -420,27 +424,39 @@ class UserScopedFileSystem(DatabaseFileSystem):
         user_id: str | None = None,
     ) -> MkdirResult:
         uid = self._require_user_id(user_id)
+        is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
+        if is_shared:
+            await self._check_share_access(sess, stored, uid, "write")
         created_dirs, error = await self.directories.mkdir(
             sess, stored, parents, self.metadata.get_file, owner_id=uid,
         )
         if error is not None:
             return MkdirResult(success=False, message=error)
         stored = normalize_path(stored)
+        # For shared paths, display the @shared path; for own paths, strip prefix
+        if is_shared:
+            display_path = path
+            def _display(d: str) -> str:
+                assert owner is not None
+                stripped = self._strip_user_prefix(d, owner)
+                return f"/@shared/{owner}{stripped}" if stripped != "/" else f"/@shared/{owner}"
+        else:
+            display_path = self._strip_user_prefix(stored, uid)
+            def _display(d: str) -> str:
+                return self._strip_user_prefix(d, uid)
         if created_dirs:
             return MkdirResult(
                 success=True,
-                message=f"Created directory: {self._strip_user_prefix(stored, uid)}",
-                path=self._strip_user_prefix(stored, uid),
-                created_dirs=[
-                    self._strip_user_prefix(d, uid) for d in created_dirs
-                ],
+                message=f"Created directory: {display_path}",
+                path=display_path,
+                created_dirs=[_display(d) for d in created_dirs],
             )
         return MkdirResult(
             success=True,
-            message=f"Directory already exists: {self._strip_user_prefix(stored, uid)}",
-            path=self._strip_user_prefix(stored, uid),
+            message=f"Directory already exists: {display_path}",
+            path=display_path,
             created_dirs=[],
         )
 
@@ -541,6 +557,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(sess, src_stored, uid, "write")
         if dest_shared:
             await self._check_share_access(sess, dest_stored, uid, "write")
+        if src_shared and not dest_shared:
+            raise PermissionError("Cannot move shared files out of the owner's namespace")
         result = await super().move(
             src_stored, dest_stored,
             session=sess, follow=follow, sharing=self._sharing,
@@ -561,11 +579,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
     ) -> WriteResult:
         uid = self._require_user_id(user_id)
         src_shared = self._is_shared_access(src)[0]
+        dest_shared = self._is_shared_access(dest)[0]
         src_stored = self._resolve_path(src, uid)
         dest_stored = self._resolve_path(dest, uid)
         sess = self._require_session(session)
         if src_shared:
             await self._check_share_access(sess, src_stored, uid, "read")
+        if dest_shared:
+            await self._check_share_access(sess, dest_stored, uid, "write")
         # Call super().write directly to avoid polymorphic dispatch
         # (copy_file calls self.write which would re-enter our override)
         src_file = await self.metadata.get_file(sess, src_stored)
@@ -589,7 +610,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             dest_stored, content, "copy",
             overwrite=True, session=sess, owner_id=uid,
         )
-        result.file_path = self._restore_path(result.file_path, uid)
+        dest_orig = dest if dest_shared else None
+        result.file_path = self._restore_path(result.file_path, uid, dest_orig)
         return result
 
     # ------------------------------------------------------------------
@@ -605,12 +627,23 @@ class UserScopedFileSystem(DatabaseFileSystem):
         user_id: str | None = None,
     ) -> GlobResult:
         uid = self._require_user_id(user_id)
+        is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
-        result = await super().glob(pattern, stored, session=session)
-        result.path = self._restore_path(result.path, uid) or path
-        result.entries = [
-            self._restore_file_info(e, uid) for e in result.entries
-        ]
+        sess = self._require_session(session)
+        if is_shared:
+            await self._check_share_access(sess, stored, uid, "read")
+        result = await super().glob(pattern, stored, session=sess)
+        if is_shared and owner is not None:
+            shared_prefix = f"/@shared/{owner}"
+            result.path = path
+            for e in result.entries:
+                stripped = self._strip_user_prefix(e.path, owner)
+                e.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+        else:
+            result.path = self._restore_path(result.path, uid) or path
+            result.entries = [
+                self._restore_file_info(e, uid) for e in result.entries
+            ]
         return result
 
     async def grep(
@@ -632,13 +665,17 @@ class UserScopedFileSystem(DatabaseFileSystem):
         user_id: str | None = None,
     ) -> GrepResult:
         uid = self._require_user_id(user_id)
+        is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
+        sess = self._require_session(session)
+        if is_shared:
+            await self._check_share_access(sess, stored, uid, "read")
         # Resolve glob_filter via super().glob to avoid polymorphic dispatch
         # (super().grep calls self.glob() which would re-enter our override)
         resolved_glob_filter = glob_filter
         if glob_filter is not None:
             glob_result = await super().glob(
-                glob_filter, stored, session=session
+                glob_filter, stored, session=sess
             )
             if not glob_result.success:
                 return GrepResult(
@@ -677,7 +714,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             max_results_per_file=max_results_per_file,
             count_only=count_only,
             files_only=files_only,
-            session=session,
+            session=sess,
         )
 
         # If we pre-resolved a glob_filter, filter matches to only those
@@ -687,10 +724,17 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 m for m in result.matches if m.file_path in candidate_paths
             ]
 
-        result.path = self._restore_path(result.path, uid) or path
-        for m in result.matches:
-            restored = self._restore_path(m.file_path, uid)
-            m.file_path = restored or m.file_path
+        if is_shared and owner is not None:
+            shared_prefix = f"/@shared/{owner}"
+            result.path = path
+            for m in result.matches:
+                stripped = self._strip_user_prefix(m.file_path, owner)
+                m.file_path = shared_prefix + stripped if stripped != "/" else shared_prefix
+        else:
+            result.path = self._restore_path(result.path, uid) or path
+            for m in result.matches:
+                restored = self._restore_path(m.file_path, uid)
+                m.file_path = restored or m.file_path
         return result
 
     async def tree(
@@ -702,14 +746,25 @@ class UserScopedFileSystem(DatabaseFileSystem):
         user_id: str | None = None,
     ) -> TreeResult:
         uid = self._require_user_id(user_id)
+        is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
+        sess = self._require_session(session)
+        if is_shared:
+            await self._check_share_access(sess, stored, uid, "read")
         result = await super().tree(
-            stored, max_depth=max_depth, session=session,
+            stored, max_depth=max_depth, session=sess,
         )
-        result.path = self._restore_path(result.path, uid) or path
-        result.entries = [
-            self._restore_file_info(e, uid) for e in result.entries
-        ]
+        if is_shared and owner is not None:
+            shared_prefix = f"/@shared/{owner}"
+            result.path = path
+            for e in result.entries:
+                stripped = self._strip_user_prefix(e.path, owner)
+                e.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+        else:
+            result.path = self._restore_path(result.path, uid) or path
+            result.entries = [
+                self._restore_file_info(e, uid) for e in result.entries
+            ]
         return result
 
     # ------------------------------------------------------------------
@@ -846,6 +901,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
     ) -> ShareInfo:
         """Create a share on a user-facing path."""
         uid = self._require_user_id(user_id)
+        if self._is_shared_access(path)[0]:
+            raise PermissionError("Cannot manage shares on paths you do not own")
         if self._sharing is None:
             raise ValueError("No sharing service configured")
         stored = self._resolve_path(path, uid)
@@ -873,6 +930,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
     ) -> bool:
         """Remove a share on a user-facing path."""
         uid = self._require_user_id(user_id)
+        if self._is_shared_access(path)[0]:
+            raise PermissionError("Cannot manage shares on paths you do not own")
         if self._sharing is None:
             raise ValueError("No sharing service configured")
         stored = self._resolve_path(path, uid)
@@ -888,6 +947,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
     ) -> list[ShareInfo]:
         """List shares on a user-facing path."""
         uid = self._require_user_id(user_id)
+        if self._is_shared_access(path)[0]:
+            raise PermissionError("Cannot manage shares on paths you do not own")
         if self._sharing is None:
             return []
         stored = self._resolve_path(path, uid)
