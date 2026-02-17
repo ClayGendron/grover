@@ -124,7 +124,7 @@ g.restore_version(path, version) -> RestoreResult
 
 | Method | Description |
 |--------|-------------|
-| `list_versions(path)` | List all versions of a file. Returns `ListVersionsResult` with a list of `VersionInfo`. |
+| `list_versions(path)` | List all versions of a file. Returns `ListVersionsResult` with a list of `VersionInfo`. Versions with `created_by="external"` are synthetic snapshots auto-inserted when an external edit was detected. |
 | `get_version_content(path, version)` | Retrieve the content of a specific version. Returns `GetVersionContentResult`. |
 | `restore_version(path, version)` | Restore a file to a previous version (creates a new version with the old content). Returns `RestoreResult`. |
 

@@ -127,6 +127,8 @@ To reconstruct version N: find the nearest snapshot at or before N, then apply f
 
 This balances storage efficiency (diffs are small) with reconstruction speed (at most 19 diffs to replay).
 
+**External edit detection:** If a file is modified outside Grover (by an IDE, git, etc.), the diff chain would silently break. At `write()` and `edit()` time, `check_external_edit()` compares the storage content's hash against the last Grover-written hash. On mismatch, a synthetic snapshot version is inserted with `created_by="external"` to keep the chain intact. See [internals/fs.md](internals/fs.md#external-edit-detection) for details.
+
 ## Graph model
 
 The knowledge graph is an in-memory `rustworkx.PyDiGraph` with string-path-keyed nodes. Edges have a free-form `type` string — there's no enum or schema for edge types.

@@ -17,6 +17,7 @@ For the high-level architecture diagram and component relationships, see [fs_arc
 - [Version Snapshotting](#version-snapshotting)
 - [Soft Delete and Trash](#soft-delete-and-trash)
 - [Reconciliation](#reconciliation)
+- [External Edit Detection](#external-edit-detection)
 - [LocalFileSystem vs DatabaseFileSystem](#localfilesystem-vs-databasefilesystem)
 - [Path Validation and Security](#path-validation-and-security)
 
@@ -398,6 +399,54 @@ On restore (`restore_from_trash`), the content is written back to disk from the 
 4. For each file that exists in both → compare content hashes and update if changed (updated).
 
 VFS delegates `reconcile()` to capable backends, aggregating results across mounts.
+
+---
+
+## External Edit Detection
+
+When a file tracked by Grover is modified outside Grover (by an IDE, git, shell, or direct DB update), the version diff chain breaks. The diff for the next Grover operation would be computed against the external content, but reconstruction replays diffs from the last known Grover version — producing wrong content and failing hash verification with `ConsistencyError`.
+
+### How Detection Works
+
+At `write()` and `edit()` time, `check_external_edit()` in `operations.py` compares the actual storage content's SHA-256 hash against `file.content_hash` (the last Grover-written hash). If they differ, an external tool modified the file.
+
+`content_hash` is only updated through Grover's own `write_file()` and `edit_file()` code paths, making it a reliable "last Grover-known hash" marker regardless of backend:
+
+- **LocalFileSystem**: `_read_content()` reads from disk. An IDE or git edit changes the disk but not `content_hash` → mismatch detected.
+- **DatabaseFileSystem**: `_read_content()` reads `File.content` from the DB. A direct SQL UPDATE changes `content` but not `content_hash` → mismatch detected.
+
+### What Happens on Detection
+
+A **synthetic snapshot version** is inserted with `created_by="external"`:
+
+1. `file.current_version` is incremented.
+2. `file.content_hash` and `file.size_bytes` are updated to match the external content.
+3. `versioning.save_version()` is called with `old_content=""`, which forces a full snapshot (via the `not old_content` branch).
+4. The calling function (`write_file` or `edit_file`) then proceeds normally — incrementing the version again and creating its own version record.
+
+### Why Snapshots
+
+Storing the external version as a full snapshot (not a diff) avoids the cost of reconstructing the previous Grover version to compute a diff. It also gives version reconstruction a clean base — subsequent diffs can be applied from the snapshot without needing to bridge the gap from the last Grover version to the external state.
+
+### Example Version Chain
+
+```
+v1: snapshot  "hello"                           (Grover write)
+v2: diff      v1→"hello world"                  (Grover edit)
+    ── VS Code edits file to "hello world!!!" ──
+v3: snapshot  "hello world!!!"                  (external, auto-detected)
+v4: diff      v3→"hello world!!! # updated"     (Grover edit)
+```
+
+Reconstruction of any version works correctly because v3 is a snapshot — diffs don't need to bridge the gap from v2 to the external state.
+
+### Detect-on-Mutate, Not File Watching
+
+Detection happens only at `write()` and `edit()` time. There is no file watcher, no background process, and no new dependencies. This keeps the system simple and avoids the complexity of real-time monitoring. File watching can be layered on as a separate enhancement if needed.
+
+### Code Location
+
+`check_external_edit()` is a standalone async function in `operations.py`. It follows the composition pattern — any backend that calls `write_file()` or `edit_file()` from `operations.py` gets external edit detection automatically. No changes are needed in individual backends.
 
 ---
 

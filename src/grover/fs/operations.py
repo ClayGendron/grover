@@ -54,6 +54,53 @@ logger = logging.getLogger(__name__)
 DEFAULT_READ_LIMIT = 2000
 
 
+async def check_external_edit(
+    file: FileBase,
+    current_content: str,
+    session: AsyncSession,
+    *,
+    versioning: VersioningService,
+) -> bool:
+    """Detect and record an external edit as a synthetic snapshot version.
+
+    Compares the hash of *current_content* (the actual storage state) against
+    ``file.content_hash`` (the last Grover-written hash).  If they differ, an
+    external tool modified the file.  A full snapshot version is inserted with
+    ``created_by="external"`` to keep the diff chain intact.
+
+    Returns ``True`` if an external edit was detected and recorded, ``False``
+    otherwise.
+
+    This function mutates *file* in-place (increments version, updates hash
+    and timestamps) but does **not** flush the session — the caller is
+    responsible for flushing.
+    """
+    if not file.content_hash:
+        return False
+
+    current_hash, current_size = compute_content_hash(current_content)
+    if current_hash == file.content_hash:
+        return False
+
+    # External edit detected — record synthetic snapshot version
+    file.current_version += 1
+    file.content_hash = current_hash
+    file.size_bytes = current_size
+    file.updated_at = datetime.now(UTC)
+
+    # Passing old_content="" makes save_version store a full snapshot
+    await versioning.save_version(
+        session, file, "", current_content, "external",
+    )
+
+    logger.info(
+        "External edit detected for %s — recorded synthetic v%d",
+        file.path,
+        file.current_version,
+    )
+    return True
+
+
 async def read_file(
     path: str,
     offset: int,
@@ -143,6 +190,15 @@ async def write_file(
             existing.path = existing.original_path or path
             existing.original_path = None
 
+        # Read current content first — needed for external edit check AND diff
+        old_content = await read_content(path, session)
+
+        # Detect and record external edits before creating the Grover version
+        if old_content is not None:
+            await check_external_edit(
+                existing, old_content, session, versioning=versioning,
+            )
+
         # Update metadata (increment version first so save_version uses new number)
         existing.current_version += 1
         existing.content_hash = content_hash
@@ -150,7 +206,6 @@ async def write_file(
         existing.updated_at = datetime.now(UTC)
 
         # Save version after incrementing
-        old_content = await read_content(path, session)
         if old_content is not None:
             await versioning.save_version(
                 session,
@@ -237,6 +292,9 @@ async def edit_file(
     content = await read_content(path, session)
     if content is None:
         return EditResult(success=False, message=f"File content not found: {path}")
+
+    # Detect and record external edits before applying the edit
+    await check_external_edit(file, content, session, versioning=versioning)
 
     result = replace(content, old_string, new_string, replace_all)
 
