@@ -3,6 +3,8 @@
 Safe file operations, knowledge graphs, and semantic search — unified for AI agents.
 """
 
+__version__ = "0.0.2"
+
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
 from grover.fs.types import ListSharesResult, ShareInfo, ShareResult
@@ -19,5 +21,6 @@ __all__ = [
     "ShareInfo",
     "ShareResult",
     "UserScopedFileSystem",
+    "__version__",
     "file_ref",
 ]

@@ -1,4 +1,4 @@
-"""Bump the project version in pyproject.toml.
+"""Bump the project version in pyproject.toml and src/grover/__init__.py.
 
 Usage:
     uv run python scripts/bump_version.py --patch   # 0.0.1 → 0.0.2
@@ -13,8 +13,12 @@ import re
 import sys
 from pathlib import Path
 
-PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
+ROOT = Path(__file__).resolve().parent.parent
+PYPROJECT = ROOT / "pyproject.toml"
+INIT_PY = ROOT / "src" / "grover" / "__init__.py"
+
 VERSION_RE = re.compile(r'^(version\s*=\s*")(\d+\.\d+\.\d+)(")', re.MULTILINE)
+INIT_VERSION_RE = re.compile(r'^(__version__\s*=\s*")(\d+\.\d+\.\d+)(")', re.MULTILINE)
 
 
 def read_version(text: str) -> tuple[int, int, int]:
@@ -49,8 +53,20 @@ def main() -> None:
     old_str = f"{old[0]}.{old[1]}.{old[2]}"
     new_str = f"{new[0]}.{new[1]}.{new[2]}"
 
+    # Update pyproject.toml
     updated = VERSION_RE.sub(rf"\g<1>{new_str}\3", text)
     PYPROJECT.write_text(updated)
+
+    # Update src/grover/__init__.py
+    init_text = INIT_PY.read_text()
+    if INIT_VERSION_RE.search(init_text):
+        updated_init = INIT_VERSION_RE.sub(rf"\g<1>{new_str}\3", init_text)
+        INIT_PY.write_text(updated_init)
+    else:
+        print(
+            "warning: __version__ not found in __init__.py, skipping",
+            file=sys.stderr,
+        )
 
     print(f"{old_str} → {new_str}")
 

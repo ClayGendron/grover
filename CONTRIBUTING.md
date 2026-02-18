@@ -6,7 +6,7 @@ Thanks for your interest in contributing to Grover! This guide covers how to set
 
 ### Prerequisites
 
-- **Python 3.11+** (3.13 recommended)
+- **Python 3.12+** (3.13 recommended)
 - **[uv](https://docs.astral.sh/uv/)** for package management
 
 ### Setup

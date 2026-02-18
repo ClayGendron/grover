@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from pathlib import Path
 
 import pytest
 
+import grover
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
 from grover.fs.types import (
@@ -18,9 +20,6 @@ from grover.fs.types import (
     ReadResult,
     WriteResult,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class FakeProvider:
@@ -291,3 +290,17 @@ def test_sync_write_commit_failure_returns_failed_result(tmp_path: Path) -> None
         assert "commit" in result.message.lower()
     finally:
         g.close()
+
+
+def test_version_is_exported() -> None:
+    assert hasattr(grover, "__version__")
+    assert isinstance(grover.__version__, str)
+    assert re.match(r"^\d+\.\d+\.\d+$", grover.__version__)
+
+
+def test_version_matches_pyproject() -> None:
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    text = pyproject.read_text()
+    match = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', text, re.MULTILINE)
+    assert match is not None, "Could not find version in pyproject.toml"
+    assert grover.__version__ == match.group(1)
