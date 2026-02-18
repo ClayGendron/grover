@@ -73,11 +73,13 @@ class GroverMiddleware(AgentMiddleware):
         if enable_search:
             tool_list.append(self._create_search_semantic_tool())
         if enable_graph:
-            tool_list.extend([
-                self._create_dependencies_tool(),
-                self._create_dependents_tool(),
-                self._create_impacts_tool(),
-            ])
+            tool_list.extend(
+                [
+                    self._create_dependencies_tool(),
+                    self._create_dependents_tool(),
+                    self._create_impacts_tool(),
+                ]
+            )
         self.tools: list[BaseTool] = tool_list
 
     # ------------------------------------------------------------------

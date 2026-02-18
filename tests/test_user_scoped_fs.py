@@ -45,9 +45,7 @@ async def session_factory(async_engine: AsyncEngine):
     """Return an async session factory."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    return async_sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    return async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +63,7 @@ class TestPathResolution:
         assert result == "/alice"
 
     def test_resolve_shared_path(self):
-        result = UserScopedFileSystem._resolve_path(
-            "/@shared/alice/notes.md", "bob"
-        )
+        result = UserScopedFileSystem._resolve_path("/@shared/alice/notes.md", "bob")
         assert result == "/alice/notes.md"
 
     def test_resolve_shared_root(self):
@@ -75,56 +71,40 @@ class TestPathResolution:
         assert result == "/alice"
 
     def test_resolve_nested_path(self):
-        result = UserScopedFileSystem._resolve_path(
-            "/projects/src/main.py", "alice"
-        )
+        result = UserScopedFileSystem._resolve_path("/projects/src/main.py", "alice")
         assert result == "/alice/projects/src/main.py"
 
 
 class TestStripUserPrefix:
     def test_strip_prefix(self):
-        assert UserScopedFileSystem._strip_user_prefix(
-            "/alice/notes.md", "alice"
-        ) == "/notes.md"
+        assert UserScopedFileSystem._strip_user_prefix("/alice/notes.md", "alice") == "/notes.md"
 
     def test_strip_prefix_root(self):
-        assert UserScopedFileSystem._strip_user_prefix(
-            "/alice", "alice"
-        ) == "/"
+        assert UserScopedFileSystem._strip_user_prefix("/alice", "alice") == "/"
 
     def test_no_match(self):
-        assert UserScopedFileSystem._strip_user_prefix(
-            "/bob/notes.md", "alice"
-        ) == "/bob/notes.md"
+        assert UserScopedFileSystem._strip_user_prefix("/bob/notes.md", "alice") == "/bob/notes.md"
 
     def test_nested_path(self):
-        result = UserScopedFileSystem._strip_user_prefix(
-            "/alice/projects/src/main.py", "alice"
-        )
+        result = UserScopedFileSystem._strip_user_prefix("/alice/projects/src/main.py", "alice")
         assert result == "/projects/src/main.py"
 
 
 class TestIsSharedAccess:
     def test_shared_path(self):
-        is_shared, owner, rest = UserScopedFileSystem._is_shared_access(
-            "/@shared/alice/notes.md"
-        )
+        is_shared, owner, rest = UserScopedFileSystem._is_shared_access("/@shared/alice/notes.md")
         assert is_shared is True
         assert owner == "alice"
         assert rest == "/notes.md"
 
     def test_shared_root(self):
-        is_shared, owner, rest = UserScopedFileSystem._is_shared_access(
-            "/@shared/alice"
-        )
+        is_shared, owner, rest = UserScopedFileSystem._is_shared_access("/@shared/alice")
         assert is_shared is True
         assert owner == "alice"
         assert rest == "/"
 
     def test_not_shared(self):
-        is_shared, owner, rest = UserScopedFileSystem._is_shared_access(
-            "/notes.md"
-        )
+        is_shared, owner, rest = UserScopedFileSystem._is_shared_access("/notes.md")
         assert is_shared is False
         assert owner is None
         assert rest is None
@@ -160,15 +140,11 @@ class TestReadWrite:
     async def test_write_read_roundtrip(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        result = await usfs.write(
-            "/notes.md", "hello", session=async_session, user_id="alice"
-        )
+        result = await usfs.write("/notes.md", "hello", session=async_session, user_id="alice")
         assert result.success is True
         assert result.file_path == "/notes.md"
 
-        read_result = await usfs.read(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        read_result = await usfs.read("/notes.md", session=async_session, user_id="alice")
         assert read_result.success is True
         assert read_result.content == "hello"
         assert read_result.file_path == "/notes.md"
@@ -177,12 +153,16 @@ class TestReadWrite:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/notes.md", "alice's notes",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's notes",
+            session=async_session,
+            user_id="alice",
         )
         await usfs.write(
-            "/notes.md", "bob's notes",
-            session=async_session, user_id="bob",
+            "/notes.md",
+            "bob's notes",
+            session=async_session,
+            user_id="bob",
         )
 
         r1 = await usfs.read("/notes.md", session=async_session, user_id="alice")
@@ -195,24 +175,24 @@ class TestReadWrite:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/secret.md", "alice only",
-            session=async_session, user_id="alice",
+            "/secret.md",
+            "alice only",
+            session=async_session,
+            user_id="alice",
         )
-        result = await usfs.read(
-            "/secret.md", session=async_session, user_id="bob"
-        )
+        result = await usfs.read("/secret.md", session=async_session, user_id="bob")
         assert result.success is False
 
     async def test_write_sets_owner_id(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/notes.md", "owned content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "owned content",
+            session=async_session,
+            user_id="alice",
         )
-        result = await async_session.execute(
-            select(File).where(File.path == "/alice/notes.md")
-        )
+        result = await async_session.execute(select(File).where(File.path == "/alice/notes.md"))
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.owner_id == "alice"
@@ -228,8 +208,10 @@ class TestReadWrite:
     ):
         with pytest.raises(AuthenticationRequiredError):
             await usfs.write(
-                "/notes.md", "content",
-                session=async_session, user_id=None,
+                "/notes.md",
+                "content",
+                session=async_session,
+                user_id=None,
             )
 
 
@@ -239,81 +221,66 @@ class TestReadWrite:
 
 
 class TestOperations:
-    async def test_edit(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_edit(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/notes.md", "hello world",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world",
+            session=async_session,
+            user_id="alice",
         )
         result = await usfs.edit(
-            "/notes.md", "hello", "goodbye",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello",
+            "goodbye",
+            session=async_session,
+            user_id="alice",
         )
         assert result.success is True
-        read_result = await usfs.read(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        read_result = await usfs.read("/notes.md", session=async_session, user_id="alice")
         assert read_result.content == "goodbye world"
 
-    async def test_delete(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_delete(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        result = await usfs.delete(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        result = await usfs.delete("/notes.md", session=async_session, user_id="alice")
         assert result.success is True
 
-    async def test_mkdir(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
-        result = await usfs.mkdir(
-            "/mydir", session=async_session, user_id="alice"
-        )
+    async def test_mkdir(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
+        result = await usfs.mkdir("/mydir", session=async_session, user_id="alice")
         assert result.success is True
         assert result.path == "/mydir"
 
     async def test_mkdir_sets_owner_id(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await usfs.mkdir(
-            "/mydir", session=async_session, user_id="alice"
-        )
-        result = await async_session.execute(
-            select(File).where(File.path == "/alice/mydir")
-        )
+        await usfs.mkdir("/mydir", session=async_session, user_id="alice")
+        result = await async_session.execute(select(File).where(File.path == "/alice/mydir"))
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.owner_id == "alice"
 
-    async def test_exists(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_exists(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        assert await usfs.exists(
-            "/notes.md", session=async_session, user_id="alice"
-        ) is True
-        assert await usfs.exists(
-            "/notes.md", session=async_session, user_id="bob"
-        ) is False
+        assert await usfs.exists("/notes.md", session=async_session, user_id="alice") is True
+        assert await usfs.exists("/notes.md", session=async_session, user_id="bob") is False
 
-    async def test_get_info(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_get_info(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        info = await usfs.get_info(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        info = await usfs.get_info("/notes.md", session=async_session, user_id="alice")
         assert info is not None
         assert info.path == "/notes.md"
 
@@ -321,77 +288,75 @@ class TestOperations:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        info = await usfs.get_info(
-            "/notes.md", session=async_session, user_id="bob"
-        )
+        info = await usfs.get_info("/notes.md", session=async_session, user_id="bob")
         assert info is None
 
-    async def test_copy(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_copy(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/a.md", "content",
-            session=async_session, user_id="alice",
+            "/a.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         result = await usfs.copy(
-            "/a.md", "/b.md",
-            session=async_session, user_id="alice",
+            "/a.md",
+            "/b.md",
+            session=async_session,
+            user_id="alice",
         )
         assert result.success is True
-        read_result = await usfs.read(
-            "/b.md", session=async_session, user_id="alice"
-        )
+        read_result = await usfs.read("/b.md", session=async_session, user_id="alice")
         assert read_result.content == "content"
 
-    async def test_move(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_move(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/old.md", "content",
-            session=async_session, user_id="alice",
+            "/old.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         result = await usfs.move(
-            "/old.md", "/new.md",
-            session=async_session, user_id="alice",
+            "/old.md",
+            "/new.md",
+            session=async_session,
+            user_id="alice",
         )
         assert result.success is True
-        read_result = await usfs.read(
-            "/new.md", session=async_session, user_id="alice"
-        )
+        read_result = await usfs.read("/new.md", session=async_session, user_id="alice")
         assert read_result.content == "content"
 
-    async def test_glob(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_glob(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await usfs.write(
-            "/notes.md", "other",
-            session=async_session, user_id="bob",
+            "/notes.md",
+            "other",
+            session=async_session,
+            user_id="bob",
         )
-        result = await usfs.glob(
-            "*.md", "/", session=async_session, user_id="alice"
-        )
+        result = await usfs.glob("*.md", "/", session=async_session, user_id="alice")
         assert result.success is True
         paths = {e.path for e in result.entries}
         assert "/notes.md" in paths
         assert len(result.entries) == 1
 
-    async def test_grep(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_grep(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/notes.md", "hello world\nfoo bar",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world\nfoo bar",
+            session=async_session,
+            user_id="alice",
         )
-        result = await usfs.grep(
-            "hello", "/", session=async_session, user_id="alice"
-        )
+        result = await usfs.grep("hello", "/", session=async_session, user_id="alice")
         assert result.success is True
         assert len(result.matches) == 1
         assert result.matches[0].file_path == "/notes.md"
@@ -400,28 +365,20 @@ class TestOperations:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/src/main.py", "import os",
-            session=async_session, user_id="alice",
+            "/src/main.py",
+            "import os",
+            session=async_session,
+            user_id="alice",
         )
-        result = await usfs.grep(
-            "import", "/", session=async_session, user_id="alice"
-        )
+        result = await usfs.grep("import", "/", session=async_session, user_id="alice")
         assert result.success is True
         for m in result.matches:
             assert not m.file_path.startswith("/alice/")
 
-    async def test_tree(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
-        await usfs.write(
-            "/a.md", "a", session=async_session, user_id="alice"
-        )
-        await usfs.write(
-            "/b.md", "b", session=async_session, user_id="alice"
-        )
-        result = await usfs.tree(
-            "/", session=async_session, user_id="alice"
-        )
+    async def test_tree(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
+        await usfs.write("/a.md", "a", session=async_session, user_id="alice")
+        await usfs.write("/b.md", "b", session=async_session, user_id="alice")
+        result = await usfs.tree("/", session=async_session, user_id="alice")
         assert result.success is True
         paths = {e.path for e in result.entries}
         assert "/a.md" in paths
@@ -431,17 +388,23 @@ class TestOperations:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/notes.md", "hello world",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world",
+            session=async_session,
+            user_id="alice",
         )
         await usfs.write(
-            "/data.py", "hello python",
-            session=async_session, user_id="alice",
+            "/data.py",
+            "hello python",
+            session=async_session,
+            user_id="alice",
         )
         result = await usfs.grep(
-            "hello", "/",
+            "hello",
+            "/",
             glob_filter="*.md",
-            session=async_session, user_id="alice",
+            session=async_session,
+            user_id="alice",
         )
         assert result.success is True
         assert len(result.matches) == 1
@@ -451,12 +414,12 @@ class TestOperations:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        result = await usfs.list_dir(
-            "/", session=async_session, user_id="alice"
-        )
+        result = await usfs.list_dir("/", session=async_session, user_id="alice")
         names = {e.name for e in result.entries}
         assert "@shared" in names
 
@@ -477,25 +440,29 @@ class TestSharedAccess:
         granted_by: str = "alice",
     ) -> None:
         assert usfs._sharing is not None
-        await usfs._sharing.create_share(
-            session, path, grantee_id, permission, granted_by
-        )
+        await usfs._sharing.create_share(session, path, grantee_id, permission, granted_by)
 
     async def test_read_shared_file(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "alice's notes",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's notes",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "read",
         )
 
         result = await shared_usfs.read(
             "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert result.content == "alice's notes"
@@ -504,71 +471,94 @@ class TestSharedAccess:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "alice's notes",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's notes",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.read(
                 "/@shared/alice/notes.md",
-                session=async_session, user_id="bob",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_write_shared_with_write_perm(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "original",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "original",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "write",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "write",
         )
 
         result = await shared_usfs.write(
-            "/@shared/alice/notes.md", "updated by bob",
-            session=async_session, user_id="bob",
+            "/@shared/alice/notes.md",
+            "updated by bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
 
-        read_result = await shared_usfs.read(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        read_result = await shared_usfs.read("/notes.md", session=async_session, user_id="alice")
         assert read_result.content == "updated by bob"
 
     async def test_write_shared_read_only_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "original",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "original",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "read",
         )
 
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.write(
-                "/@shared/alice/notes.md", "hacked",
-                session=async_session, user_id="bob",
+                "/@shared/alice/notes.md",
+                "hacked",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_edit_shared_with_write_perm(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "hello world",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "write",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "write",
         )
 
         result = await shared_usfs.edit(
-            "/@shared/alice/notes.md", "hello", "goodbye",
-            session=async_session, user_id="bob",
+            "/@shared/alice/notes.md",
+            "hello",
+            "goodbye",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
 
@@ -576,46 +566,67 @@ class TestSharedAccess:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "read",
         )
 
-        assert await shared_usfs.exists(
-            "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
-        ) is True
+        assert (
+            await shared_usfs.exists(
+                "/@shared/alice/notes.md",
+                session=async_session,
+                user_id="bob",
+            )
+            is True
+        )
 
     async def test_exists_shared_no_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        assert await shared_usfs.exists(
-            "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
-        ) is False
+        assert (
+            await shared_usfs.exists(
+                "/@shared/alice/notes.md",
+                session=async_session,
+                user_id="bob",
+            )
+            is False
+        )
 
     async def test_get_info_shared(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "read",
         )
 
         info = await shared_usfs.get_info(
             "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert info is not None
 
@@ -623,12 +634,15 @@ class TestSharedAccess:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         info = await shared_usfs.get_info(
             "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert info is None
 
@@ -636,17 +650,23 @@ class TestSharedAccess:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/projects/docs/file.md", "content",
-            session=async_session, user_id="alice",
+            "/projects/docs/file.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/projects", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/projects",
+            "bob",
+            "read",
         )
 
         result = await shared_usfs.read(
             "/@shared/alice/projects/docs/file.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert result.content == "content"
@@ -656,17 +676,23 @@ class TestSharedAccess:
     ):
         """Result file_path should be the @shared path, not internal stored path."""
         await shared_usfs.write(
-            "/notes.md", "alice's notes",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's notes",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "read",
         )
 
         result = await shared_usfs.read(
             "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert result.file_path == "/@shared/alice/notes.md"
@@ -675,17 +701,24 @@ class TestSharedAccess:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "original",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "original",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "write",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "write",
         )
 
         result = await shared_usfs.write(
-            "/@shared/alice/notes.md", "updated",
-            session=async_session, user_id="bob",
+            "/@shared/alice/notes.md",
+            "updated",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert result.file_path == "/@shared/alice/notes.md"
@@ -694,17 +727,23 @@ class TestSharedAccess:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/notes.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/notes.md",
+            "bob",
+            "read",
         )
 
         info = await shared_usfs.get_info(
             "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert info is not None
         assert info.path == "/@shared/alice/notes.md"
@@ -714,13 +753,16 @@ class TestSharedAccess:
     ):
         """@shared paths are denied when no SharingService is configured."""
         await usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="sharing is not configured"):
             await usfs.read(
                 "/@shared/alice/notes.md",
-                session=async_session, user_id="bob",
+                session=async_session,
+                user_id="bob",
             )
 
 
@@ -740,30 +782,24 @@ class TestSharedListDir:
         granted_by: str = "alice",
     ) -> None:
         assert usfs._sharing is not None
-        await usfs._sharing.create_share(
-            session, path, grantee_id, permission, granted_by
-        )
+        await usfs._sharing.create_share(session, path, grantee_id, permission, granted_by)
 
     async def test_shared_root_lists_owners(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await shared_usfs.write(
-            "/a.md", "a", session=async_session, user_id="alice"
-        )
-        await shared_usfs.write(
-            "/b.md", "b", session=async_session, user_id="charlie"
-        )
+        await shared_usfs.write("/a.md", "a", session=async_session, user_id="alice")
+        await shared_usfs.write("/b.md", "b", session=async_session, user_id="charlie")
+        await self._create_share(shared_usfs, async_session, "/alice/a.md", "bob", "read")
         await self._create_share(
-            shared_usfs, async_session, "/alice/a.md", "bob", "read"
-        )
-        await self._create_share(
-            shared_usfs, async_session, "/charlie/b.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/charlie/b.md",
+            "bob",
+            "read",
             granted_by="charlie",
         )
 
-        result = await shared_usfs.list_dir(
-            "/@shared", session=async_session, user_id="bob"
-        )
+        result = await shared_usfs.list_dir("/@shared", session=async_session, user_id="bob")
         assert result.success is True
         names = {e.name for e in result.entries}
         assert "alice" in names
@@ -774,20 +810,20 @@ class TestSharedListDir:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await shared_usfs.write(
-            "/readme.md", "readme",
-            session=async_session, user_id="alice",
+            "/readme.md",
+            "readme",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
 
-        result = await shared_usfs.list_dir(
-            "/@shared/alice", session=async_session, user_id="bob"
-        )
+        result = await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
         assert result.success is True
         names = {e.name for e in result.entries}
         assert "notes.md" in names
@@ -796,9 +832,7 @@ class TestSharedListDir:
     async def test_shared_no_sharing_configured(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        result = await usfs.list_dir(
-            "/@shared", session=async_session, user_id="alice"
-        )
+        result = await usfs.list_dir("/@shared", session=async_session, user_id="alice")
         assert result.success is True
         assert result.entries == []
 
@@ -806,36 +840,24 @@ class TestSharedListDir:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="Access denied"):
-            await shared_usfs.list_dir(
-                "/@shared/alice", session=async_session, user_id="bob"
-            )
+            await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
 
     async def test_file_level_shares_filtered(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await shared_usfs.write(
-            "/doc1.md", "doc1", session=async_session, user_id="alice"
-        )
-        await shared_usfs.write(
-            "/doc2.md", "doc2", session=async_session, user_id="alice"
-        )
-        await shared_usfs.write(
-            "/secret.md", "secret", session=async_session, user_id="alice"
-        )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/doc1.md", "bob", "read"
-        )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/doc2.md", "bob", "read"
-        )
+        await shared_usfs.write("/doc1.md", "doc1", session=async_session, user_id="alice")
+        await shared_usfs.write("/doc2.md", "doc2", session=async_session, user_id="alice")
+        await shared_usfs.write("/secret.md", "secret", session=async_session, user_id="alice")
+        await self._create_share(shared_usfs, async_session, "/alice/doc1.md", "bob", "read")
+        await self._create_share(shared_usfs, async_session, "/alice/doc2.md", "bob", "read")
 
-        result = await shared_usfs.list_dir(
-            "/@shared/alice", session=async_session, user_id="bob"
-        )
+        result = await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
         assert result.success is True
         names = {e.name for e in result.entries}
         assert names == {"doc1.md", "doc2.md"}
@@ -844,18 +866,21 @@ class TestSharedListDir:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/deep/nested/file.md", "deep content",
-            session=async_session, user_id="alice",
+            "/deep/nested/file.md",
+            "deep content",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/deep/nested/file.md", "bob", "read",
+            shared_usfs,
+            async_session,
+            "/alice/deep/nested/file.md",
+            "bob",
+            "read",
         )
 
         # Level 1
-        result = await shared_usfs.list_dir(
-            "/@shared/alice", session=async_session, user_id="bob"
-        )
+        result = await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
         assert result.success is True
         names = {e.name for e in result.entries}
         assert names == {"deep"}
@@ -871,7 +896,8 @@ class TestSharedListDir:
         # Level 3
         result = await shared_usfs.list_dir(
             "/@shared/alice/deep/nested",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         names = {e.name for e in result.entries}
         assert names == {"file.md"}
@@ -888,53 +914,43 @@ class TestTrashScoping:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/a.md", "alice's file",
-            session=async_session, user_id="alice",
+            "/a.md",
+            "alice's file",
+            session=async_session,
+            user_id="alice",
         )
         await usfs.write(
-            "/b.md", "bob's file",
-            session=async_session, user_id="bob",
+            "/b.md",
+            "bob's file",
+            session=async_session,
+            user_id="bob",
         )
-        await usfs.delete(
-            "/a.md", session=async_session, user_id="alice"
-        )
-        await usfs.delete(
-            "/b.md", session=async_session, user_id="bob"
-        )
+        await usfs.delete("/a.md", session=async_session, user_id="alice")
+        await usfs.delete("/b.md", session=async_session, user_id="bob")
 
-        alice_trash = await usfs.list_trash(
-            session=async_session, user_id="alice"
-        )
+        alice_trash = await usfs.list_trash(session=async_session, user_id="alice")
         assert alice_trash.success
         assert len(alice_trash.entries) == 1
         assert alice_trash.entries[0].name == "a.md"
 
-        bob_trash = await usfs.list_trash(
-            session=async_session, user_id="bob"
-        )
+        bob_trash = await usfs.list_trash(session=async_session, user_id="bob")
         assert bob_trash.success
         assert len(bob_trash.entries) == 1
         assert bob_trash.entries[0].name == "b.md"
 
-    async def test_restore_own_file(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_restore_own_file(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
-            "/mine.md", "my data",
-            session=async_session, user_id="alice",
+            "/mine.md",
+            "my data",
+            session=async_session,
+            user_id="alice",
         )
-        await usfs.delete(
-            "/mine.md", session=async_session, user_id="alice"
-        )
+        await usfs.delete("/mine.md", session=async_session, user_id="alice")
 
-        result = await usfs.restore_from_trash(
-            "/mine.md", session=async_session, user_id="alice"
-        )
+        result = await usfs.restore_from_trash("/mine.md", session=async_session, user_id="alice")
         assert result.success is True
 
-        r = await usfs.read(
-            "/mine.md", session=async_session, user_id="alice"
-        )
+        r = await usfs.read("/mine.md", session=async_session, user_id="alice")
         assert r.success
         assert r.content == "my data"
 
@@ -942,43 +958,29 @@ class TestTrashScoping:
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await usfs.write(
-            "/secret.md", "alice's secret",
-            session=async_session, user_id="alice",
+            "/secret.md",
+            "alice's secret",
+            session=async_session,
+            user_id="alice",
         )
-        await usfs.delete(
-            "/secret.md", session=async_session, user_id="alice"
-        )
+        await usfs.delete("/secret.md", session=async_session, user_id="alice")
 
-        result = await usfs.restore_from_trash(
-            "/secret.md", session=async_session, user_id="bob"
-        )
+        result = await usfs.restore_from_trash("/secret.md", session=async_session, user_id="bob")
         assert result.success is False
 
     async def test_empty_trash_scoped(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await usfs.write(
-            "/a.md", "alice", session=async_session, user_id="alice"
-        )
-        await usfs.write(
-            "/b.md", "bob", session=async_session, user_id="bob"
-        )
-        await usfs.delete(
-            "/a.md", session=async_session, user_id="alice"
-        )
-        await usfs.delete(
-            "/b.md", session=async_session, user_id="bob"
-        )
+        await usfs.write("/a.md", "alice", session=async_session, user_id="alice")
+        await usfs.write("/b.md", "bob", session=async_session, user_id="bob")
+        await usfs.delete("/a.md", session=async_session, user_id="alice")
+        await usfs.delete("/b.md", session=async_session, user_id="bob")
 
-        result = await usfs.empty_trash(
-            session=async_session, user_id="alice"
-        )
+        result = await usfs.empty_trash(session=async_session, user_id="alice")
         assert result.success
         assert result.total_deleted == 1
 
-        bob_trash = await usfs.list_trash(
-            session=async_session, user_id="bob"
-        )
+        bob_trash = await usfs.list_trash(session=async_session, user_id="bob")
         assert len(bob_trash.entries) == 1
 
 
@@ -988,31 +990,19 @@ class TestTrashScoping:
 
 
 class TestVersions:
-    async def test_list_versions(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
-        await usfs.write(
-            "/notes.md", "v1", session=async_session, user_id="alice"
-        )
-        await usfs.write(
-            "/notes.md", "v2", session=async_session, user_id="alice"
-        )
+    async def test_list_versions(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
+        await usfs.write("/notes.md", "v1", session=async_session, user_id="alice")
+        await usfs.write("/notes.md", "v2", session=async_session, user_id="alice")
 
-        result = await usfs.list_versions(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        result = await usfs.list_versions("/notes.md", session=async_session, user_id="alice")
         assert result.success is True
         assert len(result.versions) == 2
 
     async def test_get_version_content(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await usfs.write(
-            "/notes.md", "v1", session=async_session, user_id="alice"
-        )
-        await usfs.write(
-            "/notes.md", "v2", session=async_session, user_id="alice"
-        )
+        await usfs.write("/notes.md", "v1", session=async_session, user_id="alice")
+        await usfs.write("/notes.md", "v2", session=async_session, user_id="alice")
 
         result = await usfs.get_version_content(
             "/notes.md", 1, session=async_session, user_id="alice"
@@ -1020,24 +1010,14 @@ class TestVersions:
         assert result.success is True
         assert result.content == "v1"
 
-    async def test_restore_version(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
-        await usfs.write(
-            "/notes.md", "v1", session=async_session, user_id="alice"
-        )
-        await usfs.write(
-            "/notes.md", "v2", session=async_session, user_id="alice"
-        )
+    async def test_restore_version(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
+        await usfs.write("/notes.md", "v1", session=async_session, user_id="alice")
+        await usfs.write("/notes.md", "v2", session=async_session, user_id="alice")
 
-        result = await usfs.restore_version(
-            "/notes.md", 1, session=async_session, user_id="alice"
-        )
+        result = await usfs.restore_version("/notes.md", 1, session=async_session, user_id="alice")
         assert result.success is True
 
-        read_result = await usfs.read(
-            "/notes.md", session=async_session, user_id="alice"
-        )
+        read_result = await usfs.read("/notes.md", session=async_session, user_id="alice")
         assert read_result.content == "v1"
 
 
@@ -1051,12 +1031,17 @@ class TestShareCRUD:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         share = await shared_usfs.share(
-            "/notes.md", "bob", "read",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "bob",
+            "read",
+            user_id="alice",
+            session=async_session,
         )
         assert isinstance(share, ShareInfo)
         assert share.path == "/notes.md"
@@ -1068,17 +1053,24 @@ class TestShareCRUD:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await shared_usfs.share(
-            "/notes.md", "bob", "read",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "bob",
+            "read",
+            user_id="alice",
+            session=async_session,
         )
 
         removed = await shared_usfs.unshare(
-            "/notes.md", "bob",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "bob",
+            user_id="alice",
+            session=async_session,
         )
         assert removed is True
 
@@ -1086,23 +1078,32 @@ class TestShareCRUD:
         with pytest.raises(PermissionError):
             await shared_usfs.read(
                 "/@shared/alice/notes.md",
-                session=async_session, user_id="bob",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_list_shares_on_path(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         await shared_usfs.share(
-            "/notes.md", "bob", "read",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "bob",
+            "read",
+            user_id="alice",
+            session=async_session,
         )
         await shared_usfs.share(
-            "/notes.md", "charlie", "write",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "charlie",
+            "write",
+            user_id="alice",
+            session=async_session,
         )
 
         shares = await shared_usfs.list_shares_on_path(
@@ -1116,17 +1117,20 @@ class TestShareCRUD:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "alice notes",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice notes",
+            session=async_session,
+            user_id="alice",
         )
         await shared_usfs.share(
-            "/notes.md", "bob", "read",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "bob",
+            "read",
+            user_id="alice",
+            session=async_session,
         )
 
-        shares = await shared_usfs.list_shared_with_me(
-            user_id="bob", session=async_session
-        )
+        shares = await shared_usfs.list_shared_with_me(user_id="bob", session=async_session)
         assert len(shares) == 1
         assert shares[0].path == "/@shared/alice/notes.md"
         assert shares[0].permission == "read"
@@ -1136,8 +1140,11 @@ class TestShareCRUD:
     ):
         with pytest.raises(ValueError, match="No sharing service"):
             await usfs.share(
-                "/notes.md", "bob", "read",
-                user_id="alice", session=async_session,
+                "/notes.md",
+                "bob",
+                "read",
+                user_id="alice",
+                session=async_session,
             )
 
     async def test_share_and_access_roundtrip(
@@ -1145,17 +1152,23 @@ class TestShareCRUD:
     ):
         """Share via ReBAC API, then access via @shared path."""
         await shared_usfs.write(
-            "/notes.md", "shared content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "shared content",
+            session=async_session,
+            user_id="alice",
         )
         await shared_usfs.share(
-            "/notes.md", "bob", "read",
-            user_id="alice", session=async_session,
+            "/notes.md",
+            "bob",
+            "read",
+            user_id="alice",
+            session=async_session,
         )
 
         result = await shared_usfs.read(
             "/@shared/alice/notes.md",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert result.content == "shared content"
@@ -1211,9 +1224,7 @@ class TestSecurityVulnerabilities:
         granted_by: str = "alice",
     ) -> None:
         assert usfs._sharing is not None
-        await usfs._sharing.create_share(
-            session, path, grantee_id, permission, granted_by
-        )
+        await usfs._sharing.create_share(session, path, grantee_id, permission, granted_by)
 
     # -- Fix 1: glob/grep/tree share permission checks + path restoration --
 
@@ -1221,28 +1232,34 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.glob(
-                "*.md", "/@shared/alice",
-                session=async_session, user_id="bob",
+                "*.md",
+                "/@shared/alice",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_glob_shared_with_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         result = await shared_usfs.glob(
-            "*.md", "/@shared/alice",
-            session=async_session, user_id="bob",
+            "*.md",
+            "/@shared/alice",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert len(result.entries) >= 1
@@ -1251,15 +1268,17 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         result = await shared_usfs.glob(
-            "*.md", "/@shared/alice",
-            session=async_session, user_id="bob",
+            "*.md",
+            "/@shared/alice",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         for e in result.entries:
@@ -1269,28 +1288,34 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "hello world",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.grep(
-                "hello", "/@shared/alice",
-                session=async_session, user_id="bob",
+                "hello",
+                "/@shared/alice",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_grep_shared_with_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "hello world",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         result = await shared_usfs.grep(
-            "hello", "/@shared/alice",
-            session=async_session, user_id="bob",
+            "hello",
+            "/@shared/alice",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert len(result.matches) >= 1
@@ -1299,15 +1324,17 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "hello world",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "hello world",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         result = await shared_usfs.grep(
-            "hello", "/@shared/alice",
-            session=async_session, user_id="bob",
+            "hello",
+            "/@shared/alice",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         for m in result.matches:
@@ -1319,28 +1346,32 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.tree(
                 "/@shared/alice",
-                session=async_session, user_id="bob",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_tree_shared_with_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         result = await shared_usfs.tree(
             "/@shared/alice",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         assert len(result.entries) >= 1
@@ -1349,15 +1380,16 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         result = await shared_usfs.tree(
             "/@shared/alice",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
         for e in result.entries:
@@ -1369,37 +1401,52 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/src.md", "content",
-            session=async_session, user_id="bob",
+            "/src.md",
+            "content",
+            session=async_session,
+            user_id="bob",
         )
         await shared_usfs.write(
-            "/target.md", "existing",
-            session=async_session, user_id="alice",
+            "/target.md",
+            "existing",
+            session=async_session,
+            user_id="alice",
         )
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.copy(
-                "/src.md", "/@shared/alice/target.md",
-                session=async_session, user_id="bob",
+                "/src.md",
+                "/@shared/alice/target.md",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_copy_to_shared_dest_with_write_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/src.md", "content",
-            session=async_session, user_id="bob",
+            "/src.md",
+            "content",
+            session=async_session,
+            user_id="bob",
         )
         await shared_usfs.write(
-            "/target.md", "existing",
-            session=async_session, user_id="alice",
+            "/target.md",
+            "existing",
+            session=async_session,
+            user_id="alice",
         )
         await self._create_share(
-            shared_usfs, async_session,
-            "/alice/target.md", "bob", "write",
+            shared_usfs,
+            async_session,
+            "/alice/target.md",
+            "bob",
+            "write",
         )
         result = await shared_usfs.copy(
-            "/src.md", "/@shared/alice/target.md",
-            session=async_session, user_id="bob",
+            "/src.md",
+            "/@shared/alice/target.md",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
 
@@ -1409,48 +1456,54 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice/notes.md", "bob", "write")
         with pytest.raises(PermissionError, match="Cannot manage shares"):
             await shared_usfs.share(
-                "/@shared/alice/notes.md", "charlie", "read",
-                user_id="bob", session=async_session,
+                "/@shared/alice/notes.md",
+                "charlie",
+                "read",
+                user_id="bob",
+                session=async_session,
             )
 
     async def test_unshare_on_shared_path_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice/notes.md", "bob", "write")
         with pytest.raises(PermissionError, match="Cannot manage shares"):
             await shared_usfs.unshare(
-                "/@shared/alice/notes.md", "charlie",
-                user_id="bob", session=async_session,
+                "/@shared/alice/notes.md",
+                "charlie",
+                user_id="bob",
+                session=async_session,
             )
 
     async def test_list_shares_on_shared_path_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "content",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "content",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice/notes.md", "bob", "write")
         with pytest.raises(PermissionError, match="Cannot manage shares"):
             await shared_usfs.list_shares_on_path(
                 "/@shared/alice/notes.md",
-                user_id="bob", session=async_session,
+                user_id="bob",
+                session=async_session,
             )
 
     # -- Fix 4: move cross-namespace block --
@@ -1459,47 +1512,54 @@ class TestSecurityVulnerabilities:
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "alice's file",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's file",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice/notes.md", "bob", "write")
         with pytest.raises(PermissionError, match="Cannot move shared files"):
             await shared_usfs.move(
-                "/@shared/alice/notes.md", "/stolen.md",
-                session=async_session, user_id="bob",
+                "/@shared/alice/notes.md",
+                "/stolen.md",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_move_shared_to_own_namespace_denied_follow_true(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "alice's file",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's file",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice/notes.md", "bob", "write")
         with pytest.raises(PermissionError, match="Cannot move shared files"):
             await shared_usfs.move(
-                "/@shared/alice/notes.md", "/stolen.md",
-                session=async_session, user_id="bob", follow=True,
+                "/@shared/alice/notes.md",
+                "/stolen.md",
+                session=async_session,
+                user_id="bob",
+                follow=True,
             )
 
     async def test_move_within_shared_namespace_allowed(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
         await shared_usfs.write(
-            "/notes.md", "alice's file",
-            session=async_session, user_id="alice",
+            "/notes.md",
+            "alice's file",
+            session=async_session,
+            user_id="alice",
         )
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "write")
         result = await shared_usfs.move(
-            "/@shared/alice/notes.md", "/@shared/alice/renamed.md",
-            session=async_session, user_id="bob",
+            "/@shared/alice/notes.md",
+            "/@shared/alice/renamed.md",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
 
@@ -1511,31 +1571,30 @@ class TestSecurityVulnerabilities:
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.mkdir(
                 "/@shared/alice/newdir",
-                session=async_session, user_id="bob",
+                session=async_session,
+                user_id="bob",
             )
 
     async def test_mkdir_shared_with_write_permission(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "write"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "write")
         result = await shared_usfs.mkdir(
             "/@shared/alice/newdir",
-            session=async_session, user_id="bob",
+            session=async_session,
+            user_id="bob",
         )
         assert result.success is True
 
     async def test_mkdir_shared_read_only_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
     ):
-        await self._create_share(
-            shared_usfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_usfs, async_session, "/alice", "bob", "read")
         with pytest.raises(PermissionError, match="Access denied"):
             await shared_usfs.mkdir(
                 "/@shared/alice/newdir",
-                session=async_session, user_id="bob",
+                session=async_session,
+                user_id="bob",
             )
 
     # -- Fix 6: _require_user_id format validation --

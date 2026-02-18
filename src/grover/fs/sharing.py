@@ -42,9 +42,7 @@ class SharingService:
     ) -> FileShareBase:
         """Create a share record. Flushes but does not commit."""
         if permission not in ("read", "write"):
-            raise ValueError(
-                f"Invalid permission: {permission!r}. Must be 'read' or 'write'."
-            )
+            raise ValueError(f"Invalid permission: {permission!r}. Must be 'read' or 'write'.")
 
         path = normalize_path(path)
         share = self._share_model(
@@ -89,9 +87,7 @@ class SharingService:
         """List all shares for a given path."""
         path = normalize_path(path)
         model = self._share_model
-        result = await session.execute(
-            select(model).where(model.path == path)
-        )
+        result = await session.execute(select(model).where(model.path == path))
         return list(result.scalars().all())
 
     async def list_shared_with(
@@ -101,9 +97,7 @@ class SharingService:
     ) -> list[FileShareBase]:
         """List all shares granted to a grantee."""
         model = self._share_model
-        result = await session.execute(
-            select(model).where(model.grantee_id == grantee_id)
-        )
+        result = await session.execute(select(model).where(model.grantee_id == grantee_id))
         return list(result.scalars().all())
 
     async def list_shares_under_prefix(
@@ -236,7 +230,7 @@ class SharingService:
         for share in shares:
             # Exact match or prefix match (must be at directory boundary)
             if share.path == old_prefix or share.path.startswith(old_prefix + "/"):
-                share.path = new_prefix + share.path[len(old_prefix):]
+                share.path = new_prefix + share.path[len(old_prefix) :]
                 count += 1
 
         if count > 0:

@@ -7,7 +7,7 @@ packages = ["src/grover"]
 
 [project]
 name = "grover"
-version = "0.0.1"
+version = "0.0.2"
 description = "The agentic filesystem. Safe file operations, knowledge graphs, and semantic search — unified for AI agents."
 readme = "README.md"
 license = "Apache-2.0"

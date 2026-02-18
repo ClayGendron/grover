@@ -155,9 +155,7 @@ class TestRetrieverInvokeInterface:
 
 
 class TestRetrieverKParameter:
-    def test_retriever_k_parameter(
-        self, grover_with_search: Grover
-    ):
+    def test_retriever_k_parameter(self, grover_with_search: Grover):
         # Write multiple files
         for i in range(5):
             grover_with_search.write(f"/project/file{i}.py", f"def func{i}(): return {i}")
@@ -169,9 +167,7 @@ class TestRetrieverKParameter:
 
 
 class TestRetrieverNoSearchIndex:
-    def test_retriever_no_search_index_returns_empty(
-        self, grover_no_search: Grover
-    ):
+    def test_retriever_no_search_index_returns_empty(self, grover_no_search: Grover):
         grover_no_search.write("/project/file.py", "content")
         retriever = GroverRetriever(grover=grover_no_search, k=5)
         docs = retriever.invoke("content")

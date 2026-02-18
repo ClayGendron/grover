@@ -195,12 +195,14 @@ class TestStoreBatchMultipleOps:
     def test_store_batch_multiple_ops(self, store: GroverStore):
         from langgraph.store.base import GetOp, PutOp
 
-        results = store.batch([
-            PutOp(("batch",), "k1", {"x": 1}),
-            PutOp(("batch",), "k2", {"x": 2}),
-            GetOp(("batch",), "k1"),
-            GetOp(("batch",), "k2"),
-        ])
+        results = store.batch(
+            [
+                PutOp(("batch",), "k1", {"x": 1}),
+                PutOp(("batch",), "k2", {"x": 2}),
+                GetOp(("batch",), "k1"),
+                GetOp(("batch",), "k2"),
+            ]
+        )
         assert len(results) == 4
         # First two are puts (return None)
         assert results[0] is None
@@ -216,15 +218,19 @@ class TestStoreAsyncBatch:
     async def test_store_async_batch(self, store: GroverStore):
         from langgraph.store.base import GetOp, PutOp
 
-        results = await store.abatch([
-            PutOp(("async",), "key", {"v": 42}),
-        ])
+        results = await store.abatch(
+            [
+                PutOp(("async",), "key", {"v": 42}),
+            ]
+        )
         assert len(results) == 1
         assert results[0] is None
 
-        results = await store.abatch([
-            GetOp(("async",), "key"),
-        ])
+        results = await store.abatch(
+            [
+                GetOp(("async",), "key"),
+            ]
+        )
         assert len(results) == 1
         assert results[0] is not None
         assert results[0].value == {"v": 42}

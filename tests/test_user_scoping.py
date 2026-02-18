@@ -39,9 +39,7 @@ async def auth_vfs(async_engine: AsyncEngine) -> VFS:
     backend = UserScopedFileSystem()
     registry = MountRegistry()
 
-    session_factory = async_sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     config = MountConfig(
         mount_path="/ws",
@@ -61,9 +59,7 @@ async def shared_vfs(async_engine: AsyncEngine) -> VFS:
     backend = UserScopedFileSystem(sharing=sharing)
     registry = MountRegistry()
 
-    session_factory = async_sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     config = MountConfig(
         mount_path="/ws",
@@ -84,9 +80,7 @@ async def regular_vfs(async_engine: AsyncEngine) -> VFS:
     backend = DatabaseFileSystem()
     registry = MountRegistry()
 
-    session_factory = async_sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     config = MountConfig(
         mount_path="/ws",
@@ -117,15 +111,11 @@ class TestVFSAuthenticatedReadWrite:
         with pytest.raises(AuthenticationRequiredError):
             await auth_vfs.read("/ws/notes.md", user_id=None)
 
-    async def test_vfs_write_sets_owner_id(
-        self, auth_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_vfs_write_sets_owner_id(self, auth_vfs: VFS, async_session: AsyncSession):
         await auth_vfs.write("/ws/notes.md", "owned content", user_id="alice")
 
         # Query the file record directly to verify owner_id
-        result = await async_session.execute(
-            select(File).where(File.path == "/alice/notes.md")
-        )
+        result = await async_session.execute(select(File).where(File.path == "/alice/notes.md"))
         file = result.scalar_one_or_none()
         assert file is not None
         assert file.owner_id == "alice"
@@ -175,9 +165,7 @@ class TestVFSAuthenticatedReadWrite:
 class TestVFSAuthenticatedOtherOps:
     async def test_edit_authenticated(self, auth_vfs: VFS):
         await auth_vfs.write("/ws/notes.md", "hello world", user_id="alice")
-        result = await auth_vfs.edit(
-            "/ws/notes.md", "hello", "goodbye", user_id="alice"
-        )
+        result = await auth_vfs.edit("/ws/notes.md", "hello", "goodbye", user_id="alice")
         assert result.success is True
         read_result = await auth_vfs.read("/ws/notes.md", user_id="alice")
         assert read_result.content == "goodbye world"
@@ -275,29 +263,19 @@ class TestVFSSharedAccess:
         backend = mount.backend
         assert isinstance(backend, UserScopedFileSystem)
         assert backend._sharing is not None
-        await backend._sharing.create_share(
-            async_session, path, grantee_id, permission, granted_by
-        )
+        await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
-    async def test_read_shared_file(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_read_shared_file(self, shared_vfs: VFS, async_session: AsyncSession):
         """Bob reads alice's file via @shared/ path with read share."""
         await shared_vfs.write("/ws/notes.md", "alice's notes", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "read")
 
-        result = await shared_vfs.read(
-            "/ws/@shared/alice/notes.md", user_id="bob"
-        )
+        result = await shared_vfs.read("/ws/@shared/alice/notes.md", user_id="bob")
         assert result.success is True
         assert result.content == "alice's notes"
 
-    async def test_read_shared_no_permission(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_read_shared_no_permission(self, shared_vfs: VFS, async_session: AsyncSession):
         """Bob cannot read alice's file without a share."""
         await shared_vfs.write("/ws/notes.md", "alice's notes", user_id="alice")
 
@@ -309,9 +287,7 @@ class TestVFSSharedAccess:
     ):
         """Bob writes to alice's file via @shared/ with write share."""
         await shared_vfs.write("/ws/notes.md", "original", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "write")
 
         result = await shared_vfs.write(
             "/ws/@shared/alice/notes.md", "updated by bob", user_id="bob"
@@ -322,68 +298,44 @@ class TestVFSSharedAccess:
         read_result = await shared_vfs.read("/ws/notes.md", user_id="alice")
         assert read_result.content == "updated by bob"
 
-    async def test_write_shared_file_read_only(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_write_shared_file_read_only(self, shared_vfs: VFS, async_session: AsyncSession):
         """Bob cannot write to alice's file with only read share."""
         await shared_vfs.write("/ws/notes.md", "original", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "read")
 
         with pytest.raises(PermissionError, match="Access denied"):
-            await shared_vfs.write(
-                "/ws/@shared/alice/notes.md", "hacked", user_id="bob"
-            )
+            await shared_vfs.write("/ws/@shared/alice/notes.md", "hacked", user_id="bob")
 
     async def test_edit_shared_file_with_write_perm(
         self, shared_vfs: VFS, async_session: AsyncSession
     ):
         """Bob edits alice's file via @shared/ with write share."""
         await shared_vfs.write("/ws/notes.md", "hello world", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "write"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "write")
 
         result = await shared_vfs.edit(
             "/ws/@shared/alice/notes.md", "hello", "goodbye", user_id="bob"
         )
         assert result.success is True
 
-    async def test_exists_shared(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_exists_shared(self, shared_vfs: VFS, async_session: AsyncSession):
         """exists returns True for shared path with permission."""
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "read")
 
-        assert await shared_vfs.exists(
-            "/ws/@shared/alice/notes.md", user_id="bob"
-        ) is True
+        assert await shared_vfs.exists("/ws/@shared/alice/notes.md", user_id="bob") is True
 
-    async def test_exists_shared_no_permission(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_exists_shared_no_permission(self, shared_vfs: VFS, async_session: AsyncSession):
         """exists returns False for shared path without permission."""
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
-        assert await shared_vfs.exists(
-            "/ws/@shared/alice/notes.md", user_id="bob"
-        ) is False
+        assert await shared_vfs.exists("/ws/@shared/alice/notes.md", user_id="bob") is False
 
-    async def test_get_info_shared(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_get_info_shared(self, shared_vfs: VFS, async_session: AsyncSession):
         """get_info works for shared paths with permission."""
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "read")
 
-        info = await shared_vfs.get_info(
-            "/ws/@shared/alice/notes.md", user_id="bob"
-        )
+        info = await shared_vfs.get_info("/ws/@shared/alice/notes.md", user_id="bob")
         assert info is not None
 
     async def test_get_info_shared_no_permission(
@@ -391,25 +343,17 @@ class TestVFSSharedAccess:
     ):
         """get_info returns None for shared path without permission."""
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
-        info = await shared_vfs.get_info(
-            "/ws/@shared/alice/notes.md", user_id="bob"
-        )
+        info = await shared_vfs.get_info("/ws/@shared/alice/notes.md", user_id="bob")
         assert info is None
 
     async def test_directory_share_grants_children(
         self, shared_vfs: VFS, async_session: AsyncSession
     ):
         """Share on /alice/projects grants read to /alice/projects/docs/file.md."""
-        await shared_vfs.write(
-            "/ws/projects/docs/file.md", "content", user_id="alice"
-        )
-        await self._create_share(
-            shared_vfs, async_session, "/alice/projects", "bob", "read"
-        )
+        await shared_vfs.write("/ws/projects/docs/file.md", "content", user_id="alice")
+        await self._create_share(shared_vfs, async_session, "/alice/projects", "bob", "read")
 
-        result = await shared_vfs.read(
-            "/ws/@shared/alice/projects/docs/file.md", user_id="bob"
-        )
+        result = await shared_vfs.read("/ws/@shared/alice/projects/docs/file.md", user_id="bob")
         assert result.success is True
         assert result.content == "content"
 
@@ -433,22 +377,20 @@ class TestVFSSharedListDir:
         backend = mount.backend
         assert isinstance(backend, UserScopedFileSystem)
         assert backend._sharing is not None
-        await backend._sharing.create_share(
-            async_session, path, grantee_id, permission, granted_by
-        )
+        await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
-    async def test_list_dir_shared_root(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_root(self, shared_vfs: VFS, async_session: AsyncSession):
         """/@shared lists distinct owners who shared with user."""
         await shared_vfs.write("/ws/a.md", "a", user_id="alice")
         await shared_vfs.write("/ws/b.md", "b", user_id="charlie")
+        await self._create_share(shared_vfs, async_session, "/alice/a.md", "bob", "read")
         await self._create_share(
-            shared_vfs, async_session, "/alice/a.md", "bob", "read"
-        )
-        await self._create_share(
-            shared_vfs, async_session, "/charlie/b.md", "bob", "read",
+            shared_vfs,
+            async_session,
+            "/charlie/b.md",
+            "bob",
+            "read",
             granted_by="charlie",
         )
 
@@ -459,28 +401,20 @@ class TestVFSSharedListDir:
         assert "charlie" in names
         assert all(e.is_directory for e in result.entries)
 
-    async def test_list_dir_shared_owner(
-        self, shared_vfs: VFS, async_session: AsyncSession
-    ):
+    async def test_list_dir_shared_owner(self, shared_vfs: VFS, async_session: AsyncSession):
         """/@shared/{owner} lists that owner's shared content."""
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
         await shared_vfs.write("/ws/readme.md", "readme", user_id="alice")
         # Share the alice root dir so bob can list everything
-        await self._create_share(
-            shared_vfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice", "bob", "read")
 
-        result = await shared_vfs.list_dir(
-            "/ws/@shared/alice", user_id="bob"
-        )
+        result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
         names = {e.name for e in result.entries}
         assert "notes.md" in names
         assert "readme.md" in names
 
-    async def test_list_dir_shared_no_sharing_configured(
-        self, auth_vfs: VFS
-    ):
+    async def test_list_dir_shared_no_sharing_configured(self, auth_vfs: VFS):
         """@shared list_dir with no SharingService returns empty."""
         result = await auth_vfs.list_dir("/ws/@shared", user_id="alice")
         assert result.success is True
@@ -492,9 +426,7 @@ class TestVFSSharedListDir:
         """/@shared/{owner} without share raises PermissionError."""
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
         with pytest.raises(PermissionError, match="Access denied"):
-            await shared_vfs.list_dir(
-                "/ws/@shared/alice", user_id="bob"
-            )
+            await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
 
     async def test_list_dir_shared_owner_file_shares(
         self, shared_vfs: VFS, async_session: AsyncSession
@@ -503,12 +435,8 @@ class TestVFSSharedListDir:
         await shared_vfs.write("/ws/doc1.md", "doc1", user_id="alice")
         await shared_vfs.write("/ws/doc2.md", "doc2", user_id="alice")
         await shared_vfs.write("/ws/secret.md", "secret", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/doc1.md", "bob", "read"
-        )
-        await self._create_share(
-            shared_vfs, async_session, "/alice/doc2.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/doc1.md", "bob", "read")
+        await self._create_share(shared_vfs, async_session, "/alice/doc2.md", "bob", "read")
 
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
@@ -525,13 +453,9 @@ class TestVFSSharedListDir:
         await shared_vfs.write("/ws/projects/b.py", "b", user_id="alice")
         await shared_vfs.write("/ws/readme.md", "readme", user_id="alice")
         # Directory share on /alice/projects gives full listing at that level
-        await self._create_share(
-            shared_vfs, async_session, "/alice/projects", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/projects", "bob", "read")
         # File share on readme
-        await self._create_share(
-            shared_vfs, async_session, "/alice/readme.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/readme.md", "bob", "read")
 
         # At the /alice level, bob should see both projects/ dir and readme.md
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
@@ -544,9 +468,7 @@ class TestVFSSharedListDir:
         self, shared_vfs: VFS, async_session: AsyncSession
     ):
         """Deep file share shows intermediate dirs at each level."""
-        await shared_vfs.write(
-            "/ws/deep/nested/file.md", "deep content", user_id="alice"
-        )
+        await shared_vfs.write("/ws/deep/nested/file.md", "deep content", user_id="alice")
         await self._create_share(
             shared_vfs, async_session, "/alice/deep/nested/file.md", "bob", "read"
         )
@@ -566,9 +488,7 @@ class TestVFSSharedListDir:
         assert result.entries[0].is_directory is True
 
         # Level 3: /@shared/alice/deep/nested → shows "file.md"
-        result = await shared_vfs.list_dir(
-            "/ws/@shared/alice/deep/nested", user_id="bob"
-        )
+        result = await shared_vfs.list_dir("/ws/@shared/alice/deep/nested", user_id="bob")
         assert result.success is True
         names = {e.name for e in result.entries}
         assert names == {"file.md"}
@@ -581,9 +501,7 @@ class TestVFSSharedListDir:
         await shared_vfs.write("/ws/notes.md", "content", user_id="alice")
         await shared_vfs.write("/ws/readme.md", "readme", user_id="alice")
         # Share the entire alice root
-        await self._create_share(
-            shared_vfs, async_session, "/alice", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice", "bob", "read")
 
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
@@ -619,9 +537,7 @@ class TestVFSSharedMoveAndCopy:
         backend = mount.backend
         assert isinstance(backend, UserScopedFileSystem)
         assert backend._sharing is not None
-        await backend._sharing.create_share(
-            async_session, path, grantee_id, permission, granted_by
-        )
+        await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
         await async_session.commit()
 
     async def test_copy_shared_file_with_read_perm(
@@ -629,9 +545,7 @@ class TestVFSSharedMoveAndCopy:
     ):
         """Bob can copy alice's file to his own space with read share."""
         await shared_vfs.write("/ws/notes.md", "alice's content", user_id="alice")
-        await self._create_share(
-            shared_vfs, async_session, "/alice/notes.md", "bob", "read"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice/notes.md", "bob", "read")
 
         result = await shared_vfs.copy(
             "/ws/@shared/alice/notes.md", "/ws/my_copy.md", user_id="bob"
@@ -646,9 +560,7 @@ class TestVFSSharedMoveAndCopy:
         """Bob cannot copy alice's file without a share."""
         await shared_vfs.write("/ws/notes.md", "alice's content", user_id="alice")
         with pytest.raises(PermissionError, match="Access denied"):
-            await shared_vfs.copy(
-                "/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob"
-            )
+            await shared_vfs.copy("/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob")
 
     async def test_move_shared_file_no_permission(
         self, shared_vfs: VFS, async_session: AsyncSession
@@ -656,9 +568,7 @@ class TestVFSSharedMoveAndCopy:
         """Bob cannot move alice's file without a share."""
         await shared_vfs.write("/ws/notes.md", "alice's content", user_id="alice")
         with pytest.raises(PermissionError, match="Access denied"):
-            await shared_vfs.move(
-                "/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob"
-            )
+            await shared_vfs.move("/ws/@shared/alice/notes.md", "/ws/stolen.md", user_id="bob")
 
     async def test_move_shared_file_with_write_perm(
         self, shared_vfs: VFS, async_session: AsyncSession
@@ -666,9 +576,7 @@ class TestVFSSharedMoveAndCopy:
         """Bob can move alice's shared file with write permission on directory."""
         await shared_vfs.write("/ws/old.md", "content", user_id="alice")
         # Directory-level share covers both source and destination
-        await self._create_share(
-            shared_vfs, async_session, "/alice", "bob", "write"
-        )
+        await self._create_share(shared_vfs, async_session, "/alice", "bob", "write")
 
         result = await shared_vfs.move(
             "/ws/@shared/alice/old.md", "/ws/@shared/alice/new.md", user_id="bob"

@@ -163,9 +163,7 @@ class TestGetVersionContent:
         assert isinstance(result, str)
         assert "original content" in result
 
-    def test_get_version_content_bad_version(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_get_version_content_bad_version(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/doc.txt", "content")
         tool = next(t for t in middleware.tools if t.name == "get_version_content")
         result = tool.invoke({"path": "/project/doc.txt", "version": 999})
@@ -186,9 +184,7 @@ class TestRestoreVersion:
         read = grover.read("/project/doc.txt")
         assert read.content == "original"
 
-    def test_restore_version_bad_version(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_restore_version_bad_version(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/doc.txt", "content")
         tool = next(t for t in middleware.tools if t.name == "restore_version")
         result = tool.invoke({"path": "/project/doc.txt", "version": 999})
@@ -201,9 +197,7 @@ class TestRestoreVersion:
 
 
 class TestDeleteFile:
-    def test_delete_file_soft_deletes(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_delete_file_soft_deletes(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/temp.txt", "temporary")
         tool = next(t for t in middleware.tools if t.name == "delete_file")
         result = tool.invoke({"path": "/project/temp.txt"})
@@ -220,9 +214,7 @@ class TestDeleteFile:
 
 
 class TestListTrash:
-    def test_list_trash_shows_deleted_files(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_list_trash_shows_deleted_files(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/trash_me.txt", "content")
         grover.delete("/project/trash_me.txt")
         tool = next(t for t in middleware.tools if t.name == "list_trash")
@@ -237,9 +229,7 @@ class TestListTrash:
 
 
 class TestRestoreFromTrash:
-    def test_restore_from_trash_recovers_file(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_restore_from_trash_recovers_file(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/restore_me.txt", "precious data")
         grover.delete("/project/restore_me.txt")
         tool = next(t for t in middleware.tools if t.name == "restore_from_trash")
@@ -282,9 +272,7 @@ class TestSearchSemantic:
         assert isinstance(result, str)
         assert "No results" in result
 
-    def test_search_semantic_disabled_when_no_provider(
-        self, workspace: Path, tmp_path: Path
-    ):
+    def test_search_semantic_disabled_when_no_provider(self, workspace: Path, tmp_path: Path):
         # Create a Grover without embedding provider
         data = tmp_path / "no_search_data"
         g = Grover(data_dir=str(data), embedding_provider=None)
@@ -303,9 +291,7 @@ class TestSearchSemantic:
 
 
 class TestDependencies:
-    def test_dependencies_returns_file_list(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_dependencies_returns_file_list(self, middleware: GroverMiddleware, grover: Grover):
         # Write files with import relationships
         grover.write("/project/utils.py", "def helper(): pass\n")
         grover.write("/project/main.py", "from utils import helper\n\ndef run(): helper()\n")
@@ -318,9 +304,7 @@ class TestDependencies:
         # (the exact output depends on whether the analyzer resolves the import)
         assert isinstance(result, str)
 
-    def test_dependencies_no_deps(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_dependencies_no_deps(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/standalone.py", "x = 42\n")
         grover.index("/project")
         tool = next(t for t in middleware.tools if t.name == "dependencies")
@@ -329,9 +313,7 @@ class TestDependencies:
 
 
 class TestDependents:
-    def test_dependents_returns_file_list(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_dependents_returns_file_list(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/lib.py", "def shared(): pass\n")
         grover.write("/project/consumer.py", "from lib import shared\n\nshared()\n")
         grover.index("/project")
@@ -342,9 +324,7 @@ class TestDependents:
 
 
 class TestImpacts:
-    def test_impacts_returns_transitive_closure(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_impacts_returns_transitive_closure(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/base.py", "BASE = 1\n")
         grover.write("/project/mid.py", "from base import BASE\nMID = BASE + 1\n")
         grover.write("/project/top.py", "from mid import MID\nTOP = MID + 1\n")
@@ -354,9 +334,7 @@ class TestImpacts:
         result = tool.invoke({"path": "/project/base.py", "max_depth": 3})
         assert isinstance(result, str)
 
-    def test_impacts_no_impact(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_impacts_no_impact(self, middleware: GroverMiddleware, grover: Grover):
         grover.write("/project/island.py", "x = 1\n")
         grover.index("/project")
         tool = next(t for t in middleware.tools if t.name == "impacts")
@@ -370,9 +348,7 @@ class TestImpacts:
 
 
 class TestErrorHandling:
-    def test_all_tools_return_strings(
-        self, middleware: GroverMiddleware, grover: Grover
-    ):
+    def test_all_tools_return_strings(self, middleware: GroverMiddleware, grover: Grover):
         """Every tool should return a string, even on error."""
         for tool in middleware.tools:
             # Invoke with bad/missing paths — should not raise

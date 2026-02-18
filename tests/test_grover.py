@@ -453,14 +453,10 @@ class TestGroverSyncAuthenticated:
 
     def test_share_unshare(self, auth_grover: Grover):
         auth_grover.write("/ws/notes.md", "data", user_id="alice")
-        share_result = auth_grover.share(
-            "/ws/notes.md", "bob", "read", user_id="alice"
-        )
+        share_result = auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         assert share_result.success is True
 
-        unshare_result = auth_grover.unshare(
-            "/ws/notes.md", "bob", user_id="alice"
-        )
+        unshare_result = auth_grover.unshare("/ws/notes.md", "bob", user_id="alice")
         assert unshare_result.success is True
 
     def test_list_shares(self, auth_grover: Grover):
@@ -481,11 +477,7 @@ class TestGroverSyncAuthenticated:
 
     def test_move_and_copy(self, auth_grover: Grover):
         auth_grover.write("/ws/src.md", "content", user_id="alice")
-        copy_result = auth_grover.copy(
-            "/ws/src.md", "/ws/copy.md", user_id="alice"
-        )
+        copy_result = auth_grover.copy("/ws/src.md", "/ws/copy.md", user_id="alice")
         assert copy_result.success is True
-        move_result = auth_grover.move(
-            "/ws/src.md", "/ws/moved.md", user_id="alice"
-        )
+        move_result = auth_grover.move("/ws/src.md", "/ws/moved.md", user_id="alice")
         assert move_result.success is True

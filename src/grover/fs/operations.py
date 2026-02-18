@@ -90,7 +90,11 @@ async def check_external_edit(
 
     # Passing old_content="" makes save_version store a full snapshot
     await versioning.save_version(
-        session, file, "", current_content, "external",
+        session,
+        file,
+        "",
+        current_content,
+        "external",
     )
 
     logger.info(
@@ -196,7 +200,10 @@ async def write_file(
         # Detect and record external edits before creating the Grover version
         if old_content is not None:
             await check_external_edit(
-                existing, old_content, session, versioning=versioning,
+                existing,
+                old_content,
+                session,
+                versioning=versioning,
             )
 
         # Update metadata (increment version first so save_version uses new number)
@@ -640,9 +647,7 @@ async def move_file(
                 )
             session.add(new_child)
             if child_content is not None and not orig_child.is_directory:
-                await versioning.save_version(
-                    session, new_child, "", child_content, "move"
-                )
+                await versioning.save_version(session, new_child, "", child_content, "move")
                 await write_content(new_child_path, child_content, session)
 
         await session.flush()

@@ -172,9 +172,7 @@ class TestSyntheticVersionProperties:
             await fs.write("/app.py", "final\n", session=session)
 
             # Query the version 2 record directly
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersion).where(
@@ -194,9 +192,7 @@ class TestSyntheticVersionProperties:
             await _simulate_external_edit(session, "/app.py", "external\n")
             await fs.write("/app.py", "final\n", session=session)
 
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersion).where(
@@ -221,9 +217,7 @@ class TestSyntheticVersionProperties:
             assert vc2.content == external_content
 
             expected_hash = hashlib.sha256(external_content.encode()).hexdigest()
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             ver_result = await session.execute(
                 select(FileVersion).where(
@@ -262,9 +256,7 @@ class TestExternalEditEdgeCases:
             # Create a file, then clear its content_hash to simulate
             # a file record that never had a hash tracked
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             file.content_hash = None
             await session.flush()
@@ -315,14 +307,15 @@ class TestCheckExternalEditUnit:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             original_version = file.current_version
 
             detected = await check_external_edit(
-                file, "content\n", session, versioning=fs.versioning,
+                file,
+                "content\n",
+                session,
+                versioning=fs.versioning,
             )
             assert detected is False
             assert file.current_version == original_version
@@ -333,14 +326,15 @@ class TestCheckExternalEditUnit:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             original_version = file.current_version
 
             detected = await check_external_edit(
-                file, "different content\n", session, versioning=fs.versioning,
+                file,
+                "different content\n",
+                session,
+                versioning=fs.versioning,
             )
             assert detected is True
             assert file.current_version == original_version + 1
@@ -355,14 +349,15 @@ class TestCheckExternalEditUnit:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/app.py", "content\n", session=session)
-            file_result = await session.execute(
-                select(File).where(File.path == "/app.py")
-            )
+            file_result = await session.execute(select(File).where(File.path == "/app.py"))
             file = file_result.scalar_one()
             file.content_hash = None
 
             detected = await check_external_edit(
-                file, "anything\n", session, versioning=fs.versioning,
+                file,
+                "anything\n",
+                session,
+                versioning=fs.versioning,
             )
             assert detected is False
         await engine.dispose()

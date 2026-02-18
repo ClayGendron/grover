@@ -153,9 +153,7 @@ class GroverStore(BaseStore):
             return items[op.offset : op.offset + op.limit]
 
         # Fallback: list all items in namespace
-        return self._list_items_in_namespace(
-            op.namespace_prefix, limit=op.limit, offset=op.offset
-        )
+        return self._list_items_in_namespace(op.namespace_prefix, limit=op.limit, offset=op.offset)
 
     def _handle_list_namespaces(self, op: ListNamespacesOp) -> list[tuple[str, ...]]:
         tree_result = self.grover.tree(self.prefix)
@@ -190,7 +188,7 @@ class GroverStore(BaseStore):
 
         # Apply max_depth (truncate and deduplicate per LangGraph spec)
         if op.max_depth is not None:
-            filtered = sorted({ns[:op.max_depth] for ns in filtered})
+            filtered = sorted({ns[: op.max_depth] for ns in filtered})
         else:
             filtered.sort()
 
@@ -296,9 +294,7 @@ class GroverStore(BaseStore):
                     ns
                     for ns in result
                     if len(ns) >= len(pattern)
-                    and all(
-                        p == "*" or p == n for p, n in zip(pattern, ns, strict=False)
-                    )
+                    and all(p == "*" or p == n for p, n in zip(pattern, ns, strict=False))
                 ]
             elif match_type == "suffix":
                 result = [
@@ -307,9 +303,7 @@ class GroverStore(BaseStore):
                     if len(ns) >= len(pattern)
                     and all(
                         p == "*" or p == n
-                        for p, n in zip(
-                            reversed(pattern), reversed(ns), strict=False
-                        )
+                        for p, n in zip(reversed(pattern), reversed(ns), strict=False)
                     )
                 ]
 

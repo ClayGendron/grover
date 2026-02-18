@@ -69,9 +69,7 @@ class GroverRetriever(BaseRetriever):
         run_manager: Any = None,
     ) -> list[Document]:
         """Async variant — delegates to sync via thread executor."""
-        return await asyncio.to_thread(
-            self._get_relevant_documents, query, run_manager=run_manager
-        )
+        return await asyncio.to_thread(self._get_relevant_documents, query, run_manager=run_manager)
 
     @staticmethod
     def _to_document(sr: Any) -> Document:

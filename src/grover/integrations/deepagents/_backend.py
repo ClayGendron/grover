@@ -60,9 +60,7 @@ class GroverBackend(BackendProtocol):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_local(
-        cls, workspace_dir: str, **mount_kwargs: Any
-    ) -> GroverBackend:
+    def from_local(cls, workspace_dir: str, **mount_kwargs: Any) -> GroverBackend:
         """Create a GroverBackend with a LocalFileSystem mounted at ``/``."""
         from grover._grover import Grover
         from grover.fs.local_fs import LocalFileSystem
@@ -207,18 +205,14 @@ class GroverBackend(BackendProtocol):
                 occurrences = 1
 
         try:
-            result = self.grover.edit(
-                file_path, old_string, new_string, replace_all=replace_all
-            )
+            result = self.grover.edit(file_path, old_string, new_string, replace_all=replace_all)
         except Exception as e:
             return EditResult(error=f"Edit failed: {e}")
 
         if not result.success:
             return EditResult(error=result.message)
 
-        return EditResult(
-            path=file_path, files_update=None, occurrences=occurrences
-        )
+        return EditResult(path=file_path, files_update=None, occurrences=occurrences)
 
     async def aedit(
         self,
@@ -227,9 +221,7 @@ class GroverBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        return await asyncio.to_thread(
-            self.edit, file_path, old_string, new_string, replace_all
-        )
+        return await asyncio.to_thread(self.edit, file_path, old_string, new_string, replace_all)
 
     # ------------------------------------------------------------------
     # grep_raw
@@ -311,9 +303,7 @@ class GroverBackend(BackendProtocol):
     # upload_files / download_files
     # ------------------------------------------------------------------
 
-    def upload_files(
-        self, files: list[tuple[str, bytes]]
-    ) -> list[FileUploadResponse]:
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         responses: list[FileUploadResponse] = []
         for file_path, data in files:
             err = _validate_path(file_path)
@@ -324,57 +314,41 @@ class GroverBackend(BackendProtocol):
             try:
                 content = data.decode("utf-8")
             except UnicodeDecodeError:
-                responses.append(
-                    FileUploadResponse(path=file_path, error="invalid_path")
-                )
+                responses.append(FileUploadResponse(path=file_path, error="invalid_path"))
                 continue
 
             try:
                 result = self.grover.write(file_path, content, overwrite=False)
             except Exception:
-                responses.append(
-                    FileUploadResponse(path=file_path, error="permission_denied")
-                )
+                responses.append(FileUploadResponse(path=file_path, error="permission_denied"))
                 continue
 
             if not result.success:
-                responses.append(
-                    FileUploadResponse(path=file_path, error="permission_denied")
-                )
+                responses.append(FileUploadResponse(path=file_path, error="permission_denied"))
             else:
                 responses.append(FileUploadResponse(path=file_path))
 
         return responses
 
-    async def aupload_files(
-        self, files: list[tuple[str, bytes]]
-    ) -> list[FileUploadResponse]:
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         return await asyncio.to_thread(self.upload_files, files)
 
-    def download_files(
-        self, paths: list[str]
-    ) -> list[FileDownloadResponse]:
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         responses: list[FileDownloadResponse] = []
         for file_path in paths:
             err = _validate_path(file_path)
             if err:
-                responses.append(
-                    FileDownloadResponse(path=file_path, error="invalid_path")
-                )
+                responses.append(FileDownloadResponse(path=file_path, error="invalid_path"))
                 continue
 
             try:
                 result = self.grover.read(file_path)
             except Exception:
-                responses.append(
-                    FileDownloadResponse(path=file_path, error="file_not_found")
-                )
+                responses.append(FileDownloadResponse(path=file_path, error="file_not_found"))
                 continue
 
             if not result.success or result.content is None:
-                responses.append(
-                    FileDownloadResponse(path=file_path, error="file_not_found")
-                )
+                responses.append(FileDownloadResponse(path=file_path, error="file_not_found"))
             else:
                 responses.append(
                     FileDownloadResponse(
@@ -385,7 +359,5 @@ class GroverBackend(BackendProtocol):
 
         return responses
 
-    async def adownload_files(
-        self, paths: list[str]
-    ) -> list[FileDownloadResponse]:
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         return await asyncio.to_thread(self.download_files, paths)

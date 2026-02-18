@@ -40,9 +40,7 @@ class TrashService:
         self._versioning = versioning
         self._delete_content_cb = delete_content_cb
 
-    async def list_trash(
-        self, session: AsyncSession, *, owner_id: str | None = None
-    ) -> ListResult:
+    async def list_trash(self, session: AsyncSession, *, owner_id: str | None = None) -> ListResult:
         """List soft-deleted files, optionally scoped to *owner_id*."""
         model = self._file_model
         conditions = [model.deleted_at.is_not(None)]  # type: ignore[unresolved-attribute]

@@ -156,9 +156,7 @@ class VFS:
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         return result
 
-    async def list_dir(
-        self, path: str = "/", *, user_id: str | None = None
-    ) -> ListResult:
+    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListResult:
         path = normalize_path(path)
 
         if path == "/":
@@ -169,10 +167,7 @@ class VFS:
             result = await mount.backend.list_dir(rel_path, session=sess, user_id=user_id)
 
         result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [
-            self._prefix_file_info(entry, mount)
-            for entry in result.entries
-        ]
+        result.entries = [self._prefix_file_info(entry, mount) for entry in result.entries]
         return result
 
     def _list_root(self) -> ListResult:
@@ -195,9 +190,7 @@ class VFS:
             path="/",
         )
 
-    async def exists(
-        self, path: str, *, user_id: str | None = None
-    ) -> bool:
+    async def exists(self, path: str, *, user_id: str | None = None) -> bool:
         path = normalize_path(path)
 
         if path == "/":
@@ -214,9 +207,7 @@ class VFS:
         async with self._session_for(mount) as sess:
             return await mount.backend.exists(rel_path, session=sess, user_id=user_id)
 
-    async def get_info(
-        self, path: str, *, user_id: str | None = None
-    ) -> FileInfo | None:
+    async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfo | None:
         path = normalize_path(path)
 
         if self._registry.has_mount(path):
@@ -267,14 +258,9 @@ class VFS:
             all_entries: list[FileInfo] = []
             for mount in self._registry.list_visible_mounts():
                 async with self._session_for(mount) as sess:
-                    result = await mount.backend.glob(
-                        pattern, "/", session=sess, user_id=user_id
-                    )
+                    result = await mount.backend.glob(pattern, "/", session=sess, user_id=user_id)
                 if result.success:
-                    all_entries.extend(
-                        self._prefix_file_info(e, mount)
-                        for e in result.entries
-                    )
+                    all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
             return GlobResult(
                 success=True,
                 message=f"Found {len(all_entries)} match(es)",
@@ -287,9 +273,7 @@ class VFS:
         async with self._session_for(mount) as sess:
             result = await mount.backend.glob(pattern, rel_path, session=sess, user_id=user_id)
         result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [
-            self._prefix_file_info(e, mount) for e in result.entries
-        ]
+        result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
         return result
 
     async def grep(
@@ -436,10 +420,7 @@ class VFS:
                             user_id=user_id,
                         )
                     if result.success:
-                        all_entries.extend(
-                            self._prefix_file_info(e, mount)
-                            for e in result.entries
-                        )
+                        all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
                         total_files += result.total_files
                         total_dirs += result.total_dirs
 
@@ -459,9 +440,7 @@ class VFS:
                 rel_path, max_depth=max_depth, session=sess, user_id=user_id
             )
         result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [
-            self._prefix_file_info(e, mount) for e in result.entries
-        ]
+        result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
         return result
 
     # ------------------------------------------------------------------
@@ -486,8 +465,12 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
             result = await mount.backend.write(
-                rel_path, content, created_by,
-                overwrite=overwrite, session=sess, user_id=user_id,
+                rel_path,
+                content,
+                created_by,
+                overwrite=overwrite,
+                session=sess,
+                user_id=user_id,
             )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -515,8 +498,13 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
             result = await mount.backend.edit(
-                rel_path, old_string, new_string, replace_all, created_by,
-                session=sess, user_id=user_id,
+                rel_path,
+                old_string,
+                new_string,
+                replace_all,
+                created_by,
+                session=sess,
+                user_id=user_id,
             )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -571,8 +559,7 @@ class VFS:
             result = await mount.backend.mkdir(rel_path, parents, session=sess, user_id=user_id)
         result.path = self._prefix_path(result.path, mount.mount_path)
         result.created_dirs = [
-            self._prefix_path(d, mount.mount_path) or d
-            for d in result.created_dirs
+            self._prefix_path(d, mount.mount_path) or d for d in result.created_dirs
         ]
         return result
 
@@ -599,8 +586,11 @@ class VFS:
         if src_mount is dest_mount:
             async with self._session_for(src_mount) as sess:
                 result = await src_mount.backend.move(
-                    src_rel, dest_rel, session=sess,
-                    follow=follow, user_id=user_id,
+                    src_rel,
+                    dest_rel,
+                    session=sess,
+                    follow=follow,
+                    user_id=user_id,
                 )
             result.old_path = self._prefix_path(result.old_path, src_mount.mount_path)
             result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
@@ -709,9 +699,7 @@ class VFS:
     # Version Operations (capability-gated)
     # ------------------------------------------------------------------
 
-    async def list_versions(
-        self, path: str, *, user_id: str | None = None
-    ) -> ListVersionsResult:
+    async def list_versions(self, path: str, *, user_id: str | None = None) -> ListVersionsResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         cap = self._get_capability(mount.backend, SupportsVersions)
@@ -771,10 +759,7 @@ class VFS:
             async with self._session_for(mount) as sess:
                 result = await cap.list_trash(session=sess, user_id=user_id)
             if result.success:
-                all_entries.extend(
-                    self._prefix_file_info(entry, mount)
-                    for entry in result.entries
-                )
+                all_entries.extend(self._prefix_file_info(entry, mount) for entry in result.entries)
 
         return ListResult(
             success=True,
@@ -783,9 +768,7 @@ class VFS:
             path="/__trash__",
         )
 
-    async def restore_from_trash(
-        self, path: str, *, user_id: str | None = None
-    ) -> RestoreResult:
+    async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
         path = normalize_path(path)
         try:
             self._check_writable(path)
@@ -797,9 +780,7 @@ class VFS:
         if cap is None:
             raise CapabilityNotSupportedError(f"Mount at {mount.mount_path} does not support trash")
         async with self._session_for(mount) as sess:
-            result = await cap.restore_from_trash(
-                rel_path, session=sess, user_id=user_id
-            )
+            result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))

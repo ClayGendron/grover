@@ -83,9 +83,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
     def _require_user_id(user_id: str | None) -> str:
         """Raise if *user_id* is missing, empty, or contains unsafe characters."""
         if not user_id:
-            raise AuthenticationRequiredError(
-                "user_id is required for authenticated mount"
-            )
+            raise AuthenticationRequiredError("user_id is required for authenticated mount")
         if "/" in user_id or "\\" in user_id or "\0" in user_id or "@" in user_id:
             raise AuthenticationRequiredError("user_id contains invalid characters")
         if ".." in user_id:
@@ -125,7 +123,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         """Remove ``/{user_id}`` prefix from a stored path."""
         prefix = f"/{user_id}/"
         if path.startswith(prefix):
-            return "/" + path[len(prefix):]
+            return "/" + path[len(prefix) :]
         if path == f"/{user_id}":
             return "/"
         return path
@@ -169,16 +167,16 @@ class UserScopedFileSystem(DatabaseFileSystem):
         the user lacks the required permission.
         """
         if self._sharing is None:
-            raise PermissionError(
-                "Access denied: sharing is not configured"
-            )
+            raise PermissionError("Access denied: sharing is not configured")
         has_access = await self._sharing.check_permission(
-            session, stored_path, user_id, required=required,
+            session,
+            stored_path,
+            user_id,
+            required=required,
         )
         if not has_access:
             raise PermissionError(
-                f"Access denied: {user_id!r} does not have {required!r} "
-                f"permission on shared path"
+                f"Access denied: {user_id!r} does not have {required!r} permission on shared path"
             )
 
     # ------------------------------------------------------------------
@@ -231,61 +229,42 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # /@shared/{owner}/... — resolve to /{owner}/... and list
         owner = segments[1]
         sub_path = "/" + "/".join(segments[2:]) if len(segments) > 2 else "/"
-        stored_path = (
-            f"/{owner}{sub_path}" if sub_path != "/" else f"/{owner}"
-        )
+        stored_path = f"/{owner}{sub_path}" if sub_path != "/" else f"/{owner}"
         shared_prefix = f"/@shared/{owner}"
 
         # Fast path: directory-level share covers this path
         try:
-            await self._check_share_access(
-                session, stored_path, user_id, "read"
-            )
+            await self._check_share_access(session, stored_path, user_id, "read")
             result = await super().list_dir(stored_path, session=session)
 
-            result.path = (
-                shared_prefix + sub_path
-                if sub_path != "/"
-                else shared_prefix
-            )
+            result.path = shared_prefix + sub_path if sub_path != "/" else shared_prefix
             for entry in result.entries:
                 stripped = self._strip_user_prefix(entry.path, owner)
-                entry.path = (
-                    shared_prefix + stripped
-                    if stripped != "/"
-                    else shared_prefix
-                )
+                entry.path = shared_prefix + stripped if stripped != "/" else shared_prefix
             return result
 
         except PermissionError:
             pass  # Fall through to filtered listing
 
         # Filtered fallback: show only files/dirs with specific shares
-        shares = await self._sharing.list_shares_under_prefix(
-            session, user_id, stored_path
-        )
+        shares = await self._sharing.list_shares_under_prefix(session, user_id, stored_path)
         if not shares:
             raise PermissionError(
-                f"Access denied: {user_id!r} does not have 'read' "
-                f"permission on shared path"
+                f"Access denied: {user_id!r} does not have 'read' permission on shared path"
             )
 
         direct_files: set[str] = set()
         child_dirs: set[str] = set()
         prefix_with_slash = stored_path + "/"
         for share in shares:
-            remainder = share.path[len(prefix_with_slash):]
+            remainder = share.path[len(prefix_with_slash) :]
             if "/" in remainder:
                 child_dirs.add(remainder.split("/", 1)[0])
             else:
                 direct_files.add(remainder)
 
         entries: list[FileInfo] = []
-        base = (
-            shared_prefix
-            if sub_path == "/"
-            else f"{shared_prefix}{sub_path}"
-        )
+        base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
 
         for name in sorted(direct_files):
             file_stored = f"{stored_path}/{name}"
@@ -295,25 +274,25 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 info = None
             if info is not None:
                 stripped = self._strip_user_prefix(info.path, owner)
-                info.path = (
-                    shared_prefix + stripped
-                    if stripped != "/"
-                    else shared_prefix
-                )
+                info.path = shared_prefix + stripped if stripped != "/" else shared_prefix
                 entries.append(info)
             else:
-                entries.append(FileInfo(
-                    path=f"{base}/{name}",
-                    name=name,
-                    is_directory=False,
-                ))
+                entries.append(
+                    FileInfo(
+                        path=f"{base}/{name}",
+                        name=name,
+                        is_directory=False,
+                    )
+                )
 
         for name in sorted(child_dirs):
-            entries.append(FileInfo(
-                path=f"{base}/{name}",
-                name=name,
-                is_directory=True,
-            ))
+            entries.append(
+                FileInfo(
+                    path=f"{base}/{name}",
+                    name=name,
+                    is_directory=True,
+                )
+            )
 
         return ListResult(
             success=True,
@@ -364,8 +343,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
         if is_shared:
             await self._check_share_access(sess, stored, uid, "write")
         result = await super().write(
-            stored, content, created_by,
-            overwrite=overwrite, session=sess, owner_id=uid,
+            stored,
+            content,
+            created_by,
+            overwrite=overwrite,
+            session=sess,
+            owner_id=uid,
         )
         orig = path if is_shared else None
         result.file_path = self._restore_path(result.file_path, uid, orig)
@@ -389,7 +372,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         if is_shared:
             await self._check_share_access(sess, stored, uid, "write")
         result = await super().edit(
-            stored, old_string, new_string, replace_all, created_by,
+            stored,
+            old_string,
+            new_string,
+            replace_all,
+            created_by,
             session=sess,
         )
         orig = path if is_shared else None
@@ -430,7 +417,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         if is_shared:
             await self._check_share_access(sess, stored, uid, "write")
         created_dirs, error = await self.directories.mkdir(
-            sess, stored, parents, self.metadata.get_file, owner_id=uid,
+            sess,
+            stored,
+            parents,
+            self.metadata.get_file,
+            owner_id=uid,
         )
         if error is not None:
             return MkdirResult(success=False, message=error)
@@ -438,14 +429,17 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # For shared paths, display the @shared path; for own paths, strip prefix
         if is_shared:
             display_path = path
+
             def _display(d: str) -> str:
                 assert owner is not None
                 stripped = self._strip_user_prefix(d, owner)
                 return f"/@shared/{owner}{stripped}" if stripped != "/" else f"/@shared/{owner}"
         else:
             display_path = self._strip_user_prefix(stored, uid)
+
             def _display(d: str) -> str:
                 return self._strip_user_prefix(d, uid)
+
         if created_dirs:
             return MkdirResult(
                 success=True,
@@ -479,9 +473,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         result = await super().list_dir(stored, session=sess)
 
         result.path = self._restore_path(result.path, uid) or path
-        result.entries = [
-            self._restore_file_info(entry, uid) for entry in result.entries
-        ]
+        result.entries = [self._restore_file_info(entry, uid) for entry in result.entries]
 
         # At root, add virtual @shared/ entry
         if path == "/":
@@ -560,8 +552,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         if src_shared and not dest_shared:
             raise PermissionError("Cannot move shared files out of the owner's namespace")
         result = await super().move(
-            src_stored, dest_stored,
-            session=sess, follow=follow, sharing=self._sharing,
+            src_stored,
+            dest_stored,
+            session=sess,
+            follow=follow,
+            sharing=self._sharing,
         )
         src_orig = src if src_shared else None
         dest_orig = dest if dest_shared else None
@@ -607,8 +602,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 message=f"Source content not found: {src}",
             )
         result = await super().write(
-            dest_stored, content, "copy",
-            overwrite=True, session=sess, owner_id=uid,
+            dest_stored,
+            content,
+            "copy",
+            overwrite=True,
+            session=sess,
+            owner_id=uid,
         )
         dest_orig = dest if dest_shared else None
         result.file_path = self._restore_path(result.file_path, uid, dest_orig)
@@ -641,9 +640,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 e.path = shared_prefix + stripped if stripped != "/" else shared_prefix
         else:
             result.path = self._restore_path(result.path, uid) or path
-            result.entries = [
-                self._restore_file_info(e, uid) for e in result.entries
-            ]
+            result.entries = [self._restore_file_info(e, uid) for e in result.entries]
         return result
 
     async def grep(
@@ -674,9 +671,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # (super().grep calls self.glob() which would re-enter our override)
         resolved_glob_filter = glob_filter
         if glob_filter is not None:
-            glob_result = await super().glob(
-                glob_filter, stored, session=sess
-            )
+            glob_result = await super().glob(glob_filter, stored, session=sess)
             if not glob_result.success:
                 return GrepResult(
                     success=False,
@@ -691,9 +686,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             resolved_glob_filter = None
 
             # Get the list of candidate file paths from glob
-            candidate_paths = [
-                e.path for e in glob_result.entries if not e.is_directory
-            ]
+            candidate_paths = [e.path for e in glob_result.entries if not e.is_directory]
             if not candidate_paths:
                 return GrepResult(
                     success=True,
@@ -703,7 +696,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 )
 
         result = await super().grep(
-            pattern, stored,
+            pattern,
+            stored,
             glob_filter=resolved_glob_filter,
             case_sensitive=case_sensitive,
             fixed_string=fixed_string,
@@ -720,9 +714,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # If we pre-resolved a glob_filter, filter matches to only those
         # files that matched the glob
         if glob_filter is not None and not count_only:
-            result.matches = [
-                m for m in result.matches if m.file_path in candidate_paths
-            ]
+            result.matches = [m for m in result.matches if m.file_path in candidate_paths]
 
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
@@ -752,7 +744,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
         if is_shared:
             await self._check_share_access(sess, stored, uid, "read")
         result = await super().tree(
-            stored, max_depth=max_depth, session=sess,
+            stored,
+            max_depth=max_depth,
+            session=sess,
         )
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
@@ -762,9 +756,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 e.path = shared_prefix + stripped if stripped != "/" else shared_prefix
         else:
             result.path = self._restore_path(result.path, uid) or path
-            result.entries = [
-                self._restore_file_info(e, uid) for e in result.entries
-            ]
+            result.entries = [self._restore_file_info(e, uid) for e in result.entries]
         return result
 
     # ------------------------------------------------------------------
@@ -818,16 +810,17 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(sess, stored, uid, "write")
         # Call super() methods directly to avoid polymorphic dispatch
         # (restore_version calls self.get_version_content and self.write)
-        vc_result = await super().get_version_content(
-            stored, version, session=sess
-        )
+        vc_result = await super().get_version_content(stored, version, session=sess)
         if not vc_result.success or vc_result.content is None:
             return RestoreResult(
                 success=False,
                 message=f"Version {version} not found for {path}",
             )
         write_result = await super().write(
-            stored, vc_result.content, created_by="restore", session=sess,
+            stored,
+            vc_result.content,
+            created_by="restore",
+            session=sess,
         )
         orig = path if is_shared else None
         result = RestoreResult(
@@ -852,11 +845,10 @@ class UserScopedFileSystem(DatabaseFileSystem):
     ) -> ListResult:
         uid = self._require_user_id(user_id)
         result = await super().list_trash(
-            session=session, owner_id=uid,
+            session=session,
+            owner_id=uid,
         )
-        result.entries = [
-            self._restore_file_info(entry, uid) for entry in result.entries
-        ]
+        result.entries = [self._restore_file_info(entry, uid) for entry in result.entries]
         return result
 
     async def restore_from_trash(
@@ -870,7 +862,9 @@ class UserScopedFileSystem(DatabaseFileSystem):
         uid = self._require_user_id(user_id)
         stored = self._resolve_path(path, uid)
         result = await super().restore_from_trash(
-            stored, session=session, owner_id=uid,
+            stored,
+            session=session,
+            owner_id=uid,
         )
         result.file_path = self._restore_path(result.file_path, uid)
         return result
@@ -908,7 +902,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         stored = self._resolve_path(path, uid)
         sess = self._require_session(session)
         share_record = await self._sharing.create_share(
-            sess, stored, grantee_id, permission, uid,
+            sess,
+            stored,
+            grantee_id,
+            permission,
+            uid,
             expires_at=expires_at,
         )
         return ShareInfo(
@@ -993,12 +991,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 user_path = f"/@shared/{parts[0]}"
             else:
                 user_path = s.path
-            result.append(ShareInfo(
-                path=user_path,
-                grantee_id=s.grantee_id,
-                permission=s.permission,
-                granted_by=s.granted_by,
-                created_at=s.created_at,
-                expires_at=s.expires_at,
-            ))
+            result.append(
+                ShareInfo(
+                    path=user_path,
+                    grantee_id=s.grantee_id,
+                    permission=s.permission,
+                    granted_by=s.granted_by,
+                    created_at=s.created_at,
+                    expires_at=s.expires_at,
+                )
+            )
         return result

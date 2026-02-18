@@ -653,13 +653,9 @@ class TestGroverAsyncAuthenticatedMount:
     @pytest.mark.asyncio
     async def test_move_and_copy(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/src.md", "content", user_id="alice")
-        copy_result = await auth_grover.copy(
-            "/ws/src.md", "/ws/copy.md", user_id="alice"
-        )
+        copy_result = await auth_grover.copy("/ws/src.md", "/ws/copy.md", user_id="alice")
         assert copy_result.success is True
-        move_result = await auth_grover.move(
-            "/ws/src.md", "/ws/moved.md", user_id="alice"
-        )
+        move_result = await auth_grover.move("/ws/src.md", "/ws/moved.md", user_id="alice")
         assert move_result.success is True
         assert await auth_grover.exists("/ws/copy.md", user_id="alice")
         assert await auth_grover.exists("/ws/moved.md", user_id="alice")
@@ -669,9 +665,7 @@ class TestGroverAsyncSharing:
     @pytest.mark.asyncio
     async def test_share_file(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "shared", user_id="alice")
-        result = await auth_grover.share(
-            "/ws/notes.md", "bob", "read", user_id="alice"
-        )
+        result = await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
         assert result.success is True
         assert result.share is not None
         assert result.share.grantee_id == "bob"
@@ -711,9 +705,7 @@ class TestGroverAsyncSharing:
         assert result.shares[0].path == "/ws/@shared/alice/a.md"
 
     @pytest.mark.asyncio
-    async def test_share_requires_authenticated_mount(
-        self, workspace: Path, tmp_path: Path
-    ):
+    async def test_share_requires_authenticated_mount(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount(
@@ -728,9 +720,7 @@ class TestGroverAsyncSharing:
     @pytest.mark.asyncio
     async def test_share_invalid_permission_returns_failure(self, auth_grover: GroverAsync):
         await auth_grover.write("/ws/notes.md", "data", user_id="alice")
-        result = await auth_grover.share(
-            "/ws/notes.md", "bob", "execute", user_id="alice"
-        )
+        result = await auth_grover.share("/ws/notes.md", "bob", "execute", user_id="alice")
         assert result.success is False
         assert "permission" in result.message.lower()
 
@@ -739,8 +729,6 @@ class TestGroverAsyncSharing:
         """End-to-end: share → read via @shared path."""
         await auth_grover.write("/ws/notes.md", "secret", user_id="alice")
         await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
-        result = await auth_grover.read(
-            "/ws/@shared/alice/notes.md", user_id="bob"
-        )
+        result = await auth_grover.read("/ws/@shared/alice/notes.md", user_id="bob")
         assert result.success is True
         assert result.content == "secret"

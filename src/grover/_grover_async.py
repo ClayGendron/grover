@@ -506,13 +506,10 @@ class GroverAsync:
     ) -> list[dict[str, Any]]:
         result = await self._vfs.list_dir(path, user_id=user_id)
         return [
-            {"path": e.path, "name": e.name, "is_directory": e.is_directory}
-            for e in result.entries
+            {"path": e.path, "name": e.name, "is_directory": e.is_directory} for e in result.entries
         ]
 
-    async def exists(
-        self, path: str, *, user_id: str | None = None
-    ) -> bool:
+    async def exists(self, path: str, *, user_id: str | None = None) -> bool:
         return await self._vfs.exists(path, user_id=user_id)
 
     async def move(
@@ -523,9 +520,7 @@ class GroverAsync:
         except Exception as e:
             return MoveResult(success=False, message=f"Move failed: {e}")
 
-    async def copy(
-        self, src: str, dest: str, *, user_id: str | None = None
-    ) -> WriteResult:
+    async def copy(self, src: str, dest: str, *, user_id: str | None = None) -> WriteResult:
         try:
             return await self._vfs.copy(src, dest, user_id=user_id)
         except Exception as e:
@@ -595,9 +590,7 @@ class GroverAsync:
     # Version operations (normalize exceptions to Results)
     # ------------------------------------------------------------------
 
-    async def list_versions(
-        self, path: str, *, user_id: str | None = None
-    ) -> ListVersionsResult:
+    async def list_versions(self, path: str, *, user_id: str | None = None) -> ListVersionsResult:
         try:
             return await self._vfs.list_versions(path, user_id=user_id)
         except CapabilityNotSupportedError as e:
@@ -626,9 +619,7 @@ class GroverAsync:
     async def list_trash(self, *, user_id: str | None = None) -> Any:
         return await self._vfs.list_trash(user_id=user_id)
 
-    async def restore_from_trash(
-        self, path: str, *, user_id: str | None = None
-    ) -> RestoreResult:
+    async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
         try:
             return await self._vfs.restore_from_trash(path, user_id=user_id)
         except CapabilityNotSupportedError as e:
@@ -721,9 +712,7 @@ class GroverAsync:
 
         async with self._vfs._session_for(mount) as sess:
             assert sess is not None
-            removed = await cap.unshare(
-                rel_path, grantee_id, user_id=user_id, session=sess
-            )
+            removed = await cap.unshare(rel_path, grantee_id, user_id=user_id, session=sess)
 
         if removed:
             return ShareResult(
@@ -759,9 +748,7 @@ class GroverAsync:
 
         async with self._vfs._session_for(mount) as sess:
             assert sess is not None
-            shares = await cap.list_shares_on_path(
-                rel_path, user_id=user_id, session=sess
-            )
+            shares = await cap.list_shares_on_path(rel_path, user_id=user_id, session=sess)
 
         return ListSharesResult(
             success=True,
@@ -792,9 +779,7 @@ class GroverAsync:
                 continue
             async with self._vfs._session_for(mount) as sess:
                 assert sess is not None
-                shares = await cap.list_shared_with_me(
-                    user_id=user_id, session=sess
-                )
+                shares = await cap.list_shared_with_me(user_id=user_id, session=sess)
             for s in shares:
                 # Backend returns paths like /@shared/alice/a.md — prepend mount
                 full_path = mount.mount_path + s.path if s.path != "/" else mount.mount_path

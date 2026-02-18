@@ -54,9 +54,7 @@ def sharing() -> SharingService:
 
 
 @pytest.fixture
-def vfs_with_sharing(
-    session_factory, sharing: SharingService, engine: AsyncEngine
-) -> VFS:
+def vfs_with_sharing(session_factory, sharing: SharingService, engine: AsyncEngine) -> VFS:
     """VFS with a UserScopedFileSystem backend that has a SharingService."""
     from grover.events import EventBus
 
@@ -83,9 +81,7 @@ class TestMoveFileFollow:
     """Test follow parameter on the operations.py move_file function."""
 
     @pytest.mark.asyncio
-    async def test_move_default_clean_break(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_default_clean_break(self, dfs: DatabaseFileSystem, session_factory):
         """follow=False creates a new file record at dest, source soft-deleted."""
         async with session_factory() as sess:
             await dfs.write("/old.py", "content", session=sess)
@@ -107,9 +103,7 @@ class TestMoveFileFollow:
             assert old_after is None  # Not found (in trash)
 
     @pytest.mark.asyncio
-    async def test_move_follow_same_file_record(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_follow_same_file_record(self, dfs: DatabaseFileSystem, session_factory):
         """follow=True keeps the same file record (in-place rename)."""
         async with session_factory() as sess:
             await dfs.write("/old.py", "content", session=sess)
@@ -117,9 +111,7 @@ class TestMoveFileFollow:
             assert old_file is not None
             old_id = old_file.id
 
-            result = await dfs.move(
-                "/old.py", "/new.py", session=sess, follow=True
-            )
+            result = await dfs.move("/old.py", "/new.py", session=sess, follow=True)
             assert result.success is True
 
             # Same file record at new path
@@ -128,9 +120,7 @@ class TestMoveFileFollow:
             assert new_file.id == old_id
 
     @pytest.mark.asyncio
-    async def test_move_follow_versions_preserved(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_follow_versions_preserved(self, dfs: DatabaseFileSystem, session_factory):
         """follow=True preserves version history at the new path."""
         async with session_factory() as sess:
             await dfs.write("/versioned.py", "v1", session=sess)
@@ -140,9 +130,7 @@ class TestMoveFileFollow:
             assert versions_before.success
             assert len(versions_before.versions) == 2
 
-            result = await dfs.move(
-                "/versioned.py", "/renamed.py", session=sess, follow=True
-            )
+            result = await dfs.move("/versioned.py", "/renamed.py", session=sess, follow=True)
             assert result.success is True
 
             versions_after = await dfs.list_versions("/renamed.py", session=sess)
@@ -158,9 +146,7 @@ class TestMoveFileFollow:
             await dfs.write("/old.py", "v1", session=sess)
             await dfs.write("/old.py", "v2", session=sess)
 
-            result = await dfs.move(
-                "/old.py", "/new.py", session=sess, follow=False
-            )
+            result = await dfs.move("/old.py", "/new.py", session=sess, follow=False)
             assert result.success is True
 
             versions = await dfs.list_versions("/new.py", session=sess)
@@ -175,9 +161,7 @@ class TestMoveFileFollow:
         """follow=True with sharing updates share paths."""
         async with session_factory() as sess:
             await dfs.write("/alice/doc.md", "data", session=sess)
-            await sharing.create_share(
-                sess, "/alice/doc.md", "bob", "read", "alice"
-            )
+            await sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
             result = await dfs.move(
                 "/alice/doc.md",
@@ -204,9 +188,7 @@ class TestMoveFileFollow:
         """follow=False does NOT update share paths — they become stale."""
         async with session_factory() as sess:
             await dfs.write("/alice/doc.md", "data", session=sess)
-            await sharing.create_share(
-                sess, "/alice/doc.md", "bob", "read", "alice"
-            )
+            await sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
             result = await dfs.move(
                 "/alice/doc.md",
@@ -225,9 +207,7 @@ class TestMoveFileFollow:
             assert len(new_shares) == 0
 
     @pytest.mark.asyncio
-    async def test_move_follow_directory(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_follow_directory(self, dfs: DatabaseFileSystem, session_factory):
         """follow=True on a directory moves all children in-place."""
         async with session_factory() as sess:
             await dfs.mkdir("/src", session=sess)
@@ -238,9 +218,7 @@ class TestMoveFileFollow:
             assert a_file is not None
             a_id = a_file.id
 
-            result = await dfs.move(
-                "/src", "/dst", session=sess, follow=True
-            )
+            result = await dfs.move("/src", "/dst", session=sess, follow=True)
             assert result.success is True
 
             # Children moved in-place (same IDs)
@@ -261,9 +239,7 @@ class TestMoveFileFollow:
         async with session_factory() as sess:
             await dfs.write("/src.py", "content", session=sess)
 
-            result = await dfs.move(
-                "/src.py", "/deep/nested/dest.py", session=sess, follow=True
-            )
+            result = await dfs.move("/src.py", "/deep/nested/dest.py", session=sess, follow=True)
             assert result.success is True
 
             # Parent directories should exist
@@ -281,9 +257,7 @@ class TestMoveFileFollow:
             assert r.content == "content"
 
     @pytest.mark.asyncio
-    async def test_move_no_follow_directory(
-        self, dfs: DatabaseFileSystem, session_factory
-    ):
+    async def test_move_no_follow_directory(self, dfs: DatabaseFileSystem, session_factory):
         """follow=False on a directory creates new records for children."""
         async with session_factory() as sess:
             await dfs.mkdir("/src", session=sess)
@@ -293,9 +267,7 @@ class TestMoveFileFollow:
             assert a_file is not None
             a_id = a_file.id
 
-            result = await dfs.move(
-                "/src", "/dst", session=sess, follow=False
-            )
+            result = await dfs.move("/src", "/dst", session=sess, follow=False)
             assert result.success is True
 
             # New record at dest (different ID)
@@ -316,9 +288,7 @@ class TestMoveFileFollow:
         async with session_factory() as sess:
             await dfs.write("/alice/src.md", "source", session=sess)
             await dfs.write("/alice/dst.md", "dest", session=sess)
-            await sharing.create_share(
-                sess, "/alice/src.md", "bob", "read", "alice"
-            )
+            await sharing.create_share(sess, "/alice/src.md", "bob", "read", "alice")
 
             result = await dfs.move(
                 "/alice/src.md",
@@ -334,7 +304,6 @@ class TestMoveFileFollow:
             assert len(dst_shares) == 1
             assert dst_shares[0].grantee_id == "bob"
 
-
     @pytest.mark.asyncio
     async def test_move_no_follow_directory_preserves_is_directory(
         self, dfs: DatabaseFileSystem, session_factory
@@ -345,9 +314,7 @@ class TestMoveFileFollow:
             await dfs.mkdir("/src/sub", session=sess)
             await dfs.write("/src/sub/file.py", "code", session=sess)
 
-            result = await dfs.move(
-                "/src", "/dst", session=sess, follow=False
-            )
+            result = await dfs.move("/src", "/dst", session=sess, follow=False)
             assert result.success is True
 
             # Subdirectory should still be a directory
@@ -378,9 +345,7 @@ class TestVFSMoveFollow:
     async def test_vfs_move_follow_authenticated(self, vfs_with_sharing: VFS):
         vfs = vfs_with_sharing
         await vfs.write("/ws/notes.md", "data", user_id="alice")
-        result = await vfs.move(
-            "/ws/notes.md", "/ws/moved.md", user_id="alice", follow=True
-        )
+        result = await vfs.move("/ws/notes.md", "/ws/moved.md", user_id="alice", follow=True)
         assert result.success is True
         assert result.new_path == "/ws/moved.md"
 
@@ -402,26 +367,18 @@ class TestVFSMoveFollow:
         async with vfs._session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
-            await backend._sharing.create_share(
-                sess, "/alice/doc.md", "bob", "read", "alice"
-            )
+            await backend._sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
-        result = await vfs.move(
-            "/ws/doc.md", "/ws/renamed.md", user_id="alice", follow=True
-        )
+        result = await vfs.move("/ws/doc.md", "/ws/renamed.md", user_id="alice", follow=True)
         assert result.success is True
 
         # Verify share updated
         async with vfs._session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
-            new_shares = await backend._sharing.list_shares_on_path(
-                sess, "/alice/renamed.md"
-            )
+            new_shares = await backend._sharing.list_shares_on_path(sess, "/alice/renamed.md")
             assert len(new_shares) == 1
-            old_shares = await backend._sharing.list_shares_on_path(
-                sess, "/alice/doc.md"
-            )
+            old_shares = await backend._sharing.list_shares_on_path(sess, "/alice/doc.md")
             assert len(old_shares) == 0
 
     @pytest.mark.asyncio
@@ -429,9 +386,7 @@ class TestVFSMoveFollow:
         """Default move (follow=False) creates clean break."""
         vfs = vfs_with_sharing
         await vfs.write("/ws/old.md", "old", user_id="alice")
-        result = await vfs.move(
-            "/ws/old.md", "/ws/new.md", user_id="alice"
-        )
+        result = await vfs.move("/ws/old.md", "/ws/new.md", user_id="alice")
         assert result.success is True
 
         r = await vfs.read("/ws/new.md", user_id="alice")

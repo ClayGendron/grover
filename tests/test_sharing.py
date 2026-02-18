@@ -25,9 +25,7 @@ def sharing() -> SharingService:
 
 
 class TestCreateShare:
-    async def test_create_share(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_create_share(self, sharing: SharingService, async_session: AsyncSession):
         share = await sharing.create_share(
             async_session,
             "/alice/notes.md",
@@ -41,9 +39,7 @@ class TestCreateShare:
         assert share.granted_by == "alice"
         assert share.id  # UUID set
 
-    async def test_create_share_write(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_create_share_write(self, sharing: SharingService, async_session: AsyncSession):
         share = await sharing.create_share(
             async_session,
             "/alice/project/",
@@ -86,9 +82,7 @@ class TestCreateShare:
 
 
 class TestRemoveShare:
-    async def test_remove_share(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_remove_share(self, sharing: SharingService, async_session: AsyncSession):
         await sharing.create_share(
             async_session,
             "/alice/notes.md",
@@ -96,17 +90,13 @@ class TestRemoveShare:
             permission="read",
             granted_by="alice",
         )
-        removed = await sharing.remove_share(
-            async_session, "/alice/notes.md", "bob"
-        )
+        removed = await sharing.remove_share(async_session, "/alice/notes.md", "bob")
         assert removed is True
 
     async def test_remove_share_nonexistent(
         self, sharing: SharingService, async_session: AsyncSession
     ):
-        removed = await sharing.remove_share(
-            async_session, "/nonexistent.md", "bob"
-        )
+        removed = await sharing.remove_share(async_session, "/nonexistent.md", "bob")
         assert removed is False
 
 
@@ -116,9 +106,7 @@ class TestRemoveShare:
 
 
 class TestListSharesOnPath:
-    async def test_list_shares_on_path(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_list_shares_on_path(self, sharing: SharingService, async_session: AsyncSession):
         await sharing.create_share(
             async_session,
             "/alice/notes.md",
@@ -133,9 +121,7 @@ class TestListSharesOnPath:
             permission="write",
             granted_by="alice",
         )
-        shares = await sharing.list_shares_on_path(
-            async_session, "/alice/notes.md"
-        )
+        shares = await sharing.list_shares_on_path(async_session, "/alice/notes.md")
         assert len(shares) == 2
         grantees = {s.grantee_id for s in shares}
         assert grantees == {"bob", "charlie"}
@@ -143,9 +129,7 @@ class TestListSharesOnPath:
     async def test_list_shares_on_path_empty(
         self, sharing: SharingService, async_session: AsyncSession
     ):
-        shares = await sharing.list_shares_on_path(
-            async_session, "/nobody/file.md"
-        )
+        shares = await sharing.list_shares_on_path(async_session, "/nobody/file.md")
         assert shares == []
 
 
@@ -155,9 +139,7 @@ class TestListSharesOnPath:
 
 
 class TestListSharedWith:
-    async def test_list_shared_with(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_list_shared_with(self, sharing: SharingService, async_session: AsyncSession):
         await sharing.create_share(
             async_session,
             "/alice/a.md",
@@ -202,9 +184,7 @@ class TestListSharesUnderPrefix:
             permission="read",
             granted_by="alice",
         )
-        shares = await sharing.list_shares_under_prefix(
-            async_session, "bob", "/alice"
-        )
+        shares = await sharing.list_shares_under_prefix(async_session, "bob", "/alice")
         assert len(shares) == 2
         paths = {s.path for s in shares}
         assert paths == {"/alice/doc1.md", "/alice/doc2.md"}
@@ -213,9 +193,7 @@ class TestListSharesUnderPrefix:
         self, sharing: SharingService, async_session: AsyncSession
     ):
         """Returns empty list when no shares exist under prefix."""
-        shares = await sharing.list_shares_under_prefix(
-            async_session, "bob", "/alice"
-        )
+        shares = await sharing.list_shares_under_prefix(async_session, "bob", "/alice")
         assert shares == []
 
     async def test_list_shares_under_prefix_excludes_expired(
@@ -238,9 +216,7 @@ class TestListSharesUnderPrefix:
             permission="read",
             granted_by="alice",
         )
-        shares = await sharing.list_shares_under_prefix(
-            async_session, "bob", "/alice"
-        )
+        shares = await sharing.list_shares_under_prefix(async_session, "bob", "/alice")
         assert len(shares) == 1
         assert shares[0].path == "/alice/valid.md"
 
@@ -262,9 +238,7 @@ class TestListSharesUnderPrefix:
             permission="read",
             granted_by="alice",
         )
-        shares = await sharing.list_shares_under_prefix(
-            async_session, "bob", "/alice"
-        )
+        shares = await sharing.list_shares_under_prefix(async_session, "bob", "/alice")
         assert len(shares) == 1
         assert shares[0].path == "/alice/doc.md"
 
@@ -286,9 +260,7 @@ class TestListSharesUnderPrefix:
             permission="read",
             granted_by="alice",
         )
-        shares = await sharing.list_shares_under_prefix(
-            async_session, "bob", "/alice"
-        )
+        shares = await sharing.list_shares_under_prefix(async_session, "bob", "/alice")
         assert len(shares) == 1
         assert shares[0].path == "/alice/doc.md"
 
@@ -312,9 +284,7 @@ class TestListSharesUnderPrefix:
             permission="read",
             granted_by="alice",
         )
-        shares = await sharing.list_shares_under_prefix(
-            async_session, "bob", "/alice/my_project"
-        )
+        shares = await sharing.list_shares_under_prefix(async_session, "bob", "/alice/my_project")
         assert len(shares) == 1
         assert shares[0].path == "/alice/my_project/file.py"
 
@@ -325,9 +295,7 @@ class TestListSharesUnderPrefix:
 
 
 class TestCheckPermission:
-    async def test_exact_match(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_exact_match(self, sharing: SharingService, async_session: AsyncSession):
         await sharing.create_share(
             async_session,
             "/alice/notes.md",
@@ -335,14 +303,10 @@ class TestCheckPermission:
             permission="read",
             granted_by="alice",
         )
-        result = await sharing.check_permission(
-            async_session, "/alice/notes.md", "bob"
-        )
+        result = await sharing.check_permission(async_session, "/alice/notes.md", "bob")
         assert result is True
 
-    async def test_directory_inherit(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_directory_inherit(self, sharing: SharingService, async_session: AsyncSession):
         """Share on /alice/projects/ grants /alice/projects/docs/file.md."""
         await sharing.create_share(
             async_session,
@@ -356,12 +320,8 @@ class TestCheckPermission:
         )
         assert result is True
 
-    async def test_no_match(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
-        result = await sharing.check_permission(
-            async_session, "/alice/secret.md", "bob"
-        )
+    async def test_no_match(self, sharing: SharingService, async_session: AsyncSession):
+        result = await sharing.check_permission(async_session, "/alice/secret.md", "bob")
         assert result is False
 
     async def test_write_required_read_share(
@@ -411,9 +371,7 @@ class TestCheckPermission:
         )
         assert result is True
 
-    async def test_expired_share(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_expired_share(self, sharing: SharingService, async_session: AsyncSession):
         """Expired shares are ignored."""
         expired = datetime.now(UTC) - timedelta(hours=1)
         await sharing.create_share(
@@ -424,14 +382,10 @@ class TestCheckPermission:
             granted_by="alice",
             expires_at=expired,
         )
-        result = await sharing.check_permission(
-            async_session, "/alice/notes.md", "bob"
-        )
+        result = await sharing.check_permission(async_session, "/alice/notes.md", "bob")
         assert result is False
 
-    async def test_not_yet_expired(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_not_yet_expired(self, sharing: SharingService, async_session: AsyncSession):
         """Non-expired shares are valid."""
         future = datetime.now(UTC) + timedelta(hours=1)
         await sharing.create_share(
@@ -442,9 +396,7 @@ class TestCheckPermission:
             granted_by="alice",
             expires_at=future,
         )
-        result = await sharing.check_permission(
-            async_session, "/alice/notes.md", "bob"
-        )
+        result = await sharing.check_permission(async_session, "/alice/notes.md", "bob")
         assert result is True
 
     async def test_root_share_grants_all(
@@ -458,9 +410,7 @@ class TestCheckPermission:
             permission="read",
             granted_by="alice",
         )
-        result = await sharing.check_permission(
-            async_session, "/alice/deep/nested/file.md", "bob"
-        )
+        result = await sharing.check_permission(async_session, "/alice/deep/nested/file.md", "bob")
         assert result is True
 
 
@@ -470,9 +420,7 @@ class TestCheckPermission:
 
 
 class TestUpdateSharePaths:
-    async def test_update_share_paths(
-        self, sharing: SharingService, async_session: AsyncSession
-    ):
+    async def test_update_share_paths(self, sharing: SharingService, async_session: AsyncSession):
         await sharing.create_share(
             async_session,
             "/alice/old/notes.md",
@@ -480,9 +428,7 @@ class TestUpdateSharePaths:
             permission="read",
             granted_by="alice",
         )
-        count = await sharing.update_share_paths(
-            async_session, "/alice/old", "/alice/new"
-        )
+        count = await sharing.update_share_paths(async_session, "/alice/old", "/alice/new")
         assert count == 1
         shares = await sharing.list_shared_with(async_session, "bob")
         assert shares[0].path == "/alice/new/notes.md"
@@ -490,9 +436,7 @@ class TestUpdateSharePaths:
     async def test_update_share_paths_no_matches(
         self, sharing: SharingService, async_session: AsyncSession
     ):
-        count = await sharing.update_share_paths(
-            async_session, "/nonexistent", "/other"
-        )
+        count = await sharing.update_share_paths(async_session, "/nonexistent", "/other")
         assert count == 0
 
     async def test_update_share_paths_exact_match(
@@ -531,13 +475,9 @@ class TestUpdateSharePaths:
             permission="write",
             granted_by="alice",
         )
-        count = await sharing.update_share_paths(
-            async_session, "/alice/project", "/alice/renamed"
-        )
+        count = await sharing.update_share_paths(async_session, "/alice/project", "/alice/renamed")
         assert count == 2
         bob_shares = await sharing.list_shared_with(async_session, "bob")
         assert bob_shares[0].path == "/alice/renamed"
-        charlie_shares = await sharing.list_shared_with(
-            async_session, "charlie"
-        )
+        charlie_shares = await sharing.list_shared_with(async_session, "charlie")
         assert charlie_shares[0].path == "/alice/renamed/src/main.py"
