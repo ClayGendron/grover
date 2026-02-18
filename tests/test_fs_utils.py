@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from grover.fs.types import ReadResult
 from grover.fs.utils import (
     block_anchor_replacer,
@@ -32,34 +34,32 @@ from grover.fs.utils import (
 
 
 class TestNormalizePath:
-    def test_empty(self):
-        assert normalize_path("") == "/"
-
-    def test_no_leading_slash(self):
-        assert normalize_path("foo.txt") == "/foo.txt"
-
-    def test_double_slashes(self):
-        assert normalize_path("/foo//bar.txt") == "/foo/bar.txt"
-
-    def test_dotdot(self):
-        assert normalize_path("/foo/../bar.txt") == "/bar.txt"
-
-    def test_trailing_slash(self):
-        assert normalize_path("/foo/") == "/foo"
-
-    def test_root(self):
-        assert normalize_path("/") == "/"
+    @pytest.mark.parametrize(
+        ("input_path", "expected"),
+        [
+            pytest.param("", "/", id="empty"),
+            pytest.param("foo.txt", "/foo.txt", id="no-leading-slash"),
+            pytest.param("/foo//bar.txt", "/foo/bar.txt", id="double-slashes"),
+            pytest.param("/foo/../bar.txt", "/bar.txt", id="dotdot"),
+            pytest.param("/foo/", "/foo", id="trailing-slash"),
+            pytest.param("/", "/", id="root"),
+        ],
+    )
+    def test_normalize(self, input_path: str, expected: str):
+        assert normalize_path(input_path) == expected
 
 
 class TestSplitPath:
-    def test_file(self):
-        assert split_path("/foo/bar.txt") == ("/foo", "bar.txt")
-
-    def test_root_file(self):
-        assert split_path("/foo.txt") == ("/", "foo.txt")
-
-    def test_root(self):
-        assert split_path("/") == ("/", "")
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            pytest.param("/foo/bar.txt", ("/foo", "bar.txt"), id="nested-file"),
+            pytest.param("/foo.txt", ("/", "foo.txt"), id="root-file"),
+            pytest.param("/", ("/", ""), id="root"),
+        ],
+    )
+    def test_split(self, path: str, expected: tuple[str, str]):
+        assert split_path(path) == expected
 
 
 class TestValidatePath:
@@ -68,29 +68,20 @@ class TestValidatePath:
         assert ok is True
         assert msg == ""
 
-    def test_null_byte(self):
-        ok, msg = validate_path("/hello\x00.txt")
+    @pytest.mark.parametrize(
+        ("path", "expected_msg"),
+        [
+            pytest.param("/hello\x00.txt", "null", id="null-byte"),
+            pytest.param("/" + "a" * 4096, "long", id="path-too-long"),
+            pytest.param("/CON.txt", "Reserved", id="reserved-name"),
+            pytest.param("/NUL", "Reserved", id="reserved-no-ext"),
+            pytest.param("/" + "a" * 256, "Filename too long", id="filename-too-long"),
+        ],
+    )
+    def test_invalid(self, path: str, expected_msg: str):
+        ok, msg = validate_path(path)
         assert ok is False
-        assert "null" in msg.lower()
-
-    def test_too_long(self):
-        ok, msg = validate_path("/" + "a" * 4096)
-        assert ok is False
-        assert "long" in msg.lower()
-
-    def test_reserved_name(self):
-        ok, msg = validate_path("/CON.txt")
-        assert ok is False
-        assert "Reserved" in msg
-
-    def test_reserved_name_no_ext(self):
-        ok, _msg = validate_path("/NUL")
-        assert ok is False
-
-    def test_long_filename(self):
-        ok, msg = validate_path("/" + "a" * 256)
-        assert ok is False
-        assert "Filename too long" in msg
+        assert expected_msg.lower() in msg.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -99,35 +90,32 @@ class TestValidatePath:
 
 
 class TestIsTextFile:
-    def test_python(self):
-        assert is_text_file("main.py") is True
-
-    def test_json(self):
-        assert is_text_file("config.json") is True
-
-    def test_makefile(self):
-        assert is_text_file("Makefile") is True
-
-    def test_dotfile(self):
-        assert is_text_file(".gitignore") is True
-
-    def test_binary_ext(self):
-        assert is_text_file("image.png") is False
-
-    def test_unknown_ext(self):
-        assert is_text_file("data.xyz") is False
+    @pytest.mark.parametrize(
+        ("filename", "expected"),
+        [
+            pytest.param("main.py", True, id="python"),
+            pytest.param("config.json", True, id="json"),
+            pytest.param("Makefile", True, id="makefile"),
+            pytest.param(".gitignore", True, id="dotfile"),
+            pytest.param("image.png", False, id="binary-ext"),
+            pytest.param("data.xyz", False, id="unknown-ext"),
+        ],
+    )
+    def test_is_text(self, filename: str, expected: bool):
+        assert is_text_file(filename) is expected
 
 
 class TestGuessMimeType:
-    def test_python(self):
-        mime = guess_mime_type("main.py")
-        assert "python" in mime
-
-    def test_json(self):
-        assert "json" in guess_mime_type("data.json")
-
-    def test_unknown(self):
-        assert guess_mime_type("thing.xyz123") == "text/plain"
+    @pytest.mark.parametrize(
+        ("filename", "expected_substr"),
+        [
+            pytest.param("main.py", "python", id="python"),
+            pytest.param("data.json", "json", id="json"),
+            pytest.param("thing.xyz123", "text/plain", id="unknown"),
+        ],
+    )
+    def test_mime(self, filename: str, expected_substr: str):
+        assert expected_substr in guess_mime_type(filename)
 
 
 class TestIsBinaryFile:

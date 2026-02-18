@@ -48,48 +48,75 @@ class TestRefCreation:
 
 
 class TestRefImmutability:
-    def test_cannot_set_path(self):
-        r = Ref(path="/foo.txt")
-        with pytest.raises(AttributeError):
-            r.path = "/bar.txt"  # type: ignore[misc]
-
-    def test_cannot_set_version(self):
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("path", "/bar.txt", id="path"),
+            pytest.param("version", 2, id="version"),
+            pytest.param("line_start", 5, id="line_start"),
+        ],
+    )
+    def test_cannot_set_field(self, field: str, value: object):
         r = Ref(path="/foo.txt", version=1)
         with pytest.raises(AttributeError):
-            r.version = 2  # type: ignore[misc]
+            setattr(r, field, value)
 
-    def test_cannot_set_line_start(self):
-        r = Ref(path="/foo.txt")
-        with pytest.raises(AttributeError):
-            r.line_start = 5  # type: ignore[misc]
-
-    def test_metadata_dict_is_mutable(self):
-        """Metadata dict itself can be mutated (frozen only protects attribute rebinding)."""
+    def test_metadata_dict_is_immutable(self):
+        """Metadata is wrapped in MappingProxyType — truly read-only."""
         r = Ref(path="/foo.txt", metadata={"a": 1})
-        r.metadata["b"] = 2
-        assert r.metadata == {"a": 1, "b": 2}
+        with pytest.raises(TypeError):
+            r.metadata["b"] = 2  # type: ignore[index]
+
+    def test_metadata_readable_after_creation(self):
+        """Metadata values are still readable through the proxy."""
+        r = Ref(path="/foo.txt", metadata={"a": 1, "b": "two"})
+        assert r.metadata["a"] == 1
+        assert r.metadata["b"] == "two"
+        assert len(r.metadata) == 2
+
+    def test_metadata_compares_equal_to_dict(self):
+        """MappingProxyType compares equal to an equivalent dict."""
+        r = Ref(path="/foo.txt", metadata={"x": 42})
+        assert r.metadata == {"x": 42}
 
 
 class TestRefEquality:
-    def test_equal_refs(self):
-        a = Ref(path="/foo.txt", version=1)
-        b = Ref(path="/foo.txt", version=1)
-        assert a == b
-
-    def test_different_path(self):
-        a = Ref(path="/foo.txt")
-        b = Ref(path="/bar.txt")
-        assert a != b
-
-    def test_different_version(self):
-        a = Ref(path="/foo.txt", version=1)
-        b = Ref(path="/foo.txt", version=2)
-        assert a != b
-
-    def test_metadata_excluded_from_equality(self):
-        a = Ref(path="/foo.txt", metadata={"x": 1})
-        b = Ref(path="/foo.txt", metadata={"y": 2})
-        assert a == b
+    @pytest.mark.parametrize(
+        ("a_kwargs", "b_kwargs", "expected_equal"),
+        [
+            pytest.param(
+                {"path": "/foo.txt", "version": 1},
+                {"path": "/foo.txt", "version": 1},
+                True,
+                id="equal-refs",
+            ),
+            pytest.param(
+                {"path": "/foo.txt"},
+                {"path": "/bar.txt"},
+                False,
+                id="different-path",
+            ),
+            pytest.param(
+                {"path": "/foo.txt", "version": 1},
+                {"path": "/foo.txt", "version": 2},
+                False,
+                id="different-version",
+            ),
+            pytest.param(
+                {"path": "/foo.txt", "metadata": {"x": 1}},
+                {"path": "/foo.txt", "metadata": {"y": 2}},
+                True,
+                id="metadata-excluded",
+            ),
+        ],
+    )
+    def test_equality(
+        self,
+        a_kwargs: dict,
+        b_kwargs: dict,
+        expected_equal: bool,
+    ):
+        assert (Ref(**a_kwargs) == Ref(**b_kwargs)) is expected_equal
 
     def test_metadata_excluded_from_hash(self):
         a = Ref(path="/foo.txt", metadata={"x": 1})
@@ -129,53 +156,36 @@ class TestFileRef:
 
 
 class TestNormalizePath:
-    def test_empty_string(self):
-        assert normalize_path("") == "/"
-
-    def test_bare_filename(self):
-        assert normalize_path("foo.txt") == "/foo.txt"
-
-    def test_leading_slash(self):
-        assert normalize_path("/foo.txt") == "/foo.txt"
-
-    def test_double_slashes(self):
-        assert normalize_path("/foo//bar.txt") == "/foo/bar.txt"
-
-    def test_dotdot(self):
-        assert normalize_path("/foo/../bar.txt") == "/bar.txt"
-
-    def test_dot(self):
-        assert normalize_path("/foo/./bar.txt") == "/foo/bar.txt"
-
-    def test_trailing_slash(self):
-        assert normalize_path("/foo/") == "/foo"
-
-    def test_root(self):
-        assert normalize_path("/") == "/"
-
-    def test_whitespace_stripped(self):
-        assert normalize_path("  /foo.txt  ") == "/foo.txt"
-
-    def test_dotdot_beyond_root(self):
-        """Traversal beyond root clamps to root (posixpath behavior)."""
-        assert normalize_path("/a/../../b") == "/b"
-
-    def test_deeply_nested_dotdot_beyond_root(self):
-        assert normalize_path("/../../etc/passwd") == "/etc/passwd"
-
-    def test_whitespace_only(self):
-        assert normalize_path("   ") == "/"
+    @pytest.mark.parametrize(
+        ("input_path", "expected"),
+        [
+            pytest.param("", "/", id="empty-string"),
+            pytest.param("foo.txt", "/foo.txt", id="bare-filename"),
+            pytest.param("/foo.txt", "/foo.txt", id="leading-slash"),
+            pytest.param("/foo//bar.txt", "/foo/bar.txt", id="double-slashes"),
+            pytest.param("/foo/../bar.txt", "/bar.txt", id="dotdot"),
+            pytest.param("/foo/./bar.txt", "/foo/bar.txt", id="dot"),
+            pytest.param("/foo/", "/foo", id="trailing-slash"),
+            pytest.param("/", "/", id="root"),
+            pytest.param("  /foo.txt  ", "/foo.txt", id="whitespace-stripped"),
+            pytest.param("/a/../../b", "/b", id="dotdot-beyond-root"),
+            pytest.param("/../../etc/passwd", "/etc/passwd", id="deeply-nested-dotdot"),
+            pytest.param("   ", "/", id="whitespace-only"),
+        ],
+    )
+    def test_normalize(self, input_path: str, expected: str):
+        assert normalize_path(input_path) == expected
 
 
 class TestSplitPath:
-    def test_nested_file(self):
-        assert split_path("/foo/bar.txt") == ("/foo", "bar.txt")
-
-    def test_root_file(self):
-        assert split_path("/foo.txt") == ("/", "foo.txt")
-
-    def test_root(self):
-        assert split_path("/") == ("/", "")
-
-    def test_normalizes_before_split(self):
-        assert split_path("foo//bar.txt") == ("/foo", "bar.txt")
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            pytest.param("/foo/bar.txt", ("/foo", "bar.txt"), id="nested-file"),
+            pytest.param("/foo.txt", ("/", "foo.txt"), id="root-file"),
+            pytest.param("/", ("/", ""), id="root"),
+            pytest.param("foo//bar.txt", ("/foo", "bar.txt"), id="normalizes-first"),
+        ],
+    )
+    def test_split(self, path: str, expected: tuple[str, str]):
+        assert split_path(path) == expected
