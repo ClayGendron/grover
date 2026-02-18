@@ -83,6 +83,28 @@ g.copy(src, dest, *, user_id=None) -> WriteResult
 | `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
 | `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
 
+#### Move semantics: `follow=True` vs `follow=False`
+
+The `follow` parameter controls how `move()` handles identity and history:
+
+**`follow=False` (default) — clean break.** Creates a brand-new file record at the destination. The source is soft-deleted. Version history stays with the old path (accessible via trash/restore). Use this when you want a fresh start at the new location.
+
+```python
+g.move("/project/old.py", "/project/new.py")
+# /project/old.py → soft-deleted (in trash)
+# /project/new.py → new file record, version 1
+# Version history for old.py is preserved in trash
+```
+
+**`follow=True` — in-place rename.** The file record itself is updated to the new path. Version history, file ID, and shares all follow the file. Use this when renaming or reorganizing and you want continuity.
+
+```python
+g.move("/project/old.py", "/project/new.py", follow=True)
+# /project/old.py → gone (record updated, not deleted)
+# /project/new.py → same file record, same versions, same shares
+# Share paths are automatically updated
+```
+
 ### Search / Query
 
 ```python
@@ -288,7 +310,22 @@ from grover.fs import (
 )
 ```
 
-Every result has a `success: bool` and `message: str` field. Check `success` to determine if the operation succeeded.
+Every result has a `success: bool` and `message: str` field. Always check `success` before using other fields — this is the primary error handling pattern in Grover:
+
+```python
+result = g.read("/project/missing.py")
+if result.success:
+    print(result.content)       # safe to access
+else:
+    print(result.message)       # e.g., "File not found: /project/missing.py"
+    # result.content is None — don't use it
+
+result = g.write("/project/hello.py", "content")
+if result.success:
+    print(f"Version {result.version}, created={result.created}")
+```
+
+This design is intentional: agents running in loops should handle failures gracefully without try/except blocks. Operations never raise exceptions for expected failures (missing files, permission errors, etc.) — they return a result with `success=False` and a descriptive `message`.
 
 | Type | Key Fields |
 |------|------------|

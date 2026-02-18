@@ -254,6 +254,20 @@ result.score     # float (cosine similarity, 0–1)
 result.content   # str
 ```
 
+## Error handling
+
+All filesystem operations return **result objects** instead of raising exceptions. Every result has a `success: bool` field and a `message: str` field. Always check `success` before using other fields:
+
+```python
+result = g.write("/project/hello.py", "content")
+if result.success:
+    print(f"Created version {result.version}")
+else:
+    print(f"Write failed: {result.message}")
+```
+
+This design is intentional — agents running in loops should never crash on a failed file operation. The full set of result types (`ReadResult`, `WriteResult`, `EditResult`, etc.) is documented in [`docs/api.md`](docs/api.md#result-types).
+
 ## Roadmap
 
 Grover is in its first release cycle. Here's what's coming:
