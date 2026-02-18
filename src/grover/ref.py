@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,14 +19,18 @@ class Ref:
         version: Optional version identifier (int or str).
         line_start: Optional start line for chunk references.
         line_end: Optional end line for chunk references.
-        metadata: Arbitrary metadata (excluded from hash/equality).
+        metadata: Arbitrary read-only metadata (excluded from hash/equality).
     """
 
     path: str
     version: int | str | None = None
     line_start: int | None = None
     line_end: int | None = None
-    metadata: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
+    metadata: Mapping[str, Any] = field(default_factory=dict, hash=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.metadata, MappingProxyType):
+            object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     def __repr__(self) -> str:
         parts = [f"path={self.path!r}"]
@@ -33,7 +41,7 @@ class Ref:
         if self.line_end is not None:
             parts.append(f"line_end={self.line_end!r}")
         if self.metadata:
-            parts.append(f"metadata={self.metadata!r}")
+            parts.append(f"metadata={dict(self.metadata)!r}")
         return f"Ref({', '.join(parts)})"
 
 

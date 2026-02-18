@@ -446,7 +446,7 @@ class _FailingBackend(MinimalBackend):
 
 
 class TestVFSSessionRollback:
-    """Test that VFS _session_for rolls back on backend exception."""
+    """Test that VFS session_for rolls back on backend exception."""
 
     @pytest.fixture
     async def rollback_vfs(self):
@@ -494,7 +494,7 @@ class TestVFSSessionRollback:
         mount.backend.write = _exploding_write  # type: ignore[assignment]
 
         try:
-            # This should raise, and _session_for should rollback
+            # This should raise, and session_for should rollback
             with pytest.raises(RuntimeError, match="Simulated mid-write failure"):
                 await vfs.write("/db/test.txt", "corrupted")
 
@@ -537,7 +537,7 @@ class TestLocalFileSystemRequiresSession:
             workspace_dir=tmp_path,
             data_dir=tmp_path / ".grover_test",
         )
-        await lfs._ensure_db()
+        await lfs.open()
         return lfs
 
     async def test_write_without_session_raises(self, lfs: LocalFileSystem) -> None:

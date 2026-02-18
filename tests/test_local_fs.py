@@ -20,13 +20,13 @@ async def _make_local_fs(tmp_path: Path) -> tuple[LocalFileSystem, AsyncSession]
     workspace.mkdir()
     data = tmp_path / "data"
     fs = LocalFileSystem(workspace_dir=workspace, data_dir=data)
-    await fs._ensure_db()
-    return fs, fs._session_factory
+    await fs.open()
+    return fs, fs.session_factory
 
 
 @asynccontextmanager
 async def _session(factory) -> AsyncGenerator[AsyncSession]:
-    """Mimic VFS _session_for: create → yield → commit/rollback → close."""
+    """Mimic VFS session_for: create → yield → commit/rollback → close."""
     session = factory()
     try:
         yield session
@@ -209,14 +209,14 @@ class TestConcurrentInit:
 
         # Launch multiple concurrent _ensure_db calls
         await asyncio.gather(
-            fs._ensure_db(),
-            fs._ensure_db(),
-            fs._ensure_db(),
+            fs.open(),
+            fs.open(),
+            fs.open(),
         )
 
         # Should only have one engine
-        assert fs._engine is not None
-        assert fs._session_factory is not None
+        assert fs.engine is not None
+        assert fs.session_factory is not None
 
         # FS should still work correctly after concurrent init
         async with _session(factory) as session:

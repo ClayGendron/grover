@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from grover.events import EventBus, EventType, FileEvent
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
@@ -29,6 +31,7 @@ from grover.fs.types import (
     TreeResult,
     WriteResult,
 )
+from grover.fs.utils import normalize_path
 from grover.fs.vfs import VFS
 from grover.graph._graph import Graph
 from grover.graph.analyzers import AnalyzerRegistry
@@ -42,7 +45,7 @@ from grover.search.extractors import extract_from_chunks, extract_from_file
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
     from grover.fs.protocol import StorageBackend
     from grover.models.files import FileBase, FileVersionBase
@@ -118,7 +121,7 @@ class GroverAsync:
     async def mount(
         self,
         path: str,
-        backend: StorageBackend | Any | None = None,
+        backend: StorageBackend | None = None,
         *,
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
@@ -138,101 +141,27 @@ class GroverAsync:
         plain ``DatabaseFileSystem`` is created.  For user-scoped mounts,
         pass a ``UserScopedFileSystem`` as *backend* together with *engine*.
         """
-        sf: Callable[..., AsyncSession] | None = None
-
         if engine is not None:
             if session_factory is not None:
                 raise ValueError("Provide engine or session_factory, not both")
-            from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
-            from sqlalchemy.ext.asyncio import async_sessionmaker
-
-            sf = async_sessionmaker(engine, class_=_AsyncSession, expire_on_commit=False)
-            dialect = engine.dialect.name
-
-            # Ensure base tables exist
-            fm = file_model or File
-            fvm = file_version_model or FileVersion
-            async with engine.begin() as conn:
-                await conn.run_sync(
-                    lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-                )
-                await conn.run_sync(
-                    lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-                )
-
-            # Create backend if not provided by caller
-            if backend is None:
-                backend = DatabaseFileSystem(
-                    dialect=dialect,
-                    file_model=file_model,
-                    file_version_model=file_version_model,
-                    schema=db_schema,
-                )
-
-            # Create share table if backend supports sharing
-            if isinstance(backend, SupportsReBAC):
-                async with engine.begin() as conn:
-                    await conn.run_sync(
-                        lambda c: FileShare.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
-                    )
-
-            if mount_type is None:
-                mount_type = "vfs"
-            config = MountConfig(
-                mount_path=path,
-                backend=backend,
-                session_factory=sf,
-                mount_type=mount_type,
-                permission=permission,
-                label=label,
-                hidden=hidden,
+            config = await self._create_engine_mount(
+                path, engine, backend, file_model, file_version_model,
+                db_schema, mount_type, permission, label, hidden,
             )
-
         elif session_factory is not None:
-            sf = session_factory
-            if backend is None:
-                backend = DatabaseFileSystem(
-                    dialect=dialect,
-                    file_model=file_model,
-                    file_version_model=file_version_model,
-                    schema=db_schema,
-                )
-            if mount_type is None:
-                mount_type = "vfs"
-            config = MountConfig(
-                mount_path=path,
-                backend=backend,
-                session_factory=sf,
-                mount_type=mount_type,
-                permission=permission,
-                label=label,
-                hidden=hidden,
+            config = self._create_session_factory_mount(
+                path, session_factory, backend, dialect, file_model,
+                file_version_model, db_schema, mount_type, permission, label, hidden,
             )
         else:
             if backend is None:
                 raise ValueError("Provide backend, engine, or session_factory")
-            # Auto-detect mount type
-            if mount_type is None:
-                mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
-
-            # For local backends, eagerly init DB and expose session_factory
-            local_sf: Callable[..., AsyncSession] | None = None
-            if isinstance(backend, LocalFileSystem):
-                await backend.open()
-                local_sf = backend._session_factory
-
-            config = MountConfig(
-                mount_path=path,
-                backend=backend,
-                session_factory=local_sf,
-                mount_type=mount_type,
-                permission=permission,
-                label=label,
-                hidden=hidden,
+            config = await self._create_backend_mount(
+                path, backend, mount_type, permission, label, hidden,
             )
 
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
-        if not isinstance(backend, LocalFileSystem) and hasattr(config.backend, "open"):
+        if not isinstance(config.backend, LocalFileSystem) and hasattr(config.backend, "open"):
             await config.backend.open()
 
         self._registry.add_mount(config)
@@ -241,9 +170,123 @@ class GroverAsync:
         if not hidden and self._meta_fs is None:
             await self._init_meta_fs(config.backend)
 
+    async def _create_engine_mount(
+        self,
+        path: str,
+        engine: AsyncEngine,
+        backend: StorageBackend | None,
+        file_model: type[FileBase] | None,
+        file_version_model: type[FileVersionBase] | None,
+        db_schema: str | None,
+        mount_type: str | None,
+        permission: Permission,
+        label: str,
+        hidden: bool,
+    ) -> MountConfig:
+        """Build a MountConfig from an async engine."""
+        sf = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        dialect = engine.dialect.name
+
+        # Ensure base tables exist
+        fm = file_model or File
+        fvm = file_version_model or FileVersion
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+            )
+            await conn.run_sync(
+                lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+            )
+
+        if backend is None:
+            backend = DatabaseFileSystem(
+                dialect=dialect,
+                file_model=file_model,
+                file_version_model=file_version_model,
+                schema=db_schema,
+            )
+
+        # Create share table if backend supports sharing
+        if isinstance(backend, SupportsReBAC):
+            async with engine.begin() as conn:
+                await conn.run_sync(
+                    lambda c: FileShare.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
+                )
+
+        return MountConfig(
+            mount_path=path,
+            backend=backend,
+            session_factory=sf,
+            mount_type=mount_type or "vfs",
+            permission=permission,
+            label=label,
+            hidden=hidden,
+        )
+
+    def _create_session_factory_mount(
+        self,
+        path: str,
+        session_factory: Callable[..., AsyncSession],
+        backend: StorageBackend | None,
+        dialect: str,
+        file_model: type[FileBase] | None,
+        file_version_model: type[FileVersionBase] | None,
+        db_schema: str | None,
+        mount_type: str | None,
+        permission: Permission,
+        label: str,
+        hidden: bool,
+    ) -> MountConfig:
+        """Build a MountConfig from a caller-provided session factory."""
+        if backend is None:
+            backend = DatabaseFileSystem(
+                dialect=dialect,
+                file_model=file_model,
+                file_version_model=file_version_model,
+                schema=db_schema,
+            )
+
+        return MountConfig(
+            mount_path=path,
+            backend=backend,
+            session_factory=session_factory,
+            mount_type=mount_type or "vfs",
+            permission=permission,
+            label=label,
+            hidden=hidden,
+        )
+
+    async def _create_backend_mount(
+        self,
+        path: str,
+        backend: StorageBackend,
+        mount_type: str | None,
+        permission: Permission,
+        label: str,
+        hidden: bool,
+    ) -> MountConfig:
+        """Build a MountConfig from a pre-constructed backend."""
+        if mount_type is None:
+            mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
+
+        # For local backends, eagerly init DB and expose session_factory
+        sf: Callable[..., AsyncSession] | None = None
+        if isinstance(backend, LocalFileSystem):
+            await backend.open()
+            sf = backend.session_factory
+
+        return MountConfig(
+            mount_path=path,
+            backend=backend,
+            session_factory=sf,
+            mount_type=mount_type,
+            permission=permission,
+            label=label,
+            hidden=hidden,
+        )
+
     async def unmount(self, path: str) -> None:
         """Unmount the backend at *path*."""
-        from grover.fs.utils import normalize_path
 
         path = normalize_path(path).rstrip("/")
         if path == "/.grover":
@@ -299,7 +342,7 @@ class GroverAsync:
             MountConfig(
                 mount_path="/.grover",
                 backend=self._meta_fs,
-                session_factory=self._meta_fs._session_factory,
+                session_factory=self._meta_fs.session_factory,
                 mount_type="local",
                 hidden=True,
             )
@@ -314,8 +357,8 @@ class GroverAsync:
     async def _ensure_extra_tables(self) -> None:
         if self._meta_fs is None:
             return
-        await self._meta_fs._ensure_db()
-        engine = self._meta_fs._engine
+        await self._meta_fs.open()
+        engine = self._meta_fs.engine
         if engine is None:
             return
 
@@ -331,12 +374,12 @@ class GroverAsync:
         if self._meta_fs is None:
             return
 
-        meta_mount = self._registry._mounts.get("/.grover")
+        meta_mount = self._registry.get_mount("/.grover")
         if meta_mount is None:
             return
 
         try:
-            async with self._vfs._session_for(meta_mount) as session:
+            async with self._vfs.session_for(meta_mount) as session:
                 file_model = None
                 for mount in self._registry.list_visible_mounts():
                     backend = mount.backend
@@ -645,7 +688,6 @@ class GroverAsync:
 
         Requires a backend that supports sharing (e.g. ``UserScopedFileSystem``).
         """
-        from grover.fs.utils import normalize_path
 
         path = normalize_path(path)
         try:
@@ -653,14 +695,14 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+        cap = self._vfs.get_capability(mount.backend, SupportsReBAC)
         if cap is None:
             return ShareResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
-        async with self._vfs._session_for(mount) as sess:
+        async with self._vfs.session_for(mount) as sess:
             assert sess is not None
             try:
                 share_info = await cap.share(
@@ -695,7 +737,6 @@ class GroverAsync:
         user_id: str,
     ) -> ShareResult:
         """Remove a share for a file or directory."""
-        from grover.fs.utils import normalize_path
 
         path = normalize_path(path)
         try:
@@ -703,14 +744,14 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+        cap = self._vfs.get_capability(mount.backend, SupportsReBAC)
         if cap is None:
             return ShareResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
-        async with self._vfs._session_for(mount) as sess:
+        async with self._vfs.session_for(mount) as sess:
             assert sess is not None
             removed = await cap.unshare(rel_path, grantee_id, user_id=user_id, session=sess)
 
@@ -731,7 +772,6 @@ class GroverAsync:
         user_id: str,
     ) -> ListSharesResult:
         """List all shares on a given path."""
-        from grover.fs.utils import normalize_path
 
         path = normalize_path(path)
         try:
@@ -739,14 +779,14 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ListSharesResult(success=False, message=str(e))
 
-        cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+        cap = self._vfs.get_capability(mount.backend, SupportsReBAC)
         if cap is None:
             return ListSharesResult(
                 success=False,
                 message="Backend does not support sharing",
             )
 
-        async with self._vfs._session_for(mount) as sess:
+        async with self._vfs.session_for(mount) as sess:
             assert sess is not None
             shares = await cap.list_shares_on_path(rel_path, user_id=user_id, session=sess)
 
@@ -774,10 +814,10 @@ class GroverAsync:
         """List all files shared with the current user across all mounts."""
         all_shares: list[ShareInfo] = []
         for mount in self._registry.list_mounts():
-            cap = self._vfs._get_capability(mount.backend, SupportsReBAC)
+            cap = self._vfs.get_capability(mount.backend, SupportsReBAC)
             if cap is None:
                 continue
-            async with self._vfs._session_for(mount) as sess:
+            async with self._vfs.session_for(mount) as sess:
                 assert sess is not None
                 shares = await cap.list_shared_with_me(user_id=user_id, session=sess)
             for s in shares:
@@ -887,7 +927,7 @@ class GroverAsync:
         backend = mount.backend
         if hasattr(backend, "_read_content"):
             if mount.has_session_factory:
-                async with self._vfs._session_for(mount) as sess:
+                async with self._vfs.session_for(mount) as sess:
                     content: str | None = await backend._read_content(rel_path, sess)  # type: ignore[union-attr]
             else:
                 content = await backend._read_content(rel_path, None)  # type: ignore[union-attr]
@@ -900,9 +940,9 @@ class GroverAsync:
 
     async def _async_save(self) -> None:
         if self._meta_fs is not None:
-            meta_mount = self._registry._mounts.get("/.grover")
+            meta_mount = self._registry.get_mount("/.grover")
             if meta_mount is not None:
-                async with self._vfs._session_for(meta_mount) as session:
+                async with self._vfs.session_for(meta_mount) as session:
                     assert session is not None
                     await self._graph.to_sql(session)
 

@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlmodel import select
 
 from grover.models.files import File, FileVersion
@@ -127,6 +132,16 @@ class LocalFileSystem:
     @property
     def file_version_model(self) -> type[FileVersionBase]:
         return self._file_version_model
+
+    @property
+    def session_factory(self) -> async_sessionmaker | None:
+        """The async session factory, available after ``open()``."""
+        return self._session_factory
+
+    @property
+    def engine(self) -> AsyncEngine | None:
+        """The async engine, available after ``open()``."""
+        return self._engine
 
     @staticmethod
     def _require_session(session: AsyncSession | None) -> AsyncSession:

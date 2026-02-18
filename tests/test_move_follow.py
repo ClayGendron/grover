@@ -357,14 +357,15 @@ class TestVFSMoveFollow:
     async def test_vfs_move_follow_shares_updated(self, vfs_with_sharing: VFS):
         """VFS passes sharing through to backend when follow=True."""
         vfs = vfs_with_sharing
-        mount = vfs._registry._mounts["/ws"]
+        mount = vfs._registry.get_mount("/ws")
+        assert mount is not None
 
         await vfs.write("/ws/doc.md", "content", user_id="alice")
 
         # Create share at stored path level
         backend = mount.backend
         assert isinstance(backend, UserScopedFileSystem)
-        async with vfs._session_for(mount) as sess:
+        async with vfs.session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
             await backend._sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
@@ -373,7 +374,7 @@ class TestVFSMoveFollow:
         assert result.success is True
 
         # Verify share updated
-        async with vfs._session_for(mount) as sess:
+        async with vfs.session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
             new_shares = await backend._sharing.list_shares_on_path(sess, "/alice/renamed.md")

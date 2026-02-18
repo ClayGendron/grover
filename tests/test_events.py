@@ -241,13 +241,13 @@ class TestEventBusIntegration:
             workspace_dir=tmp_path,
             data_dir=tmp_path / ".grover_test",
         )
-        await backend._ensure_db()
+        await backend.open()
         registry = MountRegistry()
         registry.add_mount(
             MountConfig(
                 mount_path="/local",
                 backend=backend,
-                session_factory=backend._session_factory,
+                session_factory=backend.session_factory,
                 mount_type="local",
             )
         )
@@ -339,13 +339,13 @@ class TestEventBusIntegration:
             workspace_dir=tmp_path,
             data_dir=tmp_path / ".grover_test2",
         )
-        await backend._ensure_db()
+        await backend.open()
         registry = MountRegistry()
         registry.add_mount(
             MountConfig(
                 mount_path="/local",
                 backend=backend,
-                session_factory=backend._session_factory,
+                session_factory=backend.session_factory,
                 mount_type="local",
             )
         )

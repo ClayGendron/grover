@@ -412,8 +412,8 @@ async def local_fs(tmp_path: Path) -> AsyncIterator[LocalFileSystem]:
 
 @pytest.fixture
 async def local_session(local_fs: LocalFileSystem) -> AsyncIterator[AsyncSession]:
-    assert local_fs._session_factory is not None
-    async with local_fs._session_factory() as session:
+    assert local_fs.session_factory is not None
+    async with local_fs.session_factory() as session:
         yield session
 
 
@@ -664,7 +664,7 @@ async def vfs_setup(tmp_path: Path) -> AsyncIterator[tuple[VFS, AsyncEngine]]:
         MountConfig(
             mount_path="/local",
             backend=lfs,
-            session_factory=lfs._session_factory,
+            session_factory=lfs.session_factory,
             mount_type="local",
         )
     )

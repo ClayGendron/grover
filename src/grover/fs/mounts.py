@@ -131,7 +131,11 @@ class MountRegistry:
 
         return mount.permission
 
+    def get_mount(self, mount_path: str) -> MountConfig | None:
+        """Return the MountConfig at *mount_path*, or ``None``."""
+        mount_path = normalize_path(mount_path).rstrip("/")
+        return self._mounts.get(mount_path)
+
     def has_mount(self, mount_path: str) -> bool:
         """Check if a mount exists at the given path."""
-        mount_path = normalize_path(mount_path).rstrip("/")
-        return mount_path in self._mounts
+        return self.get_mount(mount_path) is not None

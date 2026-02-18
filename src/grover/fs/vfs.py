@@ -64,7 +64,7 @@ class VFS:
     # Capability discovery
     # ------------------------------------------------------------------
 
-    def _get_capability(self, backend: Any, protocol: type[T]) -> T | None:
+    def get_capability(self, backend: Any, protocol: type[T]) -> T | None:
         if isinstance(backend, protocol):
             return backend
         return None
@@ -82,7 +82,7 @@ class VFS:
     # ------------------------------------------------------------------
 
     @asynccontextmanager
-    async def _session_for(self, mount: MountConfig) -> AsyncGenerator[AsyncSession | None]:
+    async def session_for(self, mount: MountConfig) -> AsyncGenerator[AsyncSession | None]:
         """Yield a session for the given mount, or None for non-SQL."""
         if not mount.has_session_factory:
             yield None
@@ -149,7 +149,7 @@ class VFS:
     ) -> ReadResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.read(
                 rel_path, offset, limit, session=sess, user_id=user_id
             )
@@ -163,7 +163,7 @@ class VFS:
             return self._list_root()
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.list_dir(rel_path, session=sess, user_id=user_id)
 
         result.path = self._prefix_path(result.path, mount.mount_path) or path
@@ -204,7 +204,7 @@ class VFS:
         except MountNotFoundError:
             return False
 
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             return await mount.backend.exists(rel_path, session=sess, user_id=user_id)
 
     async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfo | None:
@@ -227,7 +227,7 @@ class VFS:
         except MountNotFoundError:
             return None
 
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             info = await mount.backend.get_info(rel_path, session=sess, user_id=user_id)
         if info is not None:
             info = self._prefix_file_info(info, mount)
@@ -257,7 +257,7 @@ class VFS:
             # Aggregate across all visible mounts (exclude hidden)
             all_entries: list[FileInfo] = []
             for mount in self._registry.list_visible_mounts():
-                async with self._session_for(mount) as sess:
+                async with self.session_for(mount) as sess:
                     result = await mount.backend.glob(pattern, "/", session=sess, user_id=user_id)
                 if result.success:
                     all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
@@ -270,7 +270,7 @@ class VFS:
             )
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.glob(pattern, rel_path, session=sess, user_id=user_id)
         result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
@@ -309,7 +309,7 @@ class VFS:
                 if max_results > 0 and remaining <= 0:
                     truncated = True
                     break
-                async with self._session_for(mount) as sess:
+                async with self.session_for(mount) as sess:
                     result = await mount.backend.grep(
                         pattern,
                         "/",
@@ -362,7 +362,7 @@ class VFS:
             )
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.grep(
                 pattern,
                 rel_path,
@@ -412,7 +412,7 @@ class VFS:
             # unchanged — the mount roots are added above at VFS level.
             if max_depth is None or max_depth > 0:
                 for mount in self._registry.list_visible_mounts():
-                    async with self._session_for(mount) as sess:
+                    async with self.session_for(mount) as sess:
                         result = await mount.backend.tree(
                             "/",
                             max_depth=max_depth,
@@ -435,7 +435,7 @@ class VFS:
             )
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.tree(
                 rel_path, max_depth=max_depth, session=sess, user_id=user_id
             )
@@ -463,7 +463,7 @@ class VFS:
             return WriteResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.write(
                 rel_path,
                 content,
@@ -496,7 +496,7 @@ class VFS:
             return EditResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.edit(
                 rel_path,
                 old_string,
@@ -527,14 +527,14 @@ class VFS:
         mount, rel_path = self._registry.resolve(path)
 
         # If backend doesn't support trash and permanent=False, explicit failure
-        if not permanent and not self._get_capability(mount.backend, SupportsTrash):
+        if not permanent and not self.get_capability(mount.backend, SupportsTrash):
             return DeleteResult(
                 success=False,
                 message="Trash not supported on this mount. "
                 "Use permanent=True to delete permanently.",
             )
 
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.delete(rel_path, permanent, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -555,7 +555,7 @@ class VFS:
             return MkdirResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await mount.backend.mkdir(rel_path, parents, session=sess, user_id=user_id)
         result.path = self._prefix_path(result.path, mount.mount_path)
         result.created_dirs = [
@@ -584,7 +584,7 @@ class VFS:
         dest_mount, dest_rel = self._registry.resolve(dest)
 
         if src_mount is dest_mount:
-            async with self._session_for(src_mount) as sess:
+            async with self.session_for(src_mount) as sess:
                 result = await src_mount.backend.move(
                     src_rel,
                     dest_rel,
@@ -601,7 +601,7 @@ class VFS:
             return result
 
         # Cross-mount move: read → write → delete (non-atomic).
-        async with self._session_for(src_mount) as src_sess:
+        async with self.session_for(src_mount) as src_sess:
             read_result = await src_mount.backend.read(src_rel, session=src_sess, user_id=user_id)
         if not read_result.success:
             return MoveResult(
@@ -615,7 +615,7 @@ class VFS:
                 message=f"Source file has no content: {src}",
             )
 
-        async with self._session_for(dest_mount) as dest_sess:
+        async with self.session_for(dest_mount) as dest_sess:
             write_result = await dest_mount.backend.write(
                 dest_rel, read_result.content, session=dest_sess, user_id=user_id
             )
@@ -625,7 +625,7 @@ class VFS:
                 message=f"Cannot write to destination for cross-mount move: {write_result.message}",
             )
 
-        async with self._session_for(src_mount) as src_sess:
+        async with self.session_for(src_mount) as src_sess:
             delete_result = await src_mount.backend.delete(
                 src_rel, permanent=False, session=src_sess, user_id=user_id
             )
@@ -662,7 +662,7 @@ class VFS:
         dest_mount, dest_rel = self._registry.resolve(dest)
 
         if src_mount is dest_mount:
-            async with self._session_for(src_mount) as sess:
+            async with self.session_for(src_mount) as sess:
                 result = await src_mount.backend.copy(
                     src_rel, dest_rel, session=sess, user_id=user_id
                 )
@@ -672,7 +672,7 @@ class VFS:
             return result
 
         # Cross-mount copy: read → write
-        async with self._session_for(src_mount) as src_sess:
+        async with self.session_for(src_mount) as src_sess:
             read_result = await src_mount.backend.read(src_rel, session=src_sess, user_id=user_id)
         if not read_result.success:
             return WriteResult(
@@ -686,7 +686,7 @@ class VFS:
                 message=f"Source file has no content: {src}",
             )
 
-        async with self._session_for(dest_mount) as dest_sess:
+        async with self.session_for(dest_mount) as dest_sess:
             result = await dest_mount.backend.write(
                 dest_rel, read_result.content, session=dest_sess, user_id=user_id
             )
@@ -702,12 +702,12 @@ class VFS:
     async def list_versions(self, path: str, *, user_id: str | None = None) -> ListVersionsResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        cap = self._get_capability(mount.backend, SupportsVersions)
+        cap = self.get_capability(mount.backend, SupportsVersions)
         if cap is None:
             raise CapabilityNotSupportedError(
                 f"Mount at {mount.mount_path} does not support versioning"
             )
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             return await cap.list_versions(rel_path, session=sess, user_id=user_id)
 
     async def restore_version(
@@ -720,12 +720,12 @@ class VFS:
         except PermissionError as e:
             return RestoreResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.backend, SupportsVersions)
+        cap = self.get_capability(mount.backend, SupportsVersions)
         if cap is None:
             raise CapabilityNotSupportedError(
                 f"Mount at {mount.mount_path} does not support versioning"
             )
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -737,12 +737,12 @@ class VFS:
     ) -> GetVersionContentResult:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
-        cap = self._get_capability(mount.backend, SupportsVersions)
+        cap = self.get_capability(mount.backend, SupportsVersions)
         if cap is None:
             raise CapabilityNotSupportedError(
                 f"Mount at {mount.mount_path} does not support versioning"
             )
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             return await cap.get_version_content(rel_path, version, session=sess, user_id=user_id)
 
     # ------------------------------------------------------------------
@@ -753,10 +753,10 @@ class VFS:
         """List all items in trash across all mounts (skips unsupported)."""
         all_entries: list[FileInfo] = []
         for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.backend, SupportsTrash)
+            cap = self.get_capability(mount.backend, SupportsTrash)
             if cap is None:
                 continue  # Skip unsupported mounts silently
-            async with self._session_for(mount) as sess:
+            async with self.session_for(mount) as sess:
                 result = await cap.list_trash(session=sess, user_id=user_id)
             if result.success:
                 all_entries.extend(self._prefix_file_info(entry, mount) for entry in result.entries)
@@ -776,10 +776,10 @@ class VFS:
             return RestoreResult(success=False, message=str(e))
 
         mount, rel_path = self._registry.resolve(path)
-        cap = self._get_capability(mount.backend, SupportsTrash)
+        cap = self.get_capability(mount.backend, SupportsTrash)
         if cap is None:
             raise CapabilityNotSupportedError(f"Mount at {mount.mount_path} does not support trash")
-        async with self._session_for(mount) as sess:
+        async with self.session_for(mount) as sess:
             result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
@@ -791,10 +791,10 @@ class VFS:
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.backend, SupportsTrash)
+            cap = self.get_capability(mount.backend, SupportsTrash)
             if cap is None:
                 continue  # Skip unsupported mounts silently
-            async with self._session_for(mount) as sess:
+            async with self.session_for(mount) as sess:
                 result = await cap.empty_trash(session=sess, user_id=user_id)
             if not result.success:
                 return result
@@ -821,10 +821,10 @@ class VFS:
             mounts = [m for m in mounts if m.mount_path == mount_path]
 
         for mount in mounts:
-            cap = self._get_capability(mount.backend, SupportsReconcile)
+            cap = self.get_capability(mount.backend, SupportsReconcile)
             if cap is None:
                 continue
-            async with self._session_for(mount) as sess:
+            async with self.session_for(mount) as sess:
                 stats = await cap.reconcile(session=sess)
             for k in total:
                 total[k] += stats.get(k, 0)

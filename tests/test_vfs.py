@@ -51,12 +51,12 @@ async def _make_local_setup(
         data_dir=tmp_path / ".grover_local",
     )
     (tmp_path / "ws_local").mkdir(exist_ok=True)
-    await backend_local._ensure_db()
+    await backend_local.open()
     registry.add_mount(
         MountConfig(
             mount_path="/local",
             backend=backend_local,
-            session_factory=backend_local._session_factory,
+            session_factory=backend_local.session_factory,
             mount_type="local",
         )
     )
@@ -67,12 +67,12 @@ async def _make_local_setup(
             workspace_dir=tmp_path / "ws_other",
             data_dir=tmp_path / ".grover_other",
         )
-        await backend_other._ensure_db()
+        await backend_other.open()
         registry.add_mount(
             MountConfig(
                 mount_path="/other",
                 backend=backend_other,
-                session_factory=backend_other._session_factory,
+                session_factory=backend_other.session_factory,
                 mount_type="local",
             )
         )
@@ -83,12 +83,12 @@ async def _make_local_setup(
             workspace_dir=tmp_path / "ws_ro",
             data_dir=tmp_path / ".grover_ro",
         )
-        await backend_ro._ensure_db()
+        await backend_ro.open()
         registry.add_mount(
             MountConfig(
                 mount_path="/ro",
                 backend=backend_ro,
-                session_factory=backend_ro._session_factory,
+                session_factory=backend_ro.session_factory,
                 mount_type="local",
                 permission=Permission.READ_ONLY,
             )
