@@ -291,8 +291,11 @@ class RustworkxGraph:
             if not pers:
                 pers = None
         scores = rustworkx.pagerank(
-            self._graph, alpha=alpha, personalization=pers,
-            max_iter=max_iter, tol=tol,
+            self._graph,
+            alpha=alpha,
+            personalization=pers,
+            max_iter=max_iter,
+            tol=tol,
         )
         return {
             self._idx_to_path[idx]: score
@@ -303,7 +306,8 @@ class RustworkxGraph:
     def betweenness_centrality(self, *, normalized: bool = True) -> dict[str, float]:
         """Betweenness centrality scores."""
         scores = rustworkx.digraph_betweenness_centrality(
-            self._graph, normalized=normalized,
+            self._graph,
+            normalized=normalized,
         )
         return {
             self._idx_to_path[idx]: score
@@ -332,8 +336,11 @@ class RustworkxGraph:
         if self._graph.num_nodes() == 0:
             return {}
         scores = rustworkx.katz_centrality(
-            self._graph, alpha=alpha, beta=beta,
-            max_iter=max_iter, tol=tol,
+            self._graph,
+            alpha=alpha,
+            beta=beta,
+            max_iter=max_iter,
+            tol=tol,
         )
         return {
             self._idx_to_path[idx]: score
@@ -422,7 +429,11 @@ class RustworkxGraph:
         }
 
     def all_simple_paths(
-        self, source: str, target: str, *, cutoff: int | None = None,
+        self,
+        source: str,
+        target: str,
+        *,
+        cutoff: int | None = None,
     ) -> list[list[str]]:
         """All simple (loop-free) paths from *source* to *target*.
 
@@ -434,12 +445,12 @@ class RustworkxGraph:
         src_idx = self._require_node(source)
         tgt_idx = self._require_node(target)
         raw = rustworkx.digraph_all_simple_paths(
-            self._graph, src_idx, tgt_idx, cutoff=cutoff or 0,
+            self._graph,
+            src_idx,
+            tgt_idx,
+            cutoff=cutoff or 0,
         )
-        return [
-            [self._idx_to_path[i] for i in path]
-            for path in raw
-        ]
+        return [[self._idx_to_path[i] for i in path] for path in raw]
 
     def topological_sort(self) -> list[str]:
         """Return nodes in topological order.
@@ -458,7 +469,8 @@ class RustworkxGraph:
         src_idx = self._require_node(source)
         tgt_idx = self._require_node(target)
         lengths = rustworkx.dijkstra_shortest_path_lengths(
-            self._graph, src_idx,
+            self._graph,
+            src_idx,
             lambda e: e.get("weight", 1.0),
             goal=tgt_idx,
         )
@@ -517,9 +529,8 @@ class RustworkxGraph:
                     if n_path is None or n_path in visited:
                         continue
                     # Edge type filter
-                    if (
-                        edge_types is not None
-                        and not self._has_edge_of_type(idx, n_idx, edge_types, direction)
+                    if edge_types is not None and not self._has_edge_of_type(
+                        idx, n_idx, edge_types, direction
                     ):
                         continue
                     visited.add(n_path)
@@ -531,7 +542,10 @@ class RustworkxGraph:
         return self.subgraph(sorted(visited))
 
     def meeting_subgraph(
-        self, start_paths: list[str], *, max_size: int = 50,
+        self,
+        start_paths: list[str],
+        *,
+        max_size: int = 50,
     ) -> SubgraphResult:
         """Find the subgraph connecting *start_paths* via shortest paths.
 
@@ -598,7 +612,10 @@ class RustworkxGraph:
         return subgraph_result(list(sub.nodes), list(sub.edges), sub_scores)
 
     def common_reachable(
-        self, paths: list[str], *, direction: str = "forward",
+        self,
+        paths: list[str],
+        *,
+        direction: str = "forward",
     ) -> set[str]:
         """Intersection of descendants (forward) or ancestors (reverse)."""
         valid = [p for p in paths if p in self._path_to_idx]
@@ -713,7 +730,11 @@ class RustworkxGraph:
     # ------------------------------------------------------------------
 
     def node_similarity(
-        self, path1: str, path2: str, *, method: str = "jaccard",
+        self,
+        path1: str,
+        path2: str,
+        *,
+        method: str = "jaccard",
     ) -> float:
         """Structural similarity between two nodes (Jaccard coefficient).
 
@@ -728,7 +749,11 @@ class RustworkxGraph:
         return len(n1 & n2) / len(union)
 
     def similar_nodes(
-        self, path: str, *, method: str = "jaccard", k: int = 10,
+        self,
+        path: str,
+        *,
+        method: str = "jaccard",
+        k: int = 10,
     ) -> list[tuple[str, float]]:
         """Top-*k* structurally similar nodes, sorted descending by score.
 
@@ -877,8 +902,11 @@ class RustworkxGraph:
         return indices[0] if indices else None
 
     def _has_edge_of_type(
-        self, node_idx: int, neighbor_idx: int,
-        edge_types: list[str], direction: str,
+        self,
+        node_idx: int,
+        neighbor_idx: int,
+        edge_types: list[str],
+        direction: str,
     ) -> bool:
         """Check if there's an edge of one of *edge_types* between node and neighbor."""
         pairs: list[tuple[int, int]] = []

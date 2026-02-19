@@ -44,9 +44,7 @@ def mock_index():
     """A mock VectorSearchIndex."""
     idx = MagicMock()
     idx.upsert = MagicMock()
-    idx.similarity_search = MagicMock(
-        return_value=_make_search_response([], ["id", "score"])
-    )
+    idx.similarity_search = MagicMock(return_value=_make_search_response([], ["id", "score"]))
     idx.delete = MagicMock()
     return idx
 
@@ -118,9 +116,7 @@ class TestLifecycle:
 
     @pytest.mark.asyncio
     async def test_operations_before_connect_raise(self):
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", host="h", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", host="h", token="t")
         with pytest.raises(RuntimeError, match="Not connected"):
             await s.upsert([VectorEntry(id="a", vector=[0.1], metadata={})])
 
@@ -145,9 +141,7 @@ class TestUpsert:
 
     @pytest.mark.asyncio
     async def test_upsert_batch(self, store, mock_index):
-        entries = [
-            VectorEntry(id=f"/f{i}.py", vector=[0.1], metadata={}) for i in range(5)
-        ]
+        entries = [VectorEntry(id=f"/f{i}.py", vector=[0.1], metadata={}) for i in range(5)]
         result = await store.upsert(entries)
         assert result.upserted_count == 5
 
@@ -323,9 +317,7 @@ class TestIndexLifecycle:
     @pytest.mark.asyncio
     async def test_delete_index(self, store, mock_client):
         await store.delete_index("catalog.schema.old")
-        mock_client.delete_index.assert_called_once_with(
-            index_name="catalog.schema.old"
-        )
+        mock_client.delete_index.assert_called_once_with(index_name="catalog.schema.old")
 
     @pytest.mark.asyncio
     async def test_list_indexes(self, store, mock_client):
@@ -381,12 +373,8 @@ class TestHybridSearch:
 
     @pytest.mark.asyncio
     async def test_hybrid_search_with_filter(self, store, mock_index):
-        mock_index.similarity_search.return_value = _make_search_response(
-            [], ["id", "score"]
-        )
-        await store.hybrid_search(
-            dense_vector=[0.1], k=5, filter=eq("type", "code")
-        )
+        mock_index.similarity_search.return_value = _make_search_response([], ["id", "score"])
+        await store.hybrid_search(dense_vector=[0.1], k=5, filter=eq("type", "code"))
         call_kwargs = mock_index.similarity_search.call_args.kwargs
         assert call_kwargs["filters"] == "type = 'code'"
 
@@ -403,9 +391,7 @@ class TestHybridSearch:
 
 class TestProperties:
     def test_index_name(self):
-        s = DatabricksVectorStore(
-            index_name="catalog.schema.idx", endpoint_name="ep", token="t"
-        )
+        s = DatabricksVectorStore(index_name="catalog.schema.idx", endpoint_name="ep", token="t")
         assert s.index_name == "catalog.schema.idx"
 
 
@@ -421,9 +407,7 @@ class TestImportGuard:
             patch("grover.search.stores.databricks._HAS_DATABRICKS", False),
             pytest.raises(ImportError, match="databricks-vectorsearch is required"),
         ):
-            DatabricksVectorStore(
-                index_name="x", endpoint_name="e", token="t"
-            )
+            DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
 
 
 # ==================================================================
@@ -435,49 +419,37 @@ class TestProtocolConformance:
     def test_satisfies_vector_store(self):
         from grover.search.protocols import VectorStore
 
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, VectorStore)
 
     def test_satisfies_supports_metadata_filter(self):
         from grover.search.protocols import SupportsMetadataFilter
 
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsMetadataFilter)
 
     def test_satisfies_supports_index_lifecycle(self):
         from grover.search.protocols import SupportsIndexLifecycle
 
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsIndexLifecycle)
 
     def test_satisfies_supports_hybrid_search(self):
         from grover.search.protocols import SupportsHybridSearch
 
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsHybridSearch)
 
     def test_does_not_satisfy_supports_namespaces(self):
         from grover.search.protocols import SupportsNamespaces
 
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert not isinstance(s, SupportsNamespaces)
 
     def test_does_not_satisfy_supports_reranking(self):
         from grover.search.protocols import SupportsReranking
 
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert not isinstance(s, SupportsReranking)
 
 
@@ -488,15 +460,11 @@ class TestProtocolConformance:
 
 class TestCompileFilter:
     def test_compile_eq(self):
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         result = s.compile_filter(eq("color", "red"))
         assert result == "color = 'red'"
 
     def test_compile_and(self):
-        s = DatabricksVectorStore(
-            index_name="x", endpoint_name="e", token="t"
-        )
+        s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         result = s.compile_filter(and_(eq("a", "x"), gt("b", 2)))
         assert result == "(a = 'x' AND b > 2)"

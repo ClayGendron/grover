@@ -35,9 +35,7 @@ class TestOpenAIEmbedding:
     async def test_embed_single_text(self):
         provider = self._make_provider()
         expected = [0.1, 0.2, 0.3]
-        provider._client.embeddings.create = AsyncMock(
-            return_value=self._mock_response([expected])
-        )
+        provider._client.embeddings.create = AsyncMock(return_value=self._mock_response([expected]))
 
         result = await provider.embed("hello")
 
@@ -51,9 +49,7 @@ class TestOpenAIEmbedding:
     async def test_embed_batch(self):
         provider = self._make_provider()
         vecs = [[0.1, 0.2], [0.3, 0.4]]
-        provider._client.embeddings.create = AsyncMock(
-            return_value=self._mock_response(vecs)
-        )
+        provider._client.embeddings.create = AsyncMock(return_value=self._mock_response(vecs))
 
         result = await provider.embed_batch(["hello", "world"])
 
@@ -271,9 +267,7 @@ class TestSentenceTransformerEmbedding:
         p = SentenceTransformerEmbedding.__new__(SentenceTransformerEmbedding)
         p._model_name = "test"
         p._model = MagicMock()
-        p._model.encode = MagicMock(
-            return_value=np.array([[0.1, 0.2], [0.3, 0.4]])
-        )
+        p._model.encode = MagicMock(return_value=np.array([[0.1, 0.2], [0.3, 0.4]]))
 
         # embed_batch_sync should work synchronously
         vecs = p.embed_batch_sync(["hello", "world"])

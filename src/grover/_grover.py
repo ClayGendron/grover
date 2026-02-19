@@ -335,7 +335,9 @@ class Grover:
     # ------------------------------------------------------------------
 
     def pagerank(
-        self, *, personalization: dict[str, float] | None = None,
+        self,
+        *,
+        personalization: dict[str, float] | None = None,
     ) -> dict[str, float]:
         """Run PageRank on the knowledge graph."""
         return self._async.pagerank(personalization=personalization)
@@ -349,7 +351,10 @@ class Grover:
         return self._async.descendants(path)
 
     def meeting_subgraph(
-        self, paths: list[str], *, max_size: int = 50,
+        self,
+        paths: list[str],
+        *,
+        max_size: int = 50,
     ) -> SubgraphResult:
         """Extract the subgraph connecting *paths* via shortest paths."""
         return self._async.meeting_subgraph(paths, max_size=max_size)
@@ -364,7 +369,10 @@ class Grover:
     ) -> SubgraphResult:
         """Extract the neighborhood subgraph around *path*."""
         return self._async.neighborhood(
-            path, max_depth=max_depth, direction=direction, edge_types=edge_types,
+            path,
+            max_depth=max_depth,
+            direction=direction,
+            edge_types=edge_types,
         )
 
     def find_nodes(self, **attrs: Any) -> list[str]:

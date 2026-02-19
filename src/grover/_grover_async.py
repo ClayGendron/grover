@@ -108,9 +108,7 @@ class GroverAsync:
         self._event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
         self._event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
 
-    def _init_search(
-        self, embedding_provider: Any, vector_store: Any
-    ) -> SearchEngine | None:
+    def _init_search(self, embedding_provider: Any, vector_store: Any) -> SearchEngine | None:
         """Build a SearchEngine from the provided or auto-discovered components."""
         from grover.search.stores.local import LocalVectorStore
 
@@ -163,19 +161,41 @@ class GroverAsync:
             if session_factory is not None:
                 raise ValueError("Provide engine or session_factory, not both")
             config = await self._create_engine_mount(
-                path, engine, backend, file_model, file_version_model,
-                db_schema, mount_type, permission, label, hidden,
+                path,
+                engine,
+                backend,
+                file_model,
+                file_version_model,
+                db_schema,
+                mount_type,
+                permission,
+                label,
+                hidden,
             )
         elif session_factory is not None:
             config = self._create_session_factory_mount(
-                path, session_factory, backend, dialect, file_model,
-                file_version_model, db_schema, mount_type, permission, label, hidden,
+                path,
+                session_factory,
+                backend,
+                dialect,
+                file_model,
+                file_version_model,
+                db_schema,
+                mount_type,
+                permission,
+                label,
+                hidden,
             )
         else:
             if backend is None:
                 raise ValueError("Provide backend, engine, or session_factory")
             config = await self._create_backend_mount(
-                path, backend, mount_type, permission, label, hidden,
+                path,
+                backend,
+                mount_type,
+                permission,
+                label,
+                hidden,
             )
 
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
@@ -892,7 +912,9 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     def pagerank(
-        self, *, personalization: dict[str, float] | None = None,
+        self,
+        *,
+        personalization: dict[str, float] | None = None,
     ) -> dict[str, float]:
         """Run PageRank on the knowledge graph.
 
@@ -925,7 +947,10 @@ class GroverAsync:
         return self.graph.descendants(path)
 
     def meeting_subgraph(
-        self, paths: list[str], *, max_size: int = 50,
+        self,
+        paths: list[str],
+        *,
+        max_size: int = 50,
     ) -> SubgraphResult:
         """Extract the subgraph connecting *paths* via shortest paths."""
         from grover.graph.protocols import SupportsSubgraph
@@ -950,7 +975,10 @@ class GroverAsync:
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
         return self.graph.neighborhood(
-            path, max_depth=max_depth, direction=direction, edge_types=edge_types,
+            path,
+            max_depth=max_depth,
+            direction=direction,
+            edge_types=edge_types,
         )
 
     def find_nodes(self, **attrs: Any) -> list[str]:

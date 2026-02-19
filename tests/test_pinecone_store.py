@@ -79,9 +79,7 @@ def mock_index():
 def mock_client(mock_index):
     """A mock PineconeAsyncio client."""
     client = AsyncMock()
-    client.describe_index = AsyncMock(
-        return_value=SimpleNamespace(host="test-host.pinecone.io")
-    )
+    client.describe_index = AsyncMock(return_value=SimpleNamespace(host="test-host.pinecone.io"))
     client.IndexAsyncio = MagicMock(return_value=mock_index)
     client.create_index = AsyncMock()
     client.delete_index = AsyncMock()
@@ -388,13 +386,9 @@ class TestHybridSearch:
 
     @pytest.mark.asyncio
     async def test_hybrid_search_sparse_dense(self, store, mock_index):
-        mock_index.query.return_value = SimpleNamespace(
-            matches=[_make_match("/a.py", 0.85)]
-        )
+        mock_index.query.return_value = SimpleNamespace(matches=[_make_match("/a.py", 0.85)])
         sv = SparseVector(indices=[0, 5, 10], values=[0.1, 0.5, 0.3])
-        results = await store.hybrid_search(
-            dense_vector=[0.1], sparse_vector=sv, k=5
-        )
+        results = await store.hybrid_search(dense_vector=[0.1], sparse_vector=sv, k=5)
         assert len(results) == 1
         call_kwargs = mock_index.query.call_args.kwargs
         assert call_kwargs["sparse_vector"] == {"indices": [0, 5, 10], "values": [0.1, 0.5, 0.3]}

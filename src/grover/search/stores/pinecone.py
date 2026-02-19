@@ -352,10 +352,7 @@ class PineconeVectorStore:
 
         # Rerank using Pinecone Inference API
         client = self._require_client()
-        documents = [
-            {"id": r.id, "text": r.metadata.get("content", r.id)}
-            for r in search_results
-        ]
+        documents = [{"id": r.id, "text": r.metadata.get("content", r.id)} for r in search_results]
 
         model = rerank_model or "bge-reranker-v2-m3"
         top_n = rerank_top_n or len(documents)

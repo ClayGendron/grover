@@ -369,26 +369,57 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
 
         def add_node(self, path: str, **attrs: object) -> None: ...
         def remove_node(self, path: str) -> None: ...
-        def has_node(self, path: str) -> bool: return False
-        def get_node(self, path: str) -> dict: return {}
-        def nodes(self) -> list[str]: return []
+        def has_node(self, path: str) -> bool:
+            return False
+
+        def get_node(self, path: str) -> dict:
+            return {}
+
+        def nodes(self) -> list[str]:
+            return []
+
         def add_edge(self, source: str, target: str, edge_type: str, **kw: object) -> None: ...
         def remove_edge(self, source: str, target: str) -> None: ...
-        def has_edge(self, source: str, target: str) -> bool: return False
-        def get_edge(self, source: str, target: str) -> dict: return {}
-        def edges(self) -> list: return []
-        def dependents(self, path: str) -> list: return []
-        def dependencies(self, path: str) -> list: return []
-        def impacts(self, path: str, max_depth: int = 3) -> list: return []
-        def path_between(self, source: str, target: str) -> None: return None
-        def contains(self, path: str) -> list: return []
-        def by_parent(self, parent_path: str) -> list: return []
-        def remove_file_subgraph(self, path: str) -> list[str]: return []
+        def has_edge(self, source: str, target: str) -> bool:
+            return False
+
+        def get_edge(self, source: str, target: str) -> dict:
+            return {}
+
+        def edges(self) -> list:
+            return []
+
+        def dependents(self, path: str) -> list:
+            return []
+
+        def dependencies(self, path: str) -> list:
+            return []
+
+        def impacts(self, path: str, max_depth: int = 3) -> list:
+            return []
+
+        def path_between(self, source: str, target: str) -> None:
+            return None
+
+        def contains(self, path: str) -> list:
+            return []
+
+        def by_parent(self, parent_path: str) -> list:
+            return []
+
+        def remove_file_subgraph(self, path: str) -> list[str]:
+            return []
+
         @property
-        def node_count(self) -> int: return 0
+        def node_count(self) -> int:
+            return 0
+
         @property
-        def edge_count(self) -> int: return 0
-        def is_dag(self) -> bool: return True
+        def edge_count(self) -> int:
+            return 0
+
+        def is_dag(self) -> bool:
+            return True
 
     ga = GroverAsync(data_dir=tmp_path / ".grover_data", embedding_provider=FakeProvider())
     try:

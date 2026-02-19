@@ -98,10 +98,7 @@ class OpenAIEmbedding:
         default = _MODEL_DEFAULTS.get(self._model)
         if default is not None:
             return default
-        msg = (
-            f"Unknown default dimensions for model {self._model!r}. "
-            "Pass dimensions= explicitly."
-        )
+        msg = f"Unknown default dimensions for model {self._model!r}. Pass dimensions= explicitly."
         raise ValueError(msg)
 
     @property

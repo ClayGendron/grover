@@ -17,9 +17,7 @@ class SubgraphResult:
 
     nodes: tuple[str, ...]
     edges: tuple[tuple[str, str, dict[str, Any]], ...]
-    scores: MappingProxyType[str, float] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    scores: MappingProxyType[str, float] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def subgraph_result(
