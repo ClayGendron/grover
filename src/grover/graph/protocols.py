@@ -43,16 +43,7 @@ class GraphStore(Protocol):
     # Edge operations
     # ------------------------------------------------------------------
 
-    def add_edge(
-        self,
-        source: str,
-        target: str,
-        edge_type: str,
-        *,
-        weight: float = 1.0,
-        edge_id: str | None = None,
-        **attrs: Any,
-    ) -> None: ...
+    def add_edge(self, source: str, target: str, **attrs: Any) -> None: ...
     def remove_edge(self, source: str, target: str) -> None: ...
     def has_edge(self, source: str, target: str) -> bool: ...
     def get_edge(self, source: str, target: str) -> dict[str, Any]: ...
