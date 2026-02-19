@@ -347,12 +347,12 @@ def test_grover_has_find_nodes() -> None:
     assert hasattr(Grover, "find_nodes")
 
 
-def test_grover_graph_is_public() -> None:
-    """GroverAsync.graph is a public attribute, not _graph."""
+def test_grover_get_graph_is_public() -> None:
+    """GroverAsync.get_graph() is a public method (replaces old .graph property)."""
     ga = GroverAsync()
     try:
-        assert hasattr(ga, "graph")
-        assert not hasattr(ga, "_graph") or ga._graph is not ga.graph
+        assert hasattr(ga, "get_graph")
+        assert callable(ga.get_graph)
     finally:
         import asyncio
 
@@ -423,18 +423,21 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
 
     ga = GroverAsync(data_dir=tmp_path / ".grover_data", embedding_provider=FakeProvider())
     try:
-        ga.graph = MinimalGraph()  # type: ignore[assignment]
+        await ga.mount("/app", InMemoryBackend())
+        # Inject MinimalGraph onto the mounted backend
+        mount = next(m for m in ga._registry.list_visible_mounts() if m.mount_path == "/app")
+        mount.backend._graph = MinimalGraph()  # type: ignore[union-attr]
         with pytest.raises(CapabilityNotSupportedError):
-            ga.pagerank()
+            ga.pagerank(path="/app")
         with pytest.raises(CapabilityNotSupportedError):
-            ga.ancestors("/a.py")
+            ga.ancestors("/app/a.py")
         with pytest.raises(CapabilityNotSupportedError):
-            ga.descendants("/a.py")
+            ga.descendants("/app/a.py")
         with pytest.raises(CapabilityNotSupportedError):
-            ga.meeting_subgraph(["/a.py"])
+            ga.meeting_subgraph(["/app/a.py"])
         with pytest.raises(CapabilityNotSupportedError):
-            ga.neighborhood("/a.py")
+            ga.neighborhood("/app/a.py")
         with pytest.raises(CapabilityNotSupportedError):
-            ga.find_nodes(lang="python")
+            ga.find_nodes(path="/app", lang="python")
     finally:
         await ga.close()

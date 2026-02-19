@@ -10,7 +10,7 @@ from grover.events import EventBus, EventType, FileEvent
 
 from .exceptions import CapabilityNotSupportedError, MountNotFoundError
 from .permissions import Permission
-from .protocol import SupportsReconcile, SupportsTrash, SupportsVersions
+from .protocol import SupportsReconcile, SupportsSearch, SupportsTrash, SupportsVersions
 from .types import (
     DeleteResult,
     EditResult,
@@ -442,6 +442,40 @@ class VFS:
         result.path = self._prefix_path(result.path, mount.mount_path) or path
         result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
         return result
+
+    async def search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        user_id: str | None = None,
+    ) -> list:
+        """Route semantic search to backend(s), aggregate across mounts.
+
+        Returns ``list[SearchResult]`` — the internal Grover search type.
+        """
+        path = normalize_path(path)
+
+        if path == "/":
+            all_results: list = []
+            for mount in self._registry.list_visible_mounts():
+                cap = self.get_capability(mount.backend, SupportsSearch)
+                if cap is None:
+                    continue
+                async with self.session_for(mount) as sess:
+                    results = await cap.search(query, k, path="/", session=sess, user_id=user_id)
+                all_results.extend(results)
+            # Sort by score descending, truncate to k
+            all_results.sort(key=lambda r: r.score, reverse=True)
+            return all_results[:k]
+
+        mount, rel_path = self._registry.resolve(path)
+        cap = self.get_capability(mount.backend, SupportsSearch)
+        if cap is None:
+            return []
+        async with self.session_for(mount) as sess:
+            return await cap.search(query, k, path=rel_path, session=sess, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Write Operations (permission-checked)

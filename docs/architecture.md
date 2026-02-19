@@ -45,6 +45,8 @@ class StorageBackend(Protocol):       # Core: read, write, edit, delete, ...
 class SupportsVersions(Protocol):     # list_versions, restore_version, ...
 class SupportsTrash(Protocol):        # list_trash, restore_from_trash, ...
 class SupportsReconcile(Protocol):    # reconcile (sync disk ↔ DB)
+class SupportsSearch(Protocol):       # search (per-mount semantic search)
+class SupportsFileChunks(Protocol):   # replace/delete/list file chunks
 ```
 
 VFS checks capabilities with `isinstance(backend, SupportsVersions)` at runtime. If a backend doesn't support a capability:
@@ -91,6 +93,30 @@ The opposite ordering (commit-first) would create **phantom metadata**: the DB s
 
 **This ordering is intentional and should not be changed.** See [internals/fs.md](internals/fs.md) for the full rationale and history.
 
+## Per-mount graph and search
+
+Each mounted backend holds its own `RustworkxGraph` and `SearchEngine` instance, injected at mount time. There is no global graph or search engine on `GroverAsync`.
+
+```
+Mount "/project" → LocalFileSystem
+    ├── _graph: RustworkxGraph     (own graph instance)
+    └── _search_engine: SearchEngine (own search index)
+
+Mount "/data" → DatabaseFileSystem
+    ├── _graph: RustworkxGraph     (own graph instance)
+    └── _search_engine: SearchEngine (own search index)
+```
+
+**Graph resolution**: operations like `dependents(path)` resolve the mount from the path, then delegate to that mount's graph. `get_graph(path)` is the public method (replaces the removed `.graph` property).
+
+**Search routing**: `search()` routes through VFS to per-mount backends via the `SupportsSearch` protocol. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.
+
+**Persistence**: each mount's graph saves to its own database (via `to_sql`/`from_sql`). Search indices save per-mount under `data_dir/search/{mount_slug}/`.
+
+**Embedding provider**: shared across mounts (stateless). Each mount gets its own `LocalVectorStore` by default.
+
+Hidden mounts (like `/.grover`) do not receive graph or search engine injection.
+
 ## Event-driven consistency
 
 The three layers stay in sync through an `EventBus`. When VFS completes a file operation, it emits an event:
@@ -102,7 +128,7 @@ The three layers stay in sync through an `EventBus`. When VFS completes a file o
 | `FILE_MOVED` | Remove old path, re-analyze at new path |
 | `FILE_RESTORED` | Re-analyze restored file |
 
-Handlers are async. Exceptions in handlers are logged but never propagated — a failed re-index should not cause a file write to fail.
+Event handlers resolve the mount from the event path, then use that mount's graph and search engine. Exceptions in handlers are logged but never propagated — a failed re-index should not cause a file write to fail.
 
 This design means the graph and search index are always *eventually* consistent with the filesystem. For v0.1, handlers run synchronously within the same operation. Background workers are a future optimization.
 

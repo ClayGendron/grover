@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func
 from sqlmodel import select
@@ -83,6 +83,9 @@ class DatabaseFileSystem:
         file_version_model: type[FileVersionBase] | None = None,
         file_chunk_model: type[FileChunkBase] | None = None,
         schema: str | None = None,
+        *,
+        graph: Any | None = None,
+        search_engine: Any | None = None,
     ) -> None:
         fm: type[FileBase] = file_model or File
         fvm: type[FileVersionBase] = file_version_model or FileVersion
@@ -93,6 +96,10 @@ class DatabaseFileSystem:
         self._file_model = fm
         self._file_version_model = fvm
         self._file_chunk_model = fcm
+
+        # Per-mount graph and search engine (injected at mount time)
+        self._graph = graph
+        self._search_engine = search_engine
 
         # Composed services
         self.metadata = MetadataService(fm)
@@ -683,6 +690,33 @@ class DatabaseFileSystem:
             total_files=total_files,
             total_dirs=total_dirs,
         )
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsSearch
+    # ------------------------------------------------------------------
+
+    async def search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> list:
+        """Semantic search via per-mount search engine. Returns list[SearchResult]."""
+        if self._search_engine is None:
+            return []
+        results = await self._search_engine.search(query, k)
+        if path != "/":
+            prefix = path.rstrip("/") + "/"
+            results = [
+                r
+                for r in results
+                if (r.parent_path or r.ref.path).startswith(prefix)
+                or (r.parent_path or r.ref.path) == path.rstrip("/")
+            ]
+        return results
 
     # ------------------------------------------------------------------
     # Capability: SupportsVersions

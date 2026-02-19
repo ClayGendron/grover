@@ -265,13 +265,13 @@ class TestGroverAsyncMultiMount:
 
 class TestGroverAsyncGraph:
     @pytest.mark.asyncio
-    async def test_graph_property(self, grover: GroverAsync):
-        assert isinstance(grover.graph, RustworkxGraph)
+    async def test_get_graph(self, grover: GroverAsync):
+        assert isinstance(grover.get_graph(), RustworkxGraph)
 
     @pytest.mark.asyncio
     async def test_write_updates_graph(self, grover: GroverAsync):
         await grover.write("/project/mod.py", "def work():\n    pass\n")
-        assert grover.graph.has_node("/project/mod.py")
+        assert grover.get_graph().has_node("/project/mod.py")
 
     @pytest.mark.asyncio
     async def test_contains_returns_chunks(self, grover: GroverAsync):
@@ -283,9 +283,9 @@ class TestGroverAsyncGraph:
     @pytest.mark.asyncio
     async def test_delete_removes_from_graph(self, grover: GroverAsync):
         await grover.write("/project/gone.py", "def gone():\n    pass\n")
-        assert grover.graph.has_node("/project/gone.py")
+        assert grover.get_graph().has_node("/project/gone.py")
         await grover.delete("/project/gone.py")
-        assert not grover.graph.has_node("/project/gone.py")
+        assert not grover.get_graph().has_node("/project/gone.py")
 
 
 # ==================================================================
@@ -315,7 +315,11 @@ class TestGroverAsyncSearch:
 
     @pytest.mark.asyncio
     async def test_search_raises_without_provider(self, grover_no_search: GroverAsync):
-        if grover_no_search._search_engine is not None:
+        has_search = any(
+            getattr(m.backend, "_search_engine", None) is not None
+            for m in grover_no_search._registry.list_visible_mounts()
+        )
+        if has_search:
             pytest.skip("sentence-transformers is installed; search available")
         with pytest.raises(RuntimeError, match="Search is not available"):
             await grover_no_search.search("anything")
@@ -352,7 +356,7 @@ class TestGroverAsyncIndex:
         stats = await g.index("/a")
         # Should only index mount /a
         assert stats["files_scanned"] >= 1
-        assert g.graph.has_node("/a/a.py")
+        assert g.get_graph().has_node("/a/a.py")
 
         await g.close()
 
@@ -379,7 +383,7 @@ class TestGroverAsyncPersistence:
         await g2.mount(
             "/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
         )
-        assert g2.graph.has_node("/project/keep.py")
+        assert g2.get_graph().has_node("/project/keep.py")
         results = await g2.search("keep")
         assert len(results) >= 1
         await g2.close()
@@ -396,8 +400,8 @@ class TestGroverAsyncProperties:
         assert grover.fs is grover._vfs
 
     @pytest.mark.asyncio
-    async def test_graph_property(self, grover: GroverAsync):
-        assert isinstance(grover.graph, RustworkxGraph)
+    async def test_get_graph(self, grover: GroverAsync):
+        assert isinstance(grover.get_graph(), RustworkxGraph)
 
 
 # ==================================================================
@@ -476,19 +480,23 @@ class TestGroverAsyncEventHandlers:
     @pytest.mark.asyncio
     async def test_move_updates_graph(self, grover: GroverAsync):
         await grover.write("/project/old.py", "def foo():\n    pass\n")
-        assert grover.graph.has_node("/project/old.py")
+        assert grover.get_graph().has_node("/project/old.py")
 
         result = await grover.fs.move("/project/old.py", "/project/new.py")
         assert result.success
-        assert not grover.graph.has_node("/project/old.py")
-        assert grover.graph.has_node("/project/new.py")
+        assert not grover.get_graph().has_node("/project/old.py")
+        assert grover.get_graph().has_node("/project/new.py")
 
     @pytest.mark.asyncio
     async def test_move_updates_search_engine(self, grover: GroverAsync):
         code = 'def unique_search_target():\n    """Locate me after move."""\n    pass\n'
         await grover.write("/project/before.py", code)
         await grover.fs.move("/project/before.py", "/project/after.py")
-        if grover._search_engine is not None:
+        has_search = any(
+            getattr(m.backend, "_search_engine", None) is not None
+            for m in grover._registry.list_visible_mounts()
+        )
+        if has_search:
             results = await grover.search("unique_search_target")
             found_paths = [r.ref.path for r in results]
             found_parents = [r.parent_path for r in results if r.parent_path]
@@ -499,13 +507,13 @@ class TestGroverAsyncEventHandlers:
     @pytest.mark.asyncio
     async def test_restored_event_reanalyzes(self, grover: GroverAsync):
         await grover.write("/project/restore_me.py", "def restored():\n    pass\n")
-        assert grover.graph.has_node("/project/restore_me.py")
+        assert grover.get_graph().has_node("/project/restore_me.py")
         await grover.delete("/project/restore_me.py")
-        assert not grover.graph.has_node("/project/restore_me.py")
+        assert not grover.get_graph().has_node("/project/restore_me.py")
         # Restore it (for LocalFileSystem this is restore_from_trash)
         result = await grover.fs.restore_from_trash("/project/restore_me.py")
         if result.success:
-            assert grover.graph.has_node("/project/restore_me.py")
+            assert grover.get_graph().has_node("/project/restore_me.py")
 
 
 # ==================================================================
@@ -579,10 +587,12 @@ class TestGroverAsyncMountOptions:
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
         await g.write("/app/file.py", "def demo():\n    pass\n")
-        assert g.graph.has_node("/app/file.py")
+        assert g.get_graph().has_node("/app/file.py")
 
         await g.unmount("/app")
-        assert not g.graph.has_node("/app/file.py")
+        # After unmount, the mount and its graph are gone
+        with pytest.raises(RuntimeError, match="No graph available"):
+            g.get_graph()
         await g.close()
 
 
@@ -596,8 +606,12 @@ class TestGroverAsyncUnsupportedFiles:
     async def test_unsupported_file_embeds_whole_file(self, grover: GroverAsync):
         # .txt has no Python analyzer, but the whole file should be indexed
         await grover.write("/project/notes.txt", "Important project notes here")
-        assert grover.graph.has_node("/project/notes.txt")
-        if grover._search_engine is not None:
+        assert grover.get_graph().has_node("/project/notes.txt")
+        has_search = any(
+            getattr(m.backend, "_search_engine", None) is not None
+            for m in grover._registry.list_visible_mounts()
+        )
+        if has_search:
             results = await grover.search("Important project notes")
             assert len(results) >= 1
 
@@ -605,7 +619,7 @@ class TestGroverAsyncUnsupportedFiles:
     async def test_write_grover_path_skipped(self, grover: GroverAsync):
         # Writes to /.grover/ should not create graph nodes
         await grover.fs.write("/.grover/internal.txt", "metadata")
-        assert not grover.graph.has_node("/.grover/internal.txt")
+        assert not grover.get_graph().has_node("/.grover/internal.txt")
 
 
 # ==================================================================

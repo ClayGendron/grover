@@ -94,15 +94,14 @@ class GroverAsync:
         self._registry = MountRegistry()
         self._vfs = VFS(self._registry, self._event_bus)
         self._analyzer_registry = AnalyzerRegistry()
-        self.graph: GraphStore = RustworkxGraph()
 
         # Internal metadata mount — lazily created on first mount()
         self._meta_fs: LocalFileSystem | None = None
         self._meta_data_dir: Path | None = None
 
-        # Search engine (optional)
-        self._search_engine: SearchEngine | None = None
-        self._search_engine = self._init_search(embedding_provider, vector_store)
+        # Search configuration (per-mount engines created at mount time)
+        self._embedding_provider = self._resolve_embedding_provider(embedding_provider)
+        self._explicit_vector_store = vector_store
 
         # Register event handlers
         self._event_bus.register(EventType.FILE_WRITTEN, self._on_file_written)
@@ -110,27 +109,79 @@ class GroverAsync:
         self._event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
         self._event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
 
-    def _init_search(self, embedding_provider: Any, vector_store: Any) -> SearchEngine | None:
-        """Build a SearchEngine from the provided or auto-discovered components."""
+    # ------------------------------------------------------------------
+    # Search / Graph factory helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_embedding_provider(provider: Any) -> Any:
+        """Return the provider if given, else auto-discover, else None."""
+        if provider is not None:
+            return provider
+        try:
+            from grover.search.providers.sentence_transformers import (
+                SentenceTransformerEmbedding,
+            )
+
+            return SentenceTransformerEmbedding()
+        except Exception:
+            logger.debug("No embedding provider available; search disabled")
+            return None
+
+    def _create_search_engine(self) -> SearchEngine | None:
+        """Create a new SearchEngine for a mount."""
+        if self._explicit_vector_store is not None:
+            return SearchEngine(self._explicit_vector_store, self._embedding_provider)
+        if self._embedding_provider is None:
+            return None
         from grover.search.stores.local import LocalVectorStore
 
-        if vector_store is not None:
-            return SearchEngine(vector_store, embedding_provider)
+        store = LocalVectorStore(dimension=self._embedding_provider.dimensions)
+        return SearchEngine(store, self._embedding_provider)
 
-        # Auto-discover embedding provider if not provided
-        if embedding_provider is None:
-            try:
-                from grover.search.providers.sentence_transformers import (
-                    SentenceTransformerEmbedding,
-                )
+    # ------------------------------------------------------------------
+    # Per-mount graph / search resolution
+    # ------------------------------------------------------------------
 
-                embedding_provider = SentenceTransformerEmbedding()
-            except Exception:
-                logger.debug("No embedding provider available; search disabled")
-                return None
+    def _resolve_graph(self, path: str) -> GraphStore:
+        """Return the graph for the mount owning *path*."""
+        try:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
+            msg = f"No mount found for path: {path!r}"
+            raise RuntimeError(msg) from None
+        graph = getattr(mount.backend, "_graph", None)
+        if graph is None:
+            msg = f"No graph on mount at {mount.mount_path}"
+            raise RuntimeError(msg)
+        return graph
 
-        store = LocalVectorStore(dimension=embedding_provider.dimensions)
-        return SearchEngine(store, embedding_provider)
+    def _resolve_search_engine(self, path: str) -> SearchEngine | None:
+        """Return the search engine for the mount owning *path*, or None."""
+        try:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
+            return None
+        return getattr(mount.backend, "_search_engine", None)
+
+    def _resolve_graph_any(self, path: str | None = None) -> GraphStore:
+        """Get graph for a specific path, or first available mount's graph."""
+        if path is not None:
+            return self._resolve_graph(path)
+        for mount in self._registry.list_visible_mounts():
+            graph = getattr(mount.backend, "_graph", None)
+            if graph is not None:
+                return graph
+        msg = "No graph available on any mount"
+        raise RuntimeError(msg)
+
+    def get_graph(self, path: str | None = None) -> GraphStore:
+        """Return the graph for the mount owning *path*, or the first available.
+
+        This replaces the old ``self.graph`` attribute which was removed
+        in favour of per-mount graphs.
+        """
+        return self._resolve_graph_any(path)
 
     # ------------------------------------------------------------------
     # Mount / Unmount
@@ -203,6 +254,13 @@ class GroverAsync:
                 hidden,
             )
 
+        # Inject per-mount graph and search engine (skip for hidden meta mount)
+        if not hidden:
+            graph = RustworkxGraph()
+            search_engine = self._create_search_engine()
+            config.backend._graph = graph  # type: ignore[union-attr]
+            config.backend._search_engine = search_engine  # type: ignore[union-attr]
+
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
         if not isinstance(config.backend, LocalFileSystem) and hasattr(config.backend, "open"):
             await config.backend.open()
@@ -212,6 +270,10 @@ class GroverAsync:
         # Lazily initialise meta_fs on first non-hidden mount
         if not hidden and self._meta_fs is None:
             await self._init_meta_fs(config.backend)
+
+        # Load existing graph + search state for this mount
+        if not hidden:
+            await self._load_mount_state(config)
 
     async def _create_engine_mount(
         self,
@@ -244,6 +306,10 @@ class GroverAsync:
             )
             await conn.run_sync(
                 lambda c: fcm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+            )
+            # Edges table for per-mount graph persistence
+            await conn.run_sync(
+                lambda c: GroverEdge.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
 
         if backend is None:
@@ -357,15 +423,6 @@ class GroverAsync:
             await backend.close()
         self._registry.remove_mount(path)
 
-        # Clean graph nodes and search entries with this mount prefix
-        prefix = path + "/"
-        nodes_to_remove = [n for n in self.graph.nodes() if n == path or n.startswith(prefix)]
-        for node in nodes_to_remove:
-            if self.graph.has_node(node):
-                self.graph.remove_file_subgraph(node)
-            if self._search_engine is not None:
-                await self._search_engine.remove_file(node)
-
     # ------------------------------------------------------------------
     # Internal metadata mount
     # ------------------------------------------------------------------
@@ -402,9 +459,6 @@ class GroverAsync:
         # Create extra tables on the meta engine
         await self._ensure_extra_tables()
 
-        # Load existing state
-        await self._load_existing_state()
-
     async def _ensure_extra_tables(self) -> None:
         if self._meta_fs is None:
             return
@@ -421,37 +475,48 @@ class GroverAsync:
                 lambda c: Embedding.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
 
-    async def _load_existing_state(self) -> None:
-        if self._meta_fs is None:
+    # ------------------------------------------------------------------
+    # Per-mount state loading
+    # ------------------------------------------------------------------
+
+    async def _load_mount_state(self, mount: MountConfig) -> None:
+        """Load graph and search state for a single mount."""
+        graph = getattr(mount.backend, "_graph", None)
+        if graph is None:
             return
 
-        meta_mount = self._registry.get_mount("/.grover")
-        if meta_mount is None:
-            return
-
-        try:
-            async with self._vfs.session_for(meta_mount) as session:
-                file_model = None
-                for mount in self._registry.list_visible_mounts():
-                    backend = mount.backend
-                    if hasattr(backend, "file_model"):
-                        file_model = backend.file_model
-                        break
+        # Load graph: file nodes from mount's DB, edges from mount's DB
+        if mount.has_session_factory:
+            try:
                 from grover.graph.protocols import SupportsPersistence
 
-                if isinstance(self.graph, SupportsPersistence):
-                    await self.graph.from_sql(session, file_model=file_model)  # type: ignore[arg-type]
-        except Exception:
-            logger.debug("No existing graph state to load", exc_info=True)
+                if isinstance(graph, SupportsPersistence):
+                    file_model = getattr(mount.backend, "file_model", None) or File
+                    async with self._vfs.session_for(mount) as session:
+                        if session is not None:
+                            await graph.from_sql(session, file_model=file_model)
+            except Exception:
+                logger.debug(
+                    "No existing graph state to load for %s",
+                    mount.mount_path,
+                    exc_info=True,
+                )
 
-        if self._search_engine is not None and self._meta_data_dir is not None:
-            search_dir = self._meta_data_dir / "search"
+        # Load search index from disk
+        search_engine = getattr(mount.backend, "_search_engine", None)
+        if search_engine is not None and self._meta_data_dir is not None:
+            slug = mount.mount_path.strip("/").replace("/", "_") or "_default"
+            search_dir = self._meta_data_dir / "search" / slug
             meta_file = search_dir / "search_meta.json"
             if meta_file.exists():
                 try:
-                    self._search_engine.load(str(search_dir))
+                    search_engine.load(str(search_dir))
                 except Exception:
-                    logger.debug("Failed to load search index", exc_info=True)
+                    logger.debug(
+                        "Failed to load search index for %s",
+                        mount.mount_path,
+                        exc_info=True,
+                    )
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -476,19 +541,35 @@ class GroverAsync:
             return
         if "/.grover/" in event.path:
             return
-        if self.graph.has_node(event.path):
-            self.graph.remove_file_subgraph(event.path)
-        if self._search_engine is not None:
-            await self._search_engine.remove_file(event.path)
+        try:
+            graph = self._resolve_graph(event.path)
+            if graph.has_node(event.path):
+                graph.remove_file_subgraph(event.path)
+        except RuntimeError:
+            pass  # Mount may not have a graph
+        try:
+            search_engine = self._resolve_search_engine(event.path)
+            if search_engine is not None:
+                await search_engine.remove_file(event.path)
+        except RuntimeError:
+            pass
 
     async def _on_file_moved(self, event: FileEvent) -> None:
         if self._meta_fs is None:
             return
         if event.old_path and "/.grover/" not in event.old_path:
-            if self.graph.has_node(event.old_path):
-                self.graph.remove_file_subgraph(event.old_path)
-            if self._search_engine is not None:
-                await self._search_engine.remove_file(event.old_path)
+            try:
+                graph = self._resolve_graph(event.old_path)
+                if graph.has_node(event.old_path):
+                    graph.remove_file_subgraph(event.old_path)
+            except RuntimeError:
+                pass
+            try:
+                search_engine = self._resolve_search_engine(event.old_path)
+                if search_engine is not None:
+                    await search_engine.remove_file(event.old_path)
+            except RuntimeError:
+                pass
 
         if "/.grover/" in event.path:
             return
@@ -508,12 +589,19 @@ class GroverAsync:
     async def _analyze_and_integrate(self, path: str, content: str) -> dict[str, int]:
         stats = {"chunks_created": 0, "edges_added": 0}
 
-        if self.graph.has_node(path):
-            self.graph.remove_file_subgraph(path)
-        if self._search_engine is not None:
-            await self._search_engine.remove_file(path)
+        try:
+            graph = self._resolve_graph(path)
+        except RuntimeError:
+            return stats
 
-        self.graph.add_node(path)
+        search_engine = self._resolve_search_engine(path)
+
+        if graph.has_node(path):
+            graph.remove_file_subgraph(path)
+        if search_engine is not None:
+            await search_engine.remove_file(path)
+
+        graph.add_node(path)
 
         analysis = self._analyzer_registry.analyze_file(path, content)
 
@@ -522,30 +610,30 @@ class GroverAsync:
 
             for chunk in chunks:
                 await self._vfs.write(chunk.chunk_path, chunk.content)
-                self.graph.add_node(
+                graph.add_node(
                     chunk.chunk_path,
                     parent_path=path,
                     line_start=chunk.line_start,
                     line_end=chunk.line_end,
                     name=chunk.name,
                 )
-                self.graph.add_edge(path, chunk.chunk_path, edge_type="contains")
+                graph.add_edge(path, chunk.chunk_path, edge_type="contains")
                 stats["chunks_created"] += 1
 
             for edge in edges:
                 meta: dict[str, Any] = dict(edge.metadata)
-                self.graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
+                graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
                 stats["edges_added"] += 1
 
-            if self._search_engine is not None:
+            if search_engine is not None:
                 embeddable = extract_from_chunks(chunks)
                 if embeddable:
-                    await self._search_engine.add_batch(embeddable)
+                    await search_engine.add_batch(embeddable)
         else:
-            if self._search_engine is not None:
+            if search_engine is not None:
                 embeddable = extract_from_file(path, content)
                 if embeddable:
-                    await self._search_engine.add_batch(embeddable)
+                    await search_engine.add_batch(embeddable)
 
         return stats
 
@@ -902,23 +990,23 @@ class GroverAsync:
         return await self._vfs.reconcile(mount_path)
 
     # ------------------------------------------------------------------
-    # Graph query wrappers (sync — Graph methods are already sync)
+    # Graph query wrappers (resolve mount → delegate to backend's graph)
     # ------------------------------------------------------------------
 
     def dependents(self, path: str) -> list[Ref]:
-        return self.graph.dependents(path)
+        return self._resolve_graph(path).dependents(path)
 
     def dependencies(self, path: str) -> list[Ref]:
-        return self.graph.dependencies(path)
+        return self._resolve_graph(path).dependencies(path)
 
     def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        return self.graph.impacts(path, max_depth)
+        return self._resolve_graph(path).impacts(path, max_depth)
 
     def path_between(self, source: str, target: str) -> list[Ref] | None:
-        return self.graph.path_between(source, target)
+        return self._resolve_graph(source).path_between(source, target)
 
     def contains(self, path: str) -> list[Ref]:
-        return self.graph.contains(path)
+        return self._resolve_graph(path).contains(path)
 
     # ------------------------------------------------------------------
     # Graph algorithm wrappers (capability-checked)
@@ -928,36 +1016,41 @@ class GroverAsync:
         self,
         *,
         personalization: dict[str, float] | None = None,
+        path: str | None = None,
     ) -> dict[str, float]:
         """Run PageRank on the knowledge graph.
 
+        *path* selects which mount's graph to use (defaults to first visible).
         Raises :class:`~grover.fs.exceptions.CapabilityNotSupportedError` if
         the graph backend does not support centrality algorithms.
         """
         from grover.graph.protocols import SupportsCentrality
 
-        if not isinstance(self.graph, SupportsCentrality):
+        graph = self._resolve_graph_any(path)
+        if not isinstance(graph, SupportsCentrality):
             msg = "Graph backend does not support centrality algorithms"
             raise CapabilityNotSupportedError(msg)
-        return self.graph.pagerank(personalization=personalization)
+        return graph.pagerank(personalization=personalization)
 
     def ancestors(self, path: str) -> set[str]:
         """All transitive predecessors of *path* in the knowledge graph."""
         from grover.graph.protocols import SupportsTraversal
 
-        if not isinstance(self.graph, SupportsTraversal):
+        graph = self._resolve_graph(path)
+        if not isinstance(graph, SupportsTraversal):
             msg = "Graph backend does not support traversal algorithms"
             raise CapabilityNotSupportedError(msg)
-        return self.graph.ancestors(path)
+        return graph.ancestors(path)
 
     def descendants(self, path: str) -> set[str]:
         """All transitive successors of *path* in the knowledge graph."""
         from grover.graph.protocols import SupportsTraversal
 
-        if not isinstance(self.graph, SupportsTraversal):
+        graph = self._resolve_graph(path)
+        if not isinstance(graph, SupportsTraversal):
             msg = "Graph backend does not support traversal algorithms"
             raise CapabilityNotSupportedError(msg)
-        return self.graph.descendants(path)
+        return graph.descendants(path)
 
     def meeting_subgraph(
         self,
@@ -968,10 +1061,11 @@ class GroverAsync:
         """Extract the subgraph connecting *paths* via shortest paths."""
         from grover.graph.protocols import SupportsSubgraph
 
-        if not isinstance(self.graph, SupportsSubgraph):
+        graph = self._resolve_graph_any(paths[0] if paths else None)
+        if not isinstance(graph, SupportsSubgraph):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
-        return self.graph.meeting_subgraph(paths, max_size=max_size)
+        return graph.meeting_subgraph(paths, max_size=max_size)
 
     def neighborhood(
         self,
@@ -984,37 +1078,48 @@ class GroverAsync:
         """Extract the neighborhood subgraph around *path*."""
         from grover.graph.protocols import SupportsSubgraph
 
-        if not isinstance(self.graph, SupportsSubgraph):
+        graph = self._resolve_graph(path)
+        if not isinstance(graph, SupportsSubgraph):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
-        return self.graph.neighborhood(
+        return graph.neighborhood(
             path,
             max_depth=max_depth,
             direction=direction,
             edge_types=edge_types,
         )
 
-    def find_nodes(self, **attrs: Any) -> list[str]:
+    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> list[str]:
         """Find graph nodes matching all attribute predicates."""
         from grover.graph.protocols import SupportsFiltering
 
-        if not isinstance(self.graph, SupportsFiltering):
+        graph = self._resolve_graph_any(path)
+        if not isinstance(graph, SupportsFiltering):
             msg = "Graph backend does not support filtering"
             raise CapabilityNotSupportedError(msg)
-        return self.graph.find_nodes(**attrs)
+        return graph.find_nodes(**attrs)
 
     # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------
 
-    async def search(self, query: str, k: int = 10) -> list[SearchResult]:
-        if self._search_engine is None:
+    async def search(
+        self, query: str, k: int = 10, *, path: str = "/", user_id: str | None = None
+    ) -> list[SearchResult]:
+        """Semantic search, routed through VFS to per-mount search engines."""
+        # Check if any mount has a search engine
+        has_search = False
+        for mount in self._registry.list_visible_mounts():
+            if getattr(mount.backend, "_search_engine", None) is not None:
+                has_search = True
+                break
+        if not has_search:
             msg = (
                 "Search is not available: no embedding provider configured. "
                 "Install sentence-transformers or pass embedding_provider= to GroverAsync()."
             )
             raise RuntimeError(msg)
-        return await self._search_engine.search(query, k)
+        return await self._vfs.search(query, k, path=path, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Index and persistence
@@ -1076,19 +1181,38 @@ class GroverAsync:
         await self._async_save()
 
     async def _async_save(self) -> None:
-        if self._meta_fs is not None:
-            meta_mount = self._registry.get_mount("/.grover")
-            if meta_mount is not None:
+        """Save per-mount graph and search state."""
+        # Save each mount's graph to its own DB
+        for mount in self._registry.list_visible_mounts():
+            graph = getattr(mount.backend, "_graph", None)
+            if graph is not None and mount.has_session_factory:
                 from grover.graph.protocols import SupportsPersistence
 
-                async with self._vfs.session_for(meta_mount) as session:
-                    assert session is not None
-                    if isinstance(self.graph, SupportsPersistence):
-                        await self.graph.to_sql(session)
+                if isinstance(graph, SupportsPersistence):
+                    try:
+                        async with self._vfs.session_for(mount) as session:
+                            if session is not None:
+                                await graph.to_sql(session)
+                    except Exception:
+                        logger.debug(
+                            "Failed to save graph for %s",
+                            mount.mount_path,
+                            exc_info=True,
+                        )
 
-        if self._search_engine is not None and self._meta_data_dir is not None:
-            search_dir = self._meta_data_dir / "search"
-            self._search_engine.save(str(search_dir))
+            # Save search index to disk
+            search_engine = getattr(mount.backend, "_search_engine", None)
+            if search_engine is not None and self._meta_data_dir is not None:
+                slug = mount.mount_path.strip("/").replace("/", "_") or "_default"
+                search_dir = self._meta_data_dir / "search" / slug
+                try:
+                    search_engine.save(str(search_dir))
+                except Exception:
+                    logger.debug(
+                        "Failed to save search index for %s",
+                        mount.mount_path,
+                        exc_info=True,
+                    )
 
     # ------------------------------------------------------------------
     # Lifecycle

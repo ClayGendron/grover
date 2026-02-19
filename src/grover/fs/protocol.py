@@ -320,6 +320,21 @@ class SupportsReconcile(Protocol):
 
 
 @runtime_checkable
+class SupportsSearch(Protocol):
+    """Opt-in: semantic search backed by a per-mount search engine."""
+
+    async def search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        path: str = "/",
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> list[Any]: ...
+
+
+@runtime_checkable
 class SupportsFileChunks(Protocol):
     """Opt-in: DB-backed file chunk storage."""
 

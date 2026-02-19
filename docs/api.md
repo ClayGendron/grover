@@ -232,31 +232,35 @@ g.contains(path) -> list[Ref]
 
 These convenience methods delegate to the graph backend. They raise `CapabilityNotSupportedError` if the backend doesn't support the required capability protocol.
 
+Graph operations resolve to the per-mount graph for the given path. `pagerank()` and `find_nodes()` accept an optional `path` parameter to select which mount's graph to use (defaults to the first visible mount).
+
 ```python
-g.pagerank(*, personalization=None) -> dict[str, float]
+g.pagerank(*, personalization=None, path=None) -> dict[str, float]
 g.ancestors(path) -> set[str]
 g.descendants(path) -> set[str]
 g.meeting_subgraph(paths, *, max_size=50) -> SubgraphResult
 g.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> SubgraphResult
-g.find_nodes(**attrs) -> list[str]
+g.find_nodes(*, path=None, **attrs) -> list[str]
 ```
 
 | Method | Protocol | Description |
 |--------|----------|-------------|
-| `pagerank(personalization=None)` | `SupportsCentrality` | PageRank scores for all nodes. Optional `personalization` dict biases the random walk. |
+| `pagerank(personalization=None, path=None)` | `SupportsCentrality` | PageRank scores for all nodes. Optional `personalization` dict biases the random walk. `path` selects which mount's graph. |
 | `ancestors(path)` | `SupportsTraversal` | All transitive predecessors of a node. |
 | `descendants(path)` | `SupportsTraversal` | All transitive successors of a node. |
 | `meeting_subgraph(paths, max_size=50)` | `SupportsSubgraph` | Subgraph connecting multiple nodes via shortest paths, scored by PageRank. Pruned to `max_size` nodes. |
 | `neighborhood(path, max_depth=2, direction="both", edge_types=None)` | `SupportsSubgraph` | BFS neighborhood around a node. `direction`: `"out"`, `"in"`, or `"both"`. |
-| `find_nodes(**attrs)` | `SupportsFiltering` | Find nodes by attribute predicates. Callable values are used as predicates; non-callable values are matched by equality. |
+| `find_nodes(path=None, **attrs)` | `SupportsFiltering` | Find nodes by attribute predicates. `path` selects which mount's graph. Callable values are used as predicates; non-callable values are matched by equality. |
 
 ### Search
 
 ```python
-g.search(query, k=10) -> list[SearchResult]
+g.search(query, k=10, *, path="/", user_id=None) -> list[SearchResult]
 ```
 
 Semantic similarity search over indexed content. Returns up to `k` results sorted by relevance.
+
+Search is routed through VFS to per-mount search engines. When `path="/"`, results are aggregated across all mounts and sorted by score. When `path` targets a specific mount or subdirectory, search is scoped to that mount and filtered to the given path prefix.
 
 Raises `RuntimeError` if no embedding provider is available.
 
@@ -274,12 +278,14 @@ g.close()
 | `save()` | Persist graph edges to the database and search index to disk. |
 | `close()` | Save state and shut down all subsystems. Idempotent. |
 
-### Properties
+### Properties and Methods
 
 ```python
-g.graph -> GraphStore   # The knowledge graph instance
-g.fs -> VFS        # The virtual filesystem (for advanced use)
+g.get_graph(path=None) -> GraphStore   # Per-mount knowledge graph (replaces old .graph property)
+g.fs -> VFS                            # The virtual filesystem (for advanced use)
 ```
+
+`get_graph(path)` returns the graph for the mount owning `path`. If `path` is `None`, returns the first available mount's graph. Each mount has its own isolated `RustworkxGraph` instance, injected at mount time.
 
 ---
 
@@ -399,7 +405,7 @@ LocalFileSystem(workspace_dir, *, data_dir=None)
 
 Stores files on disk at `workspace_dir`. Metadata and version history live in a SQLite database at `data_dir` (defaults to `~/.grover/{workspace_slug}/`).
 
-Implements: `StorageBackend`, `SupportsVersions`, `SupportsTrash`, `SupportsReconcile`.
+Implements: `StorageBackend`, `SupportsVersions`, `SupportsTrash`, `SupportsReconcile`, `SupportsSearch`, `SupportsFileChunks`.
 
 ### DatabaseFileSystem
 
@@ -410,7 +416,7 @@ DatabaseFileSystem(*, dialect="sqlite", file_model=None,
 
 Pure-database storage. All content lives in the `File.content` column. Stateless — requires a session to be injected by VFS.
 
-Implements: `StorageBackend`, `SupportsVersions`, `SupportsTrash`.
+Implements: `StorageBackend`, `SupportsVersions`, `SupportsTrash`, `SupportsSearch`, `SupportsFileChunks`.
 
 ### Permission
 
@@ -429,6 +435,8 @@ Permission.READ_ONLY   # Reads and listings only
 | `SupportsVersions` | `list_versions`, `get_version_content`, `restore_version` |
 | `SupportsTrash` | `list_trash`, `restore_from_trash`, `empty_trash` |
 | `SupportsReconcile` | `reconcile` |
+| `SupportsSearch` | `search` — semantic search backed by a per-mount search engine |
+| `SupportsFileChunks` | `replace_file_chunks`, `delete_file_chunks`, `list_file_chunks` |
 
 All protocols are `runtime_checkable`. Implement `StorageBackend` for a minimal custom backend; add optional protocols as needed.
 

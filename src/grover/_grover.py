@@ -341,9 +341,10 @@ class Grover:
         self,
         *,
         personalization: dict[str, float] | None = None,
+        path: str | None = None,
     ) -> dict[str, float]:
         """Run PageRank on the knowledge graph."""
-        return self._async.pagerank(personalization=personalization)
+        return self._async.pagerank(personalization=personalization, path=path)
 
     def ancestors(self, path: str) -> set[str]:
         """All transitive predecessors of *path* in the knowledge graph."""
@@ -378,17 +379,19 @@ class Grover:
             edge_types=edge_types,
         )
 
-    def find_nodes(self, **attrs: Any) -> list[str]:
+    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> list[str]:
         """Find graph nodes matching all attribute predicates."""
-        return self._async.find_nodes(**attrs)
+        return self._async.find_nodes(path=path, **attrs)
 
     # ------------------------------------------------------------------
     # Search wrapper (sync)
     # ------------------------------------------------------------------
 
-    def search(self, query: str, k: int = 10) -> list[SearchResult]:
+    def search(
+        self, query: str, k: int = 10, *, path: str = "/", user_id: str | None = None
+    ) -> list[SearchResult]:
         """Semantic search over indexed content."""
-        return self._run(self._async.search(query, k))
+        return self._run(self._async.search(query, k, path=path, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Index and persistence
@@ -411,7 +414,6 @@ class Grover:
         """The underlying ``VFS`` (for advanced async use)."""
         return self._async.fs
 
-    @property
-    def graph(self) -> GraphStore:
-        """The knowledge graph."""
-        return self._async.graph
+    def get_graph(self, path: str | None = None) -> GraphStore:
+        """Return the graph for the mount owning *path*, or the first available."""
+        return self._async.get_graph(path)

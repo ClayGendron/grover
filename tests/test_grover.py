@@ -193,15 +193,15 @@ class TestGroverFilesystem:
 
 
 class TestGroverGraph:
-    def test_graph_property(self, grover: Grover):
-        assert isinstance(grover.graph, RustworkxGraph)
-        assert grover.graph is grover._async.graph
+    def test_get_graph(self, grover: Grover):
+        assert isinstance(grover.get_graph(), RustworkxGraph)
+        assert grover.get_graph() is grover._async.get_graph()
 
     def test_dependents_after_write(self, grover: Grover):
         code = 'import os\n\ndef hello():\n    return "hi"\n'
         grover.write("/project/app.py", code)
         # File should be in graph now
-        assert grover.graph.has_node("/project/app.py")
+        assert grover.get_graph().has_node("/project/app.py")
         # Check dependents doesn't crash (may be empty if no other file depends on it)
         deps = grover.dependents("/project/app.py")
         assert isinstance(deps, list)
@@ -248,7 +248,11 @@ class TestGroverSearch:
         assert results == []
 
     def test_search_raises_without_provider(self, grover_no_search: Grover):
-        if grover_no_search._async._search_engine is not None:
+        has_search = any(
+            getattr(m.backend, "_search_engine", None) is not None
+            for m in grover_no_search._async._registry.list_visible_mounts()
+        )
+        if has_search:
             pytest.skip("sentence-transformers is installed; search available")
         with pytest.raises(RuntimeError, match="Search is not available"):
             grover_no_search.search("anything")
@@ -275,7 +279,7 @@ class TestGroverIndex:
     def test_index_builds_graph(self, grover: Grover, workspace: Path):
         (workspace / "main.py").write_text("def main():\n    pass\n")
         grover.index()
-        assert grover.graph.has_node("/project/main.py")
+        assert grover.get_graph().has_node("/project/main.py")
 
     def test_index_returns_stats(self, grover: Grover, workspace: Path):
         (workspace / "a.py").write_text("def a():\n    pass\n")
@@ -293,9 +297,9 @@ class TestGroverIndex:
 
         grover.index()
         # The .grover file should NOT be indexed
-        assert not grover.graph.has_node("/project/.grover/chunks/stale.txt")
+        assert not grover.get_graph().has_node("/project/.grover/chunks/stale.txt")
         # But the real file should be
-        assert grover.graph.has_node("/project/real.py")
+        assert grover.get_graph().has_node("/project/real.py")
 
 
 # ==================================================================
@@ -306,7 +310,7 @@ class TestGroverIndex:
 class TestGroverEventHandlers:
     def test_write_updates_graph(self, grover: Grover):
         grover.write("/project/mod.py", "def work():\n    pass\n")
-        assert grover.graph.has_node("/project/mod.py")
+        assert grover.get_graph().has_node("/project/mod.py")
 
     def test_write_updates_search(self, grover: Grover):
         grover.write(
@@ -318,25 +322,25 @@ class TestGroverEventHandlers:
 
     def test_delete_removes_from_graph(self, grover: Grover):
         grover.write("/project/gone.py", "def gone():\n    pass\n")
-        assert grover.graph.has_node("/project/gone.py")
+        assert grover.get_graph().has_node("/project/gone.py")
         grover.delete("/project/gone.py")
-        assert not grover.graph.has_node("/project/gone.py")
+        assert not grover.get_graph().has_node("/project/gone.py")
 
     def test_delete_removes_from_search(self, grover: Grover):
         grover.write(
             "/project/vanish.py",
             "def vanishing_function():\n    pass\n",
         )
-        # Verify it's in search
-        assert grover._async._search_engine is not None
-        assert grover._async._search_engine.has(
-            "/.grover/chunks/project/vanish_py/vanishing_function.txt"
+        # Verify it's in search (search engine is now per-mount on the backend)
+        mount = next(
+            m for m in grover._async._registry.list_visible_mounts() if m.mount_path == "/project"
         )
+        se = getattr(mount.backend, "_search_engine", None)
+        assert se is not None
+        assert se.has("/.grover/chunks/project/vanish_py/vanishing_function.txt")
         grover.delete("/project/vanish.py")
         # Should be removed from search
-        assert not grover._async._search_engine.has(
-            "/.grover/chunks/project/vanish_py/vanishing_function.txt"
-        )
+        assert not se.has("/.grover/chunks/project/vanish_py/vanishing_function.txt")
 
 
 # ==================================================================
@@ -361,7 +365,8 @@ class TestGroverPersistence:
 
         data_dir = grover._async._meta_data_dir
         assert data_dir is not None
-        search_dir = data_dir / "search"
+        # Search index saved per-mount under data_dir/search/{slug}
+        search_dir = data_dir / "search" / "project"
         assert (search_dir / "search_meta.json").exists()
         assert (search_dir / "search.usearch").exists()
 
@@ -385,7 +390,7 @@ class TestGroverPersistence:
         )
         g2.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
         try:
-            assert g2.graph.has_node("/project/keep.py")
+            assert g2.get_graph().has_node("/project/keep.py")
             # Search index should also be loaded
             results = g2.search("keep")
             assert len(results) >= 1
@@ -402,7 +407,7 @@ class TestGroverEdgeCases:
     def test_unsupported_file_type_embedded(self, grover: Grover):
         """Non-analyzable files should be embedded as whole files."""
         grover.write("/project/readme.txt", "This is a readme file")
-        assert grover.graph.has_node("/project/readme.txt")
+        assert grover.get_graph().has_node("/project/readme.txt")
         # Should be searchable as whole file
         results = grover.search("readme")
         assert len(results) >= 1
@@ -417,7 +422,7 @@ class TestGroverEdgeCases:
         bad_code = "def broken(\n    # missing close paren and body"
         grover.write("/project/bad.py", bad_code)
         # Should not raise
-        assert grover.graph.has_node("/project/bad.py")
+        assert grover.get_graph().has_node("/project/bad.py")
 
 
 # ==================================================================
