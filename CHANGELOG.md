@@ -4,6 +4,24 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.3] — 2026-02-19
+
+### Added
+
+- **Graph protocol hierarchy** — `GraphStore` core protocol + 7 capability protocols (`SupportsCentrality`, `SupportsConnectivity`, `SupportsTraversal`, `SupportsSubgraph`, `SupportsFiltering`, `SupportsNodeSimilarity`, `SupportsPersistence`), following the same `@runtime_checkable` pattern as the filesystem layer.
+- **Graph algorithms** — Centrality (PageRank, betweenness, closeness, katz, degree), connectivity (weakly/strongly connected components), and traversal (ancestors, descendants, topological sort, shortest paths, all simple paths) on `RustworkxGraph`.
+- **Subgraph extraction** — `subgraph()`, `neighborhood()` (BFS with direction/edge-type filters), `meeting_subgraph()` (pairwise shortest paths + PageRank scoring + pruning), and `common_reachable()`.
+- **Graph filtering** — `find_nodes()` with callable predicates or equality matching, `find_edges()` by type/source/target, `edges_of()` with direction filtering.
+- **Node similarity** — Jaccard coefficient via `node_similarity()` and `similar_nodes()` (top-k).
+- **`SubgraphResult` type** — Frozen dataclass with deep immutability (`tuple` fields, `MappingProxyType` scores).
+- **Public API surface** — `GraphStore` and `SubgraphResult` exported from `grover`. Convenience wrappers on `Grover`/`GroverAsync` for `pagerank`, `ancestors`, `descendants`, `meeting_subgraph`, `neighborhood`, `find_nodes` with `isinstance`-based capability checking.
+
+### Changed
+
+- **`Graph` → `RustworkxGraph`** — Renamed with no backward-compatible alias. All imports migrated.
+- **`GroverAsync.graph` is now a public attribute** typed as `GraphStore` (was `self._graph`).
+- Removed `SentenceTransformerProvider` backward-compat alias — use `SentenceTransformerEmbedding`.
+
 ## [0.0.2] — 2026-02-17
 
 ### Added
