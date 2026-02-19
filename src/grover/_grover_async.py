@@ -39,7 +39,7 @@ from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
-from grover.search._index import SearchIndex, SearchResult
+from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
 
 if TYPE_CHECKING:
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from grover.fs.protocol import StorageBackend
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
+    from grover.search.types import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class GroverAsync:
         *,
         data_dir: str | Path | None = None,
         embedding_provider: Any = None,
+        vector_store: Any = None,
     ) -> None:
         self._explicit_data_dir = Path(data_dir) if data_dir else None
         self._closed = False
@@ -94,25 +96,39 @@ class GroverAsync:
         self._meta_fs: LocalFileSystem | None = None
         self._meta_data_dir: Path | None = None
 
-        # Search index (optional)
-        self._search_index: SearchIndex | None = None
-        if embedding_provider is not None:
-            self._search_index = SearchIndex(embedding_provider)
-        else:
-            try:
-                from grover.search.providers.sentence_transformers import (
-                    SentenceTransformerProvider,
-                )
-
-                self._search_index = SearchIndex(SentenceTransformerProvider())
-            except Exception:
-                logger.debug("No embedding provider available; search disabled")
+        # Search engine (optional)
+        self._search_engine: SearchEngine | None = None
+        self._search_engine = self._init_search(embedding_provider, vector_store)
 
         # Register event handlers
         self._event_bus.register(EventType.FILE_WRITTEN, self._on_file_written)
         self._event_bus.register(EventType.FILE_DELETED, self._on_file_deleted)
         self._event_bus.register(EventType.FILE_MOVED, self._on_file_moved)
         self._event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
+
+    def _init_search(
+        self, embedding_provider: Any, vector_store: Any
+    ) -> SearchEngine | None:
+        """Build a SearchEngine from the provided or auto-discovered components."""
+        from grover.search.stores.local import LocalVectorStore
+
+        if vector_store is not None:
+            return SearchEngine(vector_store, embedding_provider)
+
+        # Auto-discover embedding provider if not provided
+        if embedding_provider is None:
+            try:
+                from grover.search.providers.sentence_transformers import (
+                    SentenceTransformerProvider,
+                )
+
+                embedding_provider = SentenceTransformerProvider()
+            except Exception:
+                logger.debug("No embedding provider available; search disabled")
+                return None
+
+        store = LocalVectorStore(dimension=embedding_provider.dimensions)
+        return SearchEngine(store, embedding_provider)
 
     # ------------------------------------------------------------------
     # Mount / Unmount
@@ -312,8 +328,8 @@ class GroverAsync:
         for node in nodes_to_remove:
             if self._graph.has_node(node):
                 self._graph.remove_file_subgraph(node)
-            if self._search_index is not None:
-                self._search_index.remove_file(node)
+            if self._search_engine is not None:
+                await self._search_engine.remove_file(node)
 
     # ------------------------------------------------------------------
     # Internal metadata mount
@@ -390,12 +406,12 @@ class GroverAsync:
         except Exception:
             logger.debug("No existing graph state to load", exc_info=True)
 
-        if self._search_index is not None and self._meta_data_dir is not None:
+        if self._search_engine is not None and self._meta_data_dir is not None:
             search_dir = self._meta_data_dir / "search"
             meta_file = search_dir / "search_meta.json"
             if meta_file.exists():
                 try:
-                    self._search_index.load(str(search_dir))
+                    self._search_engine.load(str(search_dir))
                 except Exception:
                     logger.debug("Failed to load search index", exc_info=True)
 
@@ -424,8 +440,8 @@ class GroverAsync:
             return
         if self._graph.has_node(event.path):
             self._graph.remove_file_subgraph(event.path)
-        if self._search_index is not None:
-            self._search_index.remove_file(event.path)
+        if self._search_engine is not None:
+            await self._search_engine.remove_file(event.path)
 
     async def _on_file_moved(self, event: FileEvent) -> None:
         if self._meta_fs is None:
@@ -433,8 +449,8 @@ class GroverAsync:
         if event.old_path and "/.grover/" not in event.old_path:
             if self._graph.has_node(event.old_path):
                 self._graph.remove_file_subgraph(event.old_path)
-            if self._search_index is not None:
-                self._search_index.remove_file(event.old_path)
+            if self._search_engine is not None:
+                await self._search_engine.remove_file(event.old_path)
 
         if "/.grover/" in event.path:
             return
@@ -456,8 +472,8 @@ class GroverAsync:
 
         if self._graph.has_node(path):
             self._graph.remove_file_subgraph(path)
-        if self._search_index is not None:
-            self._search_index.remove_file(path)
+        if self._search_engine is not None:
+            await self._search_engine.remove_file(path)
 
         self._graph.add_node(path)
 
@@ -483,15 +499,15 @@ class GroverAsync:
                 self._graph.add_edge(edge.source, edge.target, edge.edge_type, **meta)
                 stats["edges_added"] += 1
 
-            if self._search_index is not None:
+            if self._search_engine is not None:
                 embeddable = extract_from_chunks(chunks)
                 if embeddable:
-                    self._search_index.add_batch(embeddable)
+                    await self._search_engine.add_batch(embeddable)
         else:
-            if self._search_index is not None:
+            if self._search_engine is not None:
                 embeddable = extract_from_file(path, content)
                 if embeddable:
-                    self._search_index.add_batch(embeddable)
+                    await self._search_engine.add_batch(embeddable)
 
         return stats
 
@@ -871,13 +887,13 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     async def search(self, query: str, k: int = 10) -> list[SearchResult]:
-        if self._search_index is None:
+        if self._search_engine is None:
             msg = (
                 "Search is not available: no embedding provider configured. "
                 "Install sentence-transformers or pass embedding_provider= to GroverAsync()."
             )
             raise RuntimeError(msg)
-        return self._search_index.search(query, k)
+        return await self._search_engine.search(query, k)
 
     # ------------------------------------------------------------------
     # Index and persistence
@@ -946,9 +962,9 @@ class GroverAsync:
                     assert session is not None
                     await self._graph.to_sql(session)
 
-        if self._search_index is not None and self._meta_data_dir is not None:
+        if self._search_engine is not None and self._meta_data_dir is not None:
             search_dir = self._meta_data_dir / "search"
-            self._search_index.save(str(search_dir))
+            self._search_engine.save(str(search_dir))
 
     # ------------------------------------------------------------------
     # Lifecycle

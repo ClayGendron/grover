@@ -5,20 +5,19 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import FrozenInstanceError
-from pathlib import Path
 
 import pytest
 
 from grover.graph.analyzers._base import ChunkFile
 from grover.ref import Ref
-from grover.search._index import SearchIndex, SearchResult, _content_hash
 from grover.search.extractors import (
     EmbeddableChunk,
     extract_from_chunks,
     extract_from_file,
 )
-from grover.search.providers._protocol import EmbeddingProvider
+from grover.search.protocols import EmbeddingProvider
 from grover.search.providers.sentence_transformers import SentenceTransformerProvider
+from grover.search.types import SearchResult
 
 # ------------------------------------------------------------------
 # Fake provider for fast, deterministic unit tests
@@ -236,257 +235,6 @@ class TestSentenceTransformerProvider:
 
 
 # ==================================================================
-# SearchIndex — core operations
-# ==================================================================
-
-
-class TestSearchIndex:
-    def test_add_single_entry(self):
-        idx = SearchIndex(FakeProvider())
-        key = idx.add("/a.py", "def foo(): pass")
-        assert key == 0
-        assert len(idx) == 1
-        assert idx.has("/a.py")
-
-    def test_add_with_parent_path(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/.grover/chunks/a_py/foo.txt", "def foo(): pass", parent_path="/a.py")
-        results = idx.search("def foo(): pass")
-        assert results[0].parent_path == "/a.py"
-
-    def test_add_batch(self):
-        idx = SearchIndex(FakeProvider())
-        entries = [
-            EmbeddableChunk(path="/a.py", content="def foo(): pass"),
-            EmbeddableChunk(path="/b.py", content="class Bar: pass"),
-            EmbeddableChunk(path="/c.py", content="x = 42", parent_path="/pkg.py"),
-        ]
-        keys = idx.add_batch(entries)
-        assert len(keys) == 3
-        assert len(idx) == 3
-        assert idx.has("/a.py")
-        assert idx.has("/b.py")
-        assert idx.has("/c.py")
-
-    def test_add_batch_empty(self):
-        idx = SearchIndex(FakeProvider())
-        keys = idx.add_batch([])
-        assert keys == []
-        assert len(idx) == 0
-
-    def test_search_returns_results(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "def foo(): pass")
-        idx.add("/b.py", "class Bar: pass")
-        results = idx.search("def foo(): pass")
-        assert len(results) >= 1
-        assert all(isinstance(r, SearchResult) for r in results)
-
-    def test_search_scores_sorted_descending(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "alpha")
-        idx.add("/b.py", "beta")
-        idx.add("/c.py", "gamma")
-        results = idx.search("alpha", k=3)
-        scores = [r.score for r in results]
-        assert scores == sorted(scores, reverse=True)
-
-    def test_search_best_match_is_exact(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "def foo(): pass")
-        idx.add("/b.py", "class Bar: pass")
-        results = idx.search("def foo(): pass")
-        # Exact text should produce the highest score
-        assert results[0].ref.path == "/a.py"
-        assert results[0].score == pytest.approx(1.0, abs=0.01)
-
-    def test_remove_by_path(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "content a")
-        idx.add("/b.py", "content b")
-        assert len(idx) == 2
-        idx.remove("/a.py")
-        assert len(idx) == 1
-        assert not idx.has("/a.py")
-        assert idx.has("/b.py")
-
-    def test_remove_file_removes_children(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "file content")
-        idx.add("/.grover/chunks/a_py/foo.txt", "def foo(): pass", parent_path="/a.py")
-        idx.add("/.grover/chunks/a_py/bar.txt", "def bar(): pass", parent_path="/a.py")
-        idx.add("/b.py", "other file")
-        assert len(idx) == 4
-
-        idx.remove_file("/a.py")
-        assert len(idx) == 1
-        assert not idx.has("/a.py")
-        assert not idx.has("/.grover/chunks/a_py/foo.txt")
-        assert not idx.has("/.grover/chunks/a_py/bar.txt")
-        assert idx.has("/b.py")
-
-    def test_has_returns_false_for_missing(self):
-        idx = SearchIndex(FakeProvider())
-        assert not idx.has("/nonexistent.py")
-
-    def test_content_hash(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "hello world")
-        expected = hashlib.sha256(b"hello world").hexdigest()
-        assert idx.content_hash("/a.py") == expected
-
-    def test_content_hash_missing(self):
-        idx = SearchIndex(FakeProvider())
-        assert idx.content_hash("/missing.py") is None
-
-    def test_len(self):
-        idx = SearchIndex(FakeProvider())
-        assert len(idx) == 0
-        idx.add("/a.py", "content")
-        assert len(idx) == 1
-        idx.add("/b.py", "content")
-        assert len(idx) == 2
-
-    def test_search_with_k(self):
-        idx = SearchIndex(FakeProvider())
-        for i in range(10):
-            idx.add(f"/file{i}.py", f"content number {i}")
-        results = idx.search("content number 5", k=3)
-        assert len(results) == 3
-
-    def test_search_result_contains_ref(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "hello world")
-        results = idx.search("hello world")
-        assert isinstance(results[0].ref, Ref)
-        assert results[0].ref.path == "/a.py"
-
-    def test_search_result_contains_content(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "hello world")
-        results = idx.search("hello world")
-        assert results[0].content == "hello world"
-
-
-# ==================================================================
-# SearchIndex — edge cases
-# ==================================================================
-
-
-class TestSearchIndexEdgeCases:
-    def test_search_empty_index(self):
-        idx = SearchIndex(FakeProvider())
-        results = idx.search("anything")
-        assert results == []
-
-    def test_remove_nonexistent_path_no_error(self):
-        idx = SearchIndex(FakeProvider())
-        idx.remove("/nonexistent.py")  # should not raise
-
-    def test_add_duplicate_path_overwrites(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "version 1")
-        assert len(idx) == 1
-        assert idx.content_hash("/a.py") == _content_hash("version 1")
-
-        idx.add("/a.py", "version 2")
-        assert len(idx) == 1
-        assert idx.content_hash("/a.py") == _content_hash("version 2")
-
-    def test_add_batch_duplicate_path_overwrites(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "old content")
-        entries = [
-            EmbeddableChunk(path="/a.py", content="new content"),
-            EmbeddableChunk(path="/b.py", content="b content"),
-        ]
-        idx.add_batch(entries)
-        assert len(idx) == 2
-        assert idx.content_hash("/a.py") == _content_hash("new content")
-
-    def test_remove_file_without_children(self):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "content")
-        idx.remove_file("/a.py")
-        assert len(idx) == 0
-
-    def test_remove_file_nonexistent(self):
-        idx = SearchIndex(FakeProvider())
-        idx.remove_file("/ghost.py")  # should not raise
-        assert len(idx) == 0
-
-
-# ==================================================================
-# SearchIndex — persistence
-# ==================================================================
-
-
-class TestSearchIndexPersistence:
-    def test_save_load_roundtrip(self, tmp_path):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "hello world")
-        idx.add("/b.py", "class Foo: pass", parent_path=None)
-        idx.add("/.grover/chunks/c_py/bar.txt", "def bar():", parent_path="/c.py")
-
-        save_dir = str(tmp_path / "index")
-        idx.save(save_dir)
-
-        idx2 = SearchIndex.from_directory(save_dir, FakeProvider())
-        assert len(idx2) == 3
-        assert idx2.has("/a.py")
-        assert idx2.has("/b.py")
-        assert idx2.has("/.grover/chunks/c_py/bar.txt")
-
-    def test_search_works_after_load(self, tmp_path):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "machine learning model training")
-        idx.add("/b.py", "database connection pooling")
-
-        save_dir = str(tmp_path / "index")
-        idx.save(save_dir)
-
-        idx2 = SearchIndex.from_directory(save_dir, FakeProvider())
-        results = idx2.search("machine learning model training")
-        assert len(results) >= 1
-        assert results[0].ref.path == "/a.py"
-
-    def test_metadata_preserved(self, tmp_path):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/.grover/chunks/a_py/foo.txt", "def foo(): pass", parent_path="/a.py")
-
-        save_dir = str(tmp_path / "index")
-        idx.save(save_dir)
-
-        idx2 = SearchIndex.from_directory(save_dir, FakeProvider())
-        assert idx2.content_hash("/.grover/chunks/a_py/foo.txt") == _content_hash("def foo(): pass")
-        results = idx2.search("def foo(): pass")
-        assert results[0].parent_path == "/a.py"
-
-    def test_save_creates_two_files(self, tmp_path):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "content")
-
-        save_dir = str(tmp_path / "index")
-        idx.save(save_dir)
-
-        assert (Path(save_dir) / "search.usearch").exists()
-        assert (Path(save_dir) / "search_meta.json").exists()
-
-    def test_next_key_preserved(self, tmp_path):
-        idx = SearchIndex(FakeProvider())
-        idx.add("/a.py", "first")
-        idx.add("/b.py", "second")
-
-        save_dir = str(tmp_path / "index")
-        idx.save(save_dir)
-
-        idx2 = SearchIndex.from_directory(save_dir, FakeProvider())
-        # New key should continue from where we left off
-        new_key = idx2.add("/c.py", "third")
-        assert new_key == 2
-
-
-# ==================================================================
 # Integration tests — real SentenceTransformerProvider (slow)
 # ==================================================================
 
@@ -513,16 +261,6 @@ class TestSentenceTransformerIntegration:
     def test_dimensions_property(self):
         provider = SentenceTransformerProvider()
         assert provider.dimensions == 384
-
-    def test_search_finds_relevant_results(self):
-        provider = SentenceTransformerProvider()
-        idx = SearchIndex(provider)
-        idx.add("/auth.py", "def login(username, password): authenticate user credentials")
-        idx.add("/math.py", "def calculate_area(radius): return pi * radius * radius")
-        idx.add("/db.py", "def connect_database(host, port): establish database connection")
-
-        results = idx.search("user authentication login", k=3)
-        assert results[0].ref.path == "/auth.py"
 
     def test_protocol_satisfied_at_runtime(self):
         provider = SentenceTransformerProvider()

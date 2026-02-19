@@ -12,7 +12,7 @@ from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph._graph import Graph
 from grover.ref import Ref
-from grover.search._index import SearchResult
+from grover.search.types import SearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -315,7 +315,7 @@ class TestGroverAsyncSearch:
 
     @pytest.mark.asyncio
     async def test_search_raises_without_provider(self, grover_no_search: GroverAsync):
-        if grover_no_search._search_index is not None:
+        if grover_no_search._search_engine is not None:
             pytest.skip("sentence-transformers is installed; search available")
         with pytest.raises(RuntimeError, match="Search is not available"):
             await grover_no_search.search("anything")
@@ -484,11 +484,11 @@ class TestGroverAsyncEventHandlers:
         assert grover.graph.has_node("/project/new.py")
 
     @pytest.mark.asyncio
-    async def test_move_updates_search_index(self, grover: GroverAsync):
+    async def test_move_updates_search_engine(self, grover: GroverAsync):
         code = 'def unique_search_target():\n    """Locate me after move."""\n    pass\n'
         await grover.write("/project/before.py", code)
         await grover.fs.move("/project/before.py", "/project/after.py")
-        if grover._search_index is not None:
+        if grover._search_engine is not None:
             results = await grover.search("unique_search_target")
             found_paths = [r.ref.path for r in results]
             found_parents = [r.parent_path for r in results if r.parent_path]
@@ -597,7 +597,7 @@ class TestGroverAsyncUnsupportedFiles:
         # .txt has no Python analyzer, but the whole file should be indexed
         await grover.write("/project/notes.txt", "Important project notes here")
         assert grover.graph.has_node("/project/notes.txt")
-        if grover._search_index is not None:
+        if grover._search_engine is not None:
             results = await grover.search("Important project notes")
             assert len(results) >= 1
 

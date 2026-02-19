@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from grover.graph._graph import Graph
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
-    from grover.search._index import SearchResult
+    from grover.search.types import SearchResult
 
 
 class Grover:
@@ -53,6 +53,7 @@ class Grover:
         *,
         data_dir: str | None = None,
         embedding_provider: Any = None,
+        vector_store: Any = None,
     ) -> None:
         self._closed = False
         self._lock = threading.RLock()
@@ -65,6 +66,7 @@ class Grover:
         self._async = GroverAsync(
             data_dir=data_dir,
             embedding_provider=embedding_provider,
+            vector_store=vector_store,
         )
 
     # ------------------------------------------------------------------

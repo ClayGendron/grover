@@ -14,7 +14,7 @@ import pytest
 from grover._grover import Grover
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph._graph import Graph
-from grover.search._index import SearchResult
+from grover.search.types import SearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -248,7 +248,7 @@ class TestGroverSearch:
         assert results == []
 
     def test_search_raises_without_provider(self, grover_no_search: Grover):
-        if grover_no_search._async._search_index is not None:
+        if grover_no_search._async._search_engine is not None:
             pytest.skip("sentence-transformers is installed; search available")
         with pytest.raises(RuntimeError, match="Search is not available"):
             grover_no_search.search("anything")
@@ -328,13 +328,13 @@ class TestGroverEventHandlers:
             "def vanishing_function():\n    pass\n",
         )
         # Verify it's in search
-        assert grover._async._search_index is not None
-        assert grover._async._search_index.has(
+        assert grover._async._search_engine is not None
+        assert grover._async._search_engine.has(
             "/.grover/chunks/project/vanish_py/vanishing_function.txt"
         )
         grover.delete("/project/vanish.py")
         # Should be removed from search
-        assert not grover._async._search_index.has(
+        assert not grover._async._search_engine.has(
             "/.grover/chunks/project/vanish_py/vanishing_function.txt"
         )
 

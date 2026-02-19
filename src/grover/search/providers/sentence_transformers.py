@@ -37,7 +37,7 @@ class SentenceTransformerEmbedding:
         return self._model
 
     # ------------------------------------------------------------------
-    # Sync methods (used by the legacy SearchIndex)
+    # Sync methods
     # ------------------------------------------------------------------
 
     def embed_sync(self, text: str) -> list[float]:
