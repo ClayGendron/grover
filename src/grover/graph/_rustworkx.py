@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import rustworkx
 
+from grover.graph.types import SubgraphResult, subgraph_result
 from grover.ref import Ref
 
 if TYPE_CHECKING:
@@ -465,6 +466,154 @@ class RustworkxGraph:
         return result.get(tgt_idx)
 
     # ------------------------------------------------------------------
+    # Subgraph extraction (SupportsSubgraph)
+    # ------------------------------------------------------------------
+
+    def subgraph(self, paths: list[str]) -> SubgraphResult:
+        """Extract the induced subgraph for the given *paths*.
+
+        Missing paths are silently skipped.
+        """
+        valid = {p for p in paths if p in self._path_to_idx}
+        edges: list[tuple[str, str, dict[str, Any]]] = []
+        for src, tgt, data in self.edges():
+            if src in valid and tgt in valid:
+                edges.append((src, tgt, data))
+        return subgraph_result(sorted(valid), edges)
+
+    def neighborhood(
+        self,
+        path: str,
+        *,
+        max_depth: int = 2,
+        direction: str = "both",
+        edge_types: list[str] | None = None,
+    ) -> SubgraphResult:
+        """BFS neighborhood around *path* up to *max_depth* hops.
+
+        Parameters
+        ----------
+        direction:
+            ``"out"`` = successors only, ``"in"`` = predecessors only,
+            ``"both"`` = both.
+        edge_types:
+            If provided, only traverse edges matching these types.
+        """
+        self._require_node(path)
+        visited: set[str] = {path}
+        frontier: set[str] = {path}
+
+        for _ in range(max_depth):
+            next_frontier: set[str] = set()
+            for node in frontier:
+                idx = self._path_to_idx[node]
+                neighbors: list[int] = []
+                if direction in ("out", "both"):
+                    neighbors.extend(self._graph.successor_indices(idx))
+                if direction in ("in", "both"):
+                    neighbors.extend(self._graph.predecessor_indices(idx))
+                for n_idx in neighbors:
+                    n_path = self._idx_to_path.get(n_idx)
+                    if n_path is None or n_path in visited:
+                        continue
+                    # Edge type filter
+                    if (
+                        edge_types is not None
+                        and not self._has_edge_of_type(idx, n_idx, edge_types, direction)
+                    ):
+                        continue
+                    visited.add(n_path)
+                    next_frontier.add(n_path)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return self.subgraph(sorted(visited))
+
+    def meeting_subgraph(
+        self, start_paths: list[str], *, max_size: int = 50,
+    ) -> SubgraphResult:
+        """Find the subgraph connecting *start_paths* via shortest paths.
+
+        Algorithm:
+        1. Filter to valid start paths (need ≥ 2, else trivial subgraph).
+        2. For each pair, find shortest path. Collect all intermediate nodes.
+        3. If no pairwise connections, try common descendants.
+        4. Score with PageRank (personalized on start nodes).
+        5. Prune to *max_size* by removing lowest-score non-start nodes.
+        """
+        valid_starts = [p for p in start_paths if p in self._path_to_idx]
+        if len(valid_starts) <= 1:
+            return self.subgraph(valid_starts)
+
+        # Step 1: collect all nodes on pairwise shortest paths
+        all_nodes: set[str] = set(valid_starts)
+        found_connection = False
+        for i, src in enumerate(valid_starts):
+            for tgt in valid_starts[i + 1 :]:
+                path = self.path_between(src, tgt)
+                if path is not None:
+                    found_connection = True
+                    for ref in path:
+                        all_nodes.add(ref.path)
+                # Also try reverse direction
+                path_rev = self.path_between(tgt, src)
+                if path_rev is not None:
+                    found_connection = True
+                    for ref in path_rev:
+                        all_nodes.add(ref.path)
+
+        # Step 2: if no pairwise connections, try common descendants
+        if not found_connection:
+            common = self.common_reachable(valid_starts, direction="forward")
+            # Take up to 5 closest common nodes
+            for node in list(common)[:5]:
+                all_nodes.add(node)
+
+        # Step 3: score with personalized PageRank
+        pers = dict.fromkeys(valid_starts, 1.0)
+        scores = self.pagerank(personalization=pers)
+
+        # Step 4: prune to max_size
+        start_set = set(valid_starts)
+        node_list = sorted(all_nodes)
+        while len(node_list) > max_size:
+            # Find lowest-score non-start node
+            worst: str | None = None
+            worst_score = float("inf")
+            for n in node_list:
+                if n in start_set:
+                    continue
+                s = scores.get(n, 0.0)
+                if s < worst_score:
+                    worst_score = s
+                    worst = n
+            if worst is None:
+                break
+            node_list.remove(worst)
+
+        # Build subgraph result with scores for included nodes
+        sub = self.subgraph(node_list)
+        sub_scores = {n: scores.get(n, 0.0) for n in sub.nodes}
+        return subgraph_result(list(sub.nodes), list(sub.edges), sub_scores)
+
+    def common_reachable(
+        self, paths: list[str], *, direction: str = "forward",
+    ) -> set[str]:
+        """Intersection of descendants (forward) or ancestors (reverse)."""
+        valid = [p for p in paths if p in self._path_to_idx]
+        if not valid:
+            return set()
+        if direction == "forward":
+            sets = [self.descendants(p) for p in valid]
+        else:
+            sets = [self.ancestors(p) for p in valid]
+        result = sets[0]
+        for s in sets[1:]:
+            result = result & s
+        return result
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
@@ -582,3 +731,21 @@ class RustworkxGraph:
         except Exception:
             return None
         return indices[0] if indices else None
+
+    def _has_edge_of_type(
+        self, node_idx: int, neighbor_idx: int,
+        edge_types: list[str], direction: str,
+    ) -> bool:
+        """Check if there's an edge of one of *edge_types* between node and neighbor."""
+        pairs: list[tuple[int, int]] = []
+        if direction in ("out", "both"):
+            pairs.append((node_idx, neighbor_idx))
+        if direction in ("in", "both"):
+            pairs.append((neighbor_idx, node_idx))
+        for src, tgt in pairs:
+            edge_idx = self._find_edge_idx(src, tgt)
+            if edge_idx is not None:
+                data = self._graph.get_edge_data_by_index(edge_idx)
+                if data.get("type") in edge_types:
+                    return True
+        return False

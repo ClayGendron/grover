@@ -12,7 +12,6 @@ from grover.graph.protocols import (
     SupportsFiltering,
     SupportsNodeSimilarity,
     SupportsPersistence,
-    SupportsSubgraph,
 )
 from grover.graph.types import SubgraphResult, subgraph_result
 
@@ -51,10 +50,6 @@ class TestSupportsPersistenceProtocol:
 
 
 class TestCapabilityProtocolsNotYetSatisfied:
-    def test_does_not_satisfy_subgraph(self) -> None:
-        g = RustworkxGraph()
-        assert not isinstance(g, SupportsSubgraph)
-
     def test_does_not_satisfy_filtering(self) -> None:
         g = RustworkxGraph()
         assert not isinstance(g, SupportsFiltering)
