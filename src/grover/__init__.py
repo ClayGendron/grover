@@ -9,6 +9,8 @@ from grover._grover import Grover
 from grover._grover_async import GroverAsync
 from grover.fs.types import ListSharesResult, ShareInfo, ShareResult
 from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.graph.protocols import GraphStore
+from grover.graph.types import SubgraphResult
 from grover.ref import Ref, file_ref
 from grover.search._engine import SearchEngine
 from grover.search.filters import (
@@ -51,6 +53,7 @@ from grover.search.types import (
 __all__ = [
     "EmbeddingProvider",
     "FilterExpression",
+    "GraphStore",
     "Grover",
     "GroverAsync",
     "IndexConfig",
@@ -62,6 +65,7 @@ __all__ = [
     "SearchResult",
     "ShareInfo",
     "ShareResult",
+    "SubgraphResult",
     "SupportsHybridSearch",
     "SupportsIndexLifecycle",
     "SupportsMetadataFilter",

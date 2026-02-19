@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     )
     from grover.fs.vfs import VFS
     from grover.graph.protocols import GraphStore
+    from grover.graph.types import SubgraphResult
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
     from grover.search.types import SearchResult
@@ -328,6 +329,47 @@ class Grover:
 
     def contains(self, path: str) -> list[Ref]:
         return self._async.contains(path)
+
+    # ------------------------------------------------------------------
+    # Graph algorithm wrappers (capability-checked)
+    # ------------------------------------------------------------------
+
+    def pagerank(
+        self, *, personalization: dict[str, float] | None = None,
+    ) -> dict[str, float]:
+        """Run PageRank on the knowledge graph."""
+        return self._async.pagerank(personalization=personalization)
+
+    def ancestors(self, path: str) -> set[str]:
+        """All transitive predecessors of *path* in the knowledge graph."""
+        return self._async.ancestors(path)
+
+    def descendants(self, path: str) -> set[str]:
+        """All transitive successors of *path* in the knowledge graph."""
+        return self._async.descendants(path)
+
+    def meeting_subgraph(
+        self, paths: list[str], *, max_size: int = 50,
+    ) -> SubgraphResult:
+        """Extract the subgraph connecting *paths* via shortest paths."""
+        return self._async.meeting_subgraph(paths, max_size=max_size)
+
+    def neighborhood(
+        self,
+        path: str,
+        *,
+        max_depth: int = 2,
+        direction: str = "both",
+        edge_types: list[str] | None = None,
+    ) -> SubgraphResult:
+        """Extract the neighborhood subgraph around *path*."""
+        return self._async.neighborhood(
+            path, max_depth=max_depth, direction=direction, edge_types=edge_types,
+        )
+
+    def find_nodes(self, **attrs: Any) -> list[str]:
+        """Find graph nodes matching all attribute predicates."""
+        return self._async.find_nodes(**attrs)
 
     # ------------------------------------------------------------------
     # Search wrapper (sync)

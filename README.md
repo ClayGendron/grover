@@ -74,6 +74,12 @@ g.dependents("/project/hello.py")    # what depends on hello.py?
 g.impacts("/project/hello.py")       # transitive impact analysis
 g.contains("/project/hello.py")      # functions and classes inside
 
+# Graph algorithms (centrality, traversal, subgraph extraction)
+scores = g.pagerank()                                     # PageRank centrality
+anc = g.ancestors("/project/main.py")                     # transitive predecessors
+sub = g.meeting_subgraph(["/project/a.py", "/project/b.py"])  # connecting subgraph
+nodes = g.find_nodes(lang="python")                       # filter by attributes
+
 # Semantic search (requires the search extra)
 results = g.search("greeting function", k=5)
 for r in results:
@@ -239,7 +245,7 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 | **Versioning** | `list_versions`, `get_version_content`, `restore_version` |
 | **Trash** | `list_trash`, `restore_from_trash`, `empty_trash` |
 | **Sharing** | `share`, `unshare`, `list_shares`, `list_shared_with_me` |
-| **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains` |
+| **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains`, `pagerank`, `ancestors`, `descendants`, `meeting_subgraph`, `neighborhood`, `find_nodes` |
 | **Search** | `search` |
 | **Lifecycle** | `mount`, `unmount`, `index`, `save`, `close` |
 

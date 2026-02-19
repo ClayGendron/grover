@@ -227,6 +227,28 @@ g.contains(path) -> list[Ref]
 | `path_between(source, target)` | Shortest path between two files using Dijkstra (weight-aware). Returns `None` if no path exists. |
 | `contains(path)` | Chunks (functions, classes) contained in this file. Returns nodes connected by `"contains"` edges. |
 
+### Graph Algorithms
+
+These convenience methods delegate to the graph backend. They raise `CapabilityNotSupportedError` if the backend doesn't support the required capability protocol.
+
+```python
+g.pagerank(*, personalization=None) -> dict[str, float]
+g.ancestors(path) -> set[str]
+g.descendants(path) -> set[str]
+g.meeting_subgraph(paths, *, max_size=50) -> SubgraphResult
+g.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> SubgraphResult
+g.find_nodes(**attrs) -> list[str]
+```
+
+| Method | Protocol | Description |
+|--------|----------|-------------|
+| `pagerank(personalization=None)` | `SupportsCentrality` | PageRank scores for all nodes. Optional `personalization` dict biases the random walk. |
+| `ancestors(path)` | `SupportsTraversal` | All transitive predecessors of a node. |
+| `descendants(path)` | `SupportsTraversal` | All transitive successors of a node. |
+| `meeting_subgraph(paths, max_size=50)` | `SupportsSubgraph` | Subgraph connecting multiple nodes via shortest paths, scored by PageRank. Pruned to `max_size` nodes. |
+| `neighborhood(path, max_depth=2, direction="both", edge_types=None)` | `SupportsSubgraph` | BFS neighborhood around a node. `direction`: `"out"`, `"in"`, or `"both"`. |
+| `find_nodes(**attrs)` | `SupportsFiltering` | Find nodes by attribute predicates. Callable values are used as predicates; non-callable values are matched by equality. |
+
 ### Search
 
 ```python
@@ -464,10 +486,59 @@ graph.contains(path) -> list[Ref]         # "contains" edges only
 graph.by_parent(path) -> list[Ref]        # Nodes with matching parent_path
 ```
 
-### Subgraph Operations
+### Centrality (`SupportsCentrality`)
 
 ```python
+graph.pagerank(*, alpha=0.85, personalization=None, max_iter=100, tol=1e-6) -> dict[str, float]
+graph.betweenness_centrality(*, normalized=True) -> dict[str, float]
+graph.closeness_centrality() -> dict[str, float]
+graph.katz_centrality(*, alpha=0.1, beta=1.0, max_iter=1000, tol=1e-6) -> dict[str, float]
+graph.degree_centrality() -> dict[str, float]
+graph.in_degree_centrality() -> dict[str, float]
+graph.out_degree_centrality() -> dict[str, float]
+```
+
+### Connectivity (`SupportsConnectivity`)
+
+```python
+graph.weakly_connected_components() -> list[set[str]]
+graph.strongly_connected_components() -> list[set[str]]
+graph.is_weakly_connected() -> bool
+```
+
+### Traversal (`SupportsTraversal`)
+
+```python
+graph.ancestors(path) -> set[str]
+graph.descendants(path) -> set[str]
+graph.all_simple_paths(source, target, *, cutoff=None) -> list[list[str]]
+graph.topological_sort() -> list[str]                   # Raises ValueError on cycles
+graph.shortest_path_length(source, target) -> float | None
+```
+
+### Subgraph Extraction (`SupportsSubgraph`)
+
+```python
+graph.subgraph(paths) -> SubgraphResult
+graph.neighborhood(path, *, max_depth=2, direction="both", edge_types=None) -> SubgraphResult
+graph.meeting_subgraph(start_paths, *, max_size=50) -> SubgraphResult
+graph.common_reachable(paths, *, direction="forward") -> set[str]
 graph.remove_file_subgraph(path)  # Remove node + all children
+```
+
+### Filtering (`SupportsFiltering`)
+
+```python
+graph.find_nodes(**attrs) -> list[str]                  # Callable or equality predicates
+graph.find_edges(*, edge_type=None, source=None, target=None) -> list[tuple[str, str, dict]]
+graph.edges_of(path, *, direction="both", edge_types=None) -> list[tuple[str, str, dict]]
+```
+
+### Node Similarity (`SupportsNodeSimilarity`)
+
+```python
+graph.node_similarity(path1, path2, *, method="jaccard") -> float
+graph.similar_nodes(path, *, method="jaccard", k=10) -> list[tuple[str, float]]
 ```
 
 ### Properties
@@ -504,6 +575,42 @@ Built-in analyzers:
 | JavaScript | `JavaScriptAnalyzer` | `treesitter` extra |
 | TypeScript | `TypeScriptAnalyzer` | `treesitter` extra |
 | Go | `GoAnalyzer` | `treesitter` extra |
+
+### Graph Protocols
+
+The graph API uses the same protocol pattern as the filesystem layer. `GraphStore` is the core protocol; capability protocols are opt-in. Check support with `isinstance()`:
+
+```python
+from grover.graph.protocols import (
+    GraphStore,              # Core: node/edge CRUD + basic queries
+    SupportsCentrality,      # PageRank, betweenness, closeness, katz, degree
+    SupportsConnectivity,    # Weakly/strongly connected components
+    SupportsTraversal,       # Ancestors, descendants, topological sort, shortest paths
+    SupportsSubgraph,        # Subgraph extraction, neighborhood, meeting subgraph
+    SupportsFiltering,       # Attribute-based node/edge filtering
+    SupportsNodeSimilarity,  # Jaccard structural similarity
+    SupportsPersistence,     # SQL persistence (to_sql / from_sql)
+)
+
+if isinstance(g.graph, SupportsCentrality):
+    scores = g.graph.pagerank()
+```
+
+`RustworkxGraph` implements all protocols. Custom graph backends only need to implement `GraphStore` plus whichever capabilities they support.
+
+### SubgraphResult
+
+```python
+from grover.graph.types import SubgraphResult
+```
+
+Frozen dataclass returned by subgraph extraction methods. Deeply immutable — `tuple` for sequences, `MappingProxyType` for scores.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nodes` | `tuple[str, ...]` | Node paths in the subgraph |
+| `edges` | `tuple[tuple[str, str, dict], ...]` | Edges with metadata |
+| `scores` | `MappingProxyType[str, float]` | Optional node scores (e.g., PageRank) |
 
 ---
 

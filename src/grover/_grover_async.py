@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from grover.fs.protocol import StorageBackend
     from grover.graph.protocols import GraphStore
+    from grover.graph.types import SubgraphResult
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
     from grover.search.types import SearchResult
@@ -885,6 +886,81 @@ class GroverAsync:
 
     def contains(self, path: str) -> list[Ref]:
         return self.graph.contains(path)
+
+    # ------------------------------------------------------------------
+    # Graph algorithm wrappers (capability-checked)
+    # ------------------------------------------------------------------
+
+    def pagerank(
+        self, *, personalization: dict[str, float] | None = None,
+    ) -> dict[str, float]:
+        """Run PageRank on the knowledge graph.
+
+        Raises :class:`~grover.fs.exceptions.CapabilityNotSupportedError` if
+        the graph backend does not support centrality algorithms.
+        """
+        from grover.graph.protocols import SupportsCentrality
+
+        if not isinstance(self.graph, SupportsCentrality):
+            msg = "Graph backend does not support centrality algorithms"
+            raise CapabilityNotSupportedError(msg)
+        return self.graph.pagerank(personalization=personalization)
+
+    def ancestors(self, path: str) -> set[str]:
+        """All transitive predecessors of *path* in the knowledge graph."""
+        from grover.graph.protocols import SupportsTraversal
+
+        if not isinstance(self.graph, SupportsTraversal):
+            msg = "Graph backend does not support traversal algorithms"
+            raise CapabilityNotSupportedError(msg)
+        return self.graph.ancestors(path)
+
+    def descendants(self, path: str) -> set[str]:
+        """All transitive successors of *path* in the knowledge graph."""
+        from grover.graph.protocols import SupportsTraversal
+
+        if not isinstance(self.graph, SupportsTraversal):
+            msg = "Graph backend does not support traversal algorithms"
+            raise CapabilityNotSupportedError(msg)
+        return self.graph.descendants(path)
+
+    def meeting_subgraph(
+        self, paths: list[str], *, max_size: int = 50,
+    ) -> SubgraphResult:
+        """Extract the subgraph connecting *paths* via shortest paths."""
+        from grover.graph.protocols import SupportsSubgraph
+
+        if not isinstance(self.graph, SupportsSubgraph):
+            msg = "Graph backend does not support subgraph extraction"
+            raise CapabilityNotSupportedError(msg)
+        return self.graph.meeting_subgraph(paths, max_size=max_size)
+
+    def neighborhood(
+        self,
+        path: str,
+        *,
+        max_depth: int = 2,
+        direction: str = "both",
+        edge_types: list[str] | None = None,
+    ) -> SubgraphResult:
+        """Extract the neighborhood subgraph around *path*."""
+        from grover.graph.protocols import SupportsSubgraph
+
+        if not isinstance(self.graph, SupportsSubgraph):
+            msg = "Graph backend does not support subgraph extraction"
+            raise CapabilityNotSupportedError(msg)
+        return self.graph.neighborhood(
+            path, max_depth=max_depth, direction=direction, edge_types=edge_types,
+        )
+
+    def find_nodes(self, **attrs: Any) -> list[str]:
+        """Find graph nodes matching all attribute predicates."""
+        from grover.graph.protocols import SupportsFiltering
+
+        if not isinstance(self.graph, SupportsFiltering):
+            msg = "Graph backend does not support filtering"
+            raise CapabilityNotSupportedError(msg)
+        return self.graph.find_nodes(**attrs)
 
     # ------------------------------------------------------------------
     # Search

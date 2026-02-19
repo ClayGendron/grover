@@ -304,3 +304,106 @@ def test_version_matches_pyproject() -> None:
     match = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', text, re.MULTILINE)
     assert match is not None, "Could not find version in pyproject.toml"
     assert grover.__version__ == match.group(1)
+
+
+# ======================================================================
+# Graph protocol and algorithm exports
+# ======================================================================
+
+
+def test_graph_store_exported() -> None:
+    from grover import GraphStore
+
+    assert GraphStore is not None
+
+
+def test_subgraph_result_exported() -> None:
+    from grover import SubgraphResult
+
+    assert SubgraphResult is not None
+
+
+def test_grover_has_pagerank() -> None:
+    assert hasattr(Grover, "pagerank")
+
+
+def test_grover_has_meeting_subgraph() -> None:
+    assert hasattr(Grover, "meeting_subgraph")
+
+
+def test_grover_has_neighborhood() -> None:
+    assert hasattr(Grover, "neighborhood")
+
+
+def test_grover_has_ancestors() -> None:
+    assert hasattr(Grover, "ancestors")
+
+
+def test_grover_has_descendants() -> None:
+    assert hasattr(Grover, "descendants")
+
+
+def test_grover_has_find_nodes() -> None:
+    assert hasattr(Grover, "find_nodes")
+
+
+def test_grover_graph_is_public() -> None:
+    """GroverAsync.graph is a public attribute, not _graph."""
+    ga = GroverAsync()
+    try:
+        assert hasattr(ga, "graph")
+        assert not hasattr(ga, "_graph") or ga._graph is not ga.graph
+    finally:
+        import asyncio
+
+        asyncio.get_event_loop_policy().new_event_loop().run_until_complete(ga.close())
+
+
+@pytest.mark.asyncio
+async def test_grover_async_capability_check(tmp_path: Path) -> None:
+    """Convenience wrappers raise CapabilityNotSupportedError for unsupported backends."""
+    from grover.fs.exceptions import CapabilityNotSupportedError
+
+    class MinimalGraph:
+        """Graph that satisfies GraphStore but no capability protocols."""
+
+        def add_node(self, path: str, **attrs: object) -> None: ...
+        def remove_node(self, path: str) -> None: ...
+        def has_node(self, path: str) -> bool: return False
+        def get_node(self, path: str) -> dict: return {}
+        def nodes(self) -> list[str]: return []
+        def add_edge(self, source: str, target: str, edge_type: str, **kw: object) -> None: ...
+        def remove_edge(self, source: str, target: str) -> None: ...
+        def has_edge(self, source: str, target: str) -> bool: return False
+        def get_edge(self, source: str, target: str) -> dict: return {}
+        def edges(self) -> list: return []
+        def dependents(self, path: str) -> list: return []
+        def dependencies(self, path: str) -> list: return []
+        def impacts(self, path: str, max_depth: int = 3) -> list: return []
+        def path_between(self, source: str, target: str) -> None: return None
+        def contains(self, path: str) -> list: return []
+        def by_parent(self, parent_path: str) -> list: return []
+        def remove_file_subgraph(self, path: str) -> list[str]: return []
+        @property
+        def node_count(self) -> int: return 0
+        @property
+        def edge_count(self) -> int: return 0
+        def is_dag(self) -> bool: return True
+
+    ga = GroverAsync(data_dir=tmp_path / ".grover_data", embedding_provider=FakeProvider())
+    try:
+        ga.graph = MinimalGraph()  # type: ignore[assignment]
+        with pytest.raises(CapabilityNotSupportedError):
+            ga.pagerank()
+        with pytest.raises(CapabilityNotSupportedError):
+            ga.ancestors("/a.py")
+        with pytest.raises(CapabilityNotSupportedError):
+            ga.descendants("/a.py")
+        with pytest.raises(CapabilityNotSupportedError):
+            ga.meeting_subgraph(["/a.py"])
+        with pytest.raises(CapabilityNotSupportedError):
+            ga.neighborhood("/a.py")
+        with pytest.raises(CapabilityNotSupportedError):
+            ga.find_nodes(lang="python")
+    finally:
+        await ga.close()

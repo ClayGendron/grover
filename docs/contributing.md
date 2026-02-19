@@ -116,10 +116,12 @@ src/grover/
 │   ├── operations.py     # Shared orchestration functions
 │   └── ...
 ├── graph/                # Knowledge graph
-│   ├── _graph.py         # rustworkx wrapper
+│   ├── _rustworkx.py     # RustworkxGraph — rustworkx wrapper
+│   ├── protocols.py      # GraphStore + capability protocols
+│   ├── types.py          # SubgraphResult, subgraph_result factory
 │   └── analyzers/        # Language-specific code analyzers
 ├── search/               # Vector search
-│   ├── _index.py         # usearch HNSW wrapper
+│   ├── _engine.py        # SearchEngine orchestrator
 │   └── providers/        # Embedding providers
 └── models/               # SQLModel database models
 ```

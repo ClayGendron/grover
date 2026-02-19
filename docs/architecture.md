@@ -55,6 +55,23 @@ VFS checks capabilities with `isinstance(backend, SupportsVersions)` at runtime.
 
 This makes it straightforward to write a minimal custom backend — just implement `StorageBackend` and skip the optional protocols.
 
+### Graph capability protocols
+
+The graph layer uses the same pattern. `GraphStore` is the core protocol (node/edge CRUD + basic queries). Capability protocols add algorithms:
+
+```python
+class GraphStore(Protocol):              # Core: add/remove/query nodes and edges
+class SupportsCentrality(Protocol):      # PageRank, betweenness, closeness, katz, degree
+class SupportsConnectivity(Protocol):    # Connected components, is_weakly_connected
+class SupportsTraversal(Protocol):       # Ancestors, descendants, topological sort, shortest paths
+class SupportsSubgraph(Protocol):        # Subgraph extraction, neighborhood, meeting subgraph
+class SupportsFiltering(Protocol):       # Attribute-based node/edge filtering
+class SupportsNodeSimilarity(Protocol):  # Jaccard structural similarity
+class SupportsPersistence(Protocol):     # SQL persistence (to_sql / from_sql)
+```
+
+`RustworkxGraph` implements all protocols. To write a custom graph backend, implement `GraphStore` plus whichever capabilities you need. `GroverAsync` checks capabilities at runtime with `isinstance()` and raises `CapabilityNotSupportedError` for unsupported operations.
+
 ## Content-before-commit write ordering
 
 All mutating operations follow the same sequence:
