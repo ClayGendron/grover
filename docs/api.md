@@ -22,7 +22,7 @@ GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None)
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `data_dir` | `str | None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. `GroverAsync` also accepts `Path`. |
-| `embedding_provider` | `EmbeddingProvider | None` | Custom embedding provider for search. Falls back to `SentenceTransformerProvider` if the `search` extra is installed. Search is disabled if neither is available. |
+| `embedding_provider` | `EmbeddingProvider | None` | Custom embedding provider for search. Falls back to `SentenceTransformerEmbedding` if the `search` extra is installed. Search is disabled if neither is available. |
 | `vector_store` | `VectorStore | None` | Custom vector store backend (e.g., `PineconeVectorStore`, `DatabricksVectorStore`). Defaults to `LocalVectorStore` if not set. |
 
 ### Mount / Unmount

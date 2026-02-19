@@ -121,10 +121,10 @@ class GroverAsync:
         if embedding_provider is None:
             try:
                 from grover.search.providers.sentence_transformers import (
-                    SentenceTransformerProvider,
+                    SentenceTransformerEmbedding,
                 )
 
-                embedding_provider = SentenceTransformerProvider()
+                embedding_provider = SentenceTransformerEmbedding()
             except Exception:
                 logger.debug("No embedding provider available; search disabled")
                 return None

@@ -78,7 +78,3 @@ class SentenceTransformerEmbedding:
     def model_name(self) -> str:
         """Return the model name."""
         return self._model_name
-
-
-# Backward-compatible alias
-SentenceTransformerProvider = SentenceTransformerEmbedding

@@ -3,13 +3,11 @@
 from grover.search.protocols import EmbeddingProvider
 from grover.search.providers.sentence_transformers import (
     SentenceTransformerEmbedding,
-    SentenceTransformerProvider,
 )
 
 __all__ = [
     "EmbeddingProvider",
     "SentenceTransformerEmbedding",
-    "SentenceTransformerProvider",
 ]
 
 # Optional providers — import-guarded, available only when deps are installed.

@@ -206,14 +206,6 @@ class TestOpenAIEmbedding:
 
 
 class TestSentenceTransformerEmbedding:
-    def test_backward_compat_alias(self):
-        from grover.search.providers.sentence_transformers import (
-            SentenceTransformerEmbedding,
-            SentenceTransformerProvider,
-        )
-
-        assert SentenceTransformerProvider is SentenceTransformerEmbedding
-
     def test_model_name_default(self):
         from grover.search.providers.sentence_transformers import (
             SentenceTransformerEmbedding,
