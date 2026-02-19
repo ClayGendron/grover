@@ -516,12 +516,12 @@ class GroverAsync:
                     line_end=chunk.line_end,
                     name=chunk.name,
                 )
-                self.graph.add_edge(path, chunk.chunk_path, "contains")
+                self.graph.add_edge(path, chunk.chunk_path, edge_type="contains")
                 stats["chunks_created"] += 1
 
             for edge in edges:
                 meta: dict[str, Any] = dict(edge.metadata)
-                self.graph.add_edge(edge.source, edge.target, edge.edge_type, **meta)
+                self.graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
                 stats["edges_added"] += 1
 
             if self._search_engine is not None:
