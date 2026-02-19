@@ -13,3 +13,10 @@ try:
     __all__.append("PineconeVectorStore")
 except ImportError:  # pragma: no cover
     pass
+
+try:
+    from grover.search.stores.databricks import DatabricksVectorStore
+
+    __all__.append("DatabricksVectorStore")
+except ImportError:  # pragma: no cover
+    pass

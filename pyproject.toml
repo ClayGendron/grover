@@ -52,12 +52,13 @@ treesitter = [
 ]
 openai = ["openai>=1.0"]
 pinecone = ["pinecone[asyncio]>=5.0"]
+databricks = ["databricks-vectorsearch>=0.40"]
 postgres = ["asyncpg>=0.29"]
 mssql = ["aioodbc>=0.5"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-all = ["grover[search,openai,pinecone,treesitter,postgres,deepagents,langchain,langgraph]"]
+all = ["grover[search,openai,pinecone,databricks,treesitter,postgres,deepagents,langchain,langgraph]"]
 
 [dependency-groups]
 dev = [
@@ -110,6 +111,7 @@ ignore = [
 "tests/**/*.py" = ["ANN", "S101"]
 "src/grover/search/protocols.py" = ["A002"]  # filter= is the standard vector store API kwarg
 "src/grover/search/stores/pinecone.py" = ["A002"]
+"src/grover/search/stores/databricks.py" = ["A002"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["grover"]
