@@ -9,8 +9,6 @@ import pytest
 from grover.graph import RustworkxGraph
 from grover.graph.protocols import (
     GraphStore,
-    SupportsFiltering,
-    SupportsNodeSimilarity,
     SupportsPersistence,
 )
 from grover.graph.types import SubgraphResult, subgraph_result
@@ -47,16 +45,6 @@ class TestSupportsPersistenceProtocol:
 # ======================================================================
 # Capability protocols NOT yet satisfied (Phase 2-4)
 # ======================================================================
-
-
-class TestCapabilityProtocolsNotYetSatisfied:
-    def test_does_not_satisfy_filtering(self) -> None:
-        g = RustworkxGraph()
-        assert not isinstance(g, SupportsFiltering)
-
-    def test_does_not_satisfy_node_similarity(self) -> None:
-        g = RustworkxGraph()
-        assert not isinstance(g, SupportsNodeSimilarity)
 
 
 # ======================================================================

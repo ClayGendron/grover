@@ -614,6 +614,150 @@ class RustworkxGraph:
         return result
 
     # ------------------------------------------------------------------
+    # Filtering (SupportsFiltering)
+    # ------------------------------------------------------------------
+
+    def find_nodes(self, **attrs: Any) -> list[str]:
+        """Find nodes matching all *attrs* (AND logic).
+
+        Callable values are used as predicates; non-callable values are
+        matched by equality.
+        """
+        result: list[str] = []
+        for idx in self._graph.node_indices():
+            data = self._graph[idx]
+            path = self._idx_to_path.get(idx)
+            if path is None:
+                continue
+            match = True
+            for key, value in attrs.items():
+                if key not in data:
+                    match = False
+                    break
+                if callable(value):
+                    if not value(data[key]):
+                        match = False
+                        break
+                elif data[key] != value:
+                    match = False
+                    break
+            if match:
+                result.append(path)
+        return result
+
+    def find_edges(
+        self,
+        *,
+        edge_type: str | None = None,
+        source: str | None = None,
+        target: str | None = None,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Filter edges by type, source, and/or target (all optional, AND logic)."""
+        result: list[tuple[str, str, dict[str, Any]]] = []
+        for src, tgt, data in self.edges():
+            if edge_type is not None and data.get("type") != edge_type:
+                continue
+            if source is not None and src != source:
+                continue
+            if target is not None and tgt != target:
+                continue
+            result.append((src, tgt, data))
+        return result
+
+    def edges_of(
+        self,
+        path: str,
+        *,
+        direction: str = "both",
+        edge_types: list[str] | None = None,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return edges incident to *path*.
+
+        Parameters
+        ----------
+        direction:
+            ``"out"`` = outgoing, ``"in"`` = incoming, ``"both"`` = all.
+        edge_types:
+            If provided, only include edges whose type is in this list.
+        """
+        idx = self._require_node(path)
+        result: list[tuple[str, str, dict[str, Any]]] = []
+        seen_edge_ids: set[str] = set()
+
+        if direction in ("out", "both"):
+            for succ in self._graph.successor_indices(idx):
+                edge_idx = self._find_edge_idx(idx, succ)
+                if edge_idx is not None:
+                    data = dict(self._graph.get_edge_data_by_index(edge_idx))
+                    if edge_types is not None and data.get("type") not in edge_types:
+                        continue
+                    if data["id"] not in seen_edge_ids:
+                        seen_edge_ids.add(data["id"])
+                        result.append((path, self._idx_to_path[succ], data))
+
+        if direction in ("in", "both"):
+            for pred in self._graph.predecessor_indices(idx):
+                edge_idx = self._find_edge_idx(pred, idx)
+                if edge_idx is not None:
+                    data = dict(self._graph.get_edge_data_by_index(edge_idx))
+                    if edge_types is not None and data.get("type") not in edge_types:
+                        continue
+                    if data["id"] not in seen_edge_ids:
+                        seen_edge_ids.add(data["id"])
+                        result.append((self._idx_to_path[pred], path, data))
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Node similarity (SupportsNodeSimilarity)
+    # ------------------------------------------------------------------
+
+    def node_similarity(
+        self, path1: str, path2: str, *, method: str = "jaccard",
+    ) -> float:
+        """Structural similarity between two nodes (Jaccard coefficient).
+
+        "Neighbors" = combined predecessors + successors (undirected).
+        Returns 0.0 if the union is empty.
+        """
+        n1 = self._undirected_neighbors(path1)
+        n2 = self._undirected_neighbors(path2)
+        union = n1 | n2
+        if not union:
+            return 0.0
+        return len(n1 & n2) / len(union)
+
+    def similar_nodes(
+        self, path: str, *, method: str = "jaccard", k: int = 10,
+    ) -> list[tuple[str, float]]:
+        """Top-*k* structurally similar nodes, sorted descending by score.
+
+        Excludes *path* itself from results.
+        """
+        scores: list[tuple[str, float]] = []
+        for other in self._path_to_idx:
+            if other == path:
+                continue
+            s = self.node_similarity(path, other, method=method)
+            scores.append((other, s))
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:k]
+
+    def _undirected_neighbors(self, path: str) -> set[str]:
+        """Combined predecessors + successors as a set of paths."""
+        idx = self._require_node(path)
+        neighbors: set[str] = set()
+        for pred in self._graph.predecessor_indices(idx):
+            p = self._idx_to_path.get(pred)
+            if p is not None:
+                neighbors.add(p)
+        for succ in self._graph.successor_indices(idx):
+            p = self._idx_to_path.get(succ)
+            if p is not None:
+                neighbors.add(p)
+        return neighbors
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
