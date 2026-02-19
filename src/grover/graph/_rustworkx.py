@@ -230,18 +230,36 @@ class RustworkxGraph:
         return result
 
     def remove_file_subgraph(self, path: str) -> list[str]:
-        """Remove a node and all nodes with ``parent_path == path``.
+        """Remove a node and all child nodes.
+
+        Children are found by unioning two lookups:
+        1. Nodes whose ``parent_path`` attribute equals *path*.
+        2. Successors connected by ``"contains"`` edges.
 
         Returns the list of removed paths.
         """
-        self._require_node(path)
-        # Collect child nodes first
-        children = [
-            self._idx_to_path[idx]
-            for idx in self._graph.node_indices()
-            if self._graph[idx].get("parent_path") == path
-        ]
-        removed = [path, *children]
+        idx = self._require_node(path)
+
+        # Method 1: attribute scan
+        children_by_attr = {
+            self._idx_to_path[i]
+            for i in self._graph.node_indices()
+            if self._graph[i].get("parent_path") == path
+        }
+
+        # Method 2: contains-edge traversal
+        children_by_edge: set[str] = set()
+        for succ in self._graph.successor_indices(idx):
+            edge_idx = self._find_edge_idx(idx, succ)
+            if edge_idx is not None:
+                data = self._graph.get_edge_data_by_index(edge_idx)
+                if data.get("type") == "contains":
+                    succ_path = self._idx_to_path.get(succ)
+                    if succ_path is not None:
+                        children_by_edge.add(succ_path)
+
+        children = children_by_attr | children_by_edge
+        removed = [path, *sorted(children)]
         for p in removed:
             if self.has_node(p):
                 self.remove_node(p)

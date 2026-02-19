@@ -14,7 +14,7 @@ from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
-from grover.fs.protocol import SupportsReBAC
+from grover.fs.protocol import SupportsFileChunks, SupportsReBAC
 from grover.fs.types import (
     DeleteResult,
     EditResult,
@@ -534,7 +534,7 @@ class GroverAsync:
                 return
             content = result.content
         if content is not None:
-            await self._analyze_and_integrate(event.path, content)
+            await self._analyze_and_integrate(event.path, content, user_id=event.user_id)
 
     async def _on_file_deleted(self, event: FileEvent) -> None:
         if self._meta_fs is None:
@@ -553,6 +553,8 @@ class GroverAsync:
                 await search_engine.remove_file(event.path)
         except RuntimeError:
             pass
+        # Clean up chunk DB rows
+        await self._delete_chunks_for_path(event.path)
 
     async def _on_file_moved(self, event: FileEvent) -> None:
         if self._meta_fs is None:
@@ -570,6 +572,8 @@ class GroverAsync:
                     await search_engine.remove_file(event.old_path)
             except RuntimeError:
                 pass
+            # Clean up chunk DB rows for old path
+            await self._delete_chunks_for_path(event.old_path)
 
         if "/.grover/" in event.path:
             return
@@ -577,24 +581,42 @@ class GroverAsync:
         if result.success:
             content = result.content
             if content is not None:
-                await self._analyze_and_integrate(event.path, content)
+                await self._analyze_and_integrate(event.path, content, user_id=event.user_id)
 
     async def _on_file_restored(self, event: FileEvent) -> None:
         await self._on_file_written(event)
+
+    async def _delete_chunks_for_path(self, path: str) -> None:
+        """Delete chunk DB rows for *path* if the backend supports it."""
+        try:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
+            return
+        if isinstance(mount.backend, SupportsFileChunks):
+            async with self._vfs.session_for(mount) as sess:
+                await mount.backend.delete_file_chunks(path, session=sess)
 
     # ------------------------------------------------------------------
     # Core pipeline
     # ------------------------------------------------------------------
 
-    async def _analyze_and_integrate(self, path: str, content: str) -> dict[str, int]:
+    async def _analyze_and_integrate(
+        self, path: str, content: str, *, user_id: str | None = None
+    ) -> dict[str, int]:
+        import hashlib
+
         stats = {"chunks_created": 0, "edges_added": 0}
 
         try:
-            graph = self._resolve_graph(path)
-        except RuntimeError:
+            mount, _rel = self._registry.resolve(path)
+        except MountNotFoundError:
             return stats
 
-        search_engine = self._resolve_search_engine(path)
+        graph = getattr(mount.backend, "_graph", None)
+        if graph is None:
+            return stats
+
+        search_engine = getattr(mount.backend, "_search_engine", None)
 
         if graph.has_node(path):
             graph.remove_file_subgraph(path)
@@ -608,8 +630,26 @@ class GroverAsync:
         if analysis is not None:
             chunks, edges = analysis
 
+            # Write chunk DB rows instead of VFS files
+            if isinstance(mount.backend, SupportsFileChunks) and chunks:
+                chunk_dicts = [
+                    {
+                        "chunk_path": chunk.chunk_path,
+                        "name": chunk.name,
+                        "description": "",
+                        "line_start": chunk.line_start,
+                        "line_end": chunk.line_end,
+                        "content": chunk.content,
+                        "content_hash": hashlib.sha256(chunk.content.encode()).hexdigest(),
+                    }
+                    for chunk in chunks
+                ]
+                async with self._vfs.session_for(mount) as sess:
+                    await mount.backend.replace_file_chunks(
+                        path, chunk_dicts, session=sess, user_id=user_id
+                    )
+
             for chunk in chunks:
-                await self._vfs.write(chunk.chunk_path, chunk.content)
                 graph.add_node(
                     chunk.chunk_path,
                     parent_path=path,

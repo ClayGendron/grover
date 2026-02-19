@@ -509,7 +509,12 @@ class VFS:
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
             await self._emit(
-                FileEvent(event_type=EventType.FILE_WRITTEN, path=path, content=content)
+                FileEvent(
+                    event_type=EventType.FILE_WRITTEN,
+                    path=path,
+                    content=content,
+                    user_id=user_id,
+                )
             )
         return result
 
@@ -542,7 +547,9 @@ class VFS:
             )
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=path))
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_WRITTEN, path=path, user_id=user_id)
+            )
         return result
 
     async def delete(
@@ -572,7 +579,9 @@ class VFS:
             result = await mount.backend.delete(rel_path, permanent, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(FileEvent(event_type=EventType.FILE_DELETED, path=path))
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_DELETED, path=path, user_id=user_id)
+            )
         return result
 
     async def mkdir(
@@ -630,7 +639,12 @@ class VFS:
             result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
             if result.success:
                 await self._emit(
-                    FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src)
+                    FileEvent(
+                        event_type=EventType.FILE_MOVED,
+                        path=dest,
+                        old_path=src,
+                        user_id=user_id,
+                    )
                 )
             return result
 
@@ -669,7 +683,9 @@ class VFS:
                 message=f"Copied but failed to delete source: {delete_result.message}",
             )
 
-        await self._emit(FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src))
+        await self._emit(
+            FileEvent(event_type=EventType.FILE_MOVED, path=dest, old_path=src, user_id=user_id)
+        )
         return MoveResult(
             success=True,
             message=f"Moved {src} -> {dest} (cross-mount)",
@@ -702,7 +718,9 @@ class VFS:
                 )
             result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
             if result.success:
-                await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
+                await self._emit(
+                    FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
+                )
             return result
 
         # Cross-mount copy: read → write
@@ -726,7 +744,9 @@ class VFS:
             )
         result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
         if result.success:
-            await self._emit(FileEvent(event_type=EventType.FILE_WRITTEN, path=dest))
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
+            )
         return result
 
     # ------------------------------------------------------------------
@@ -763,7 +783,9 @@ class VFS:
             result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
+            )
         return result
 
     async def get_version_content(
@@ -817,7 +839,9 @@ class VFS:
             result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         if result.success:
-            await self._emit(FileEvent(event_type=EventType.FILE_RESTORED, path=path))
+            await self._emit(
+                FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
+            )
         return result
 
     async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:

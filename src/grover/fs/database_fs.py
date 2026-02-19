@@ -847,7 +847,7 @@ class DatabaseFileSystem:
         user_id: str | None = None,
     ) -> int:
         sess = self._require_session(session)
-        return await self.chunks.replace_file_chunks(sess, file_path, chunks)
+        return await self.chunks.replace_file_chunks(sess, file_path, chunks, user_id=user_id)
 
     async def delete_file_chunks(
         self,

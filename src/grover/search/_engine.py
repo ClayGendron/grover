@@ -87,6 +87,9 @@ class SearchEngine:
                     "content": entry.content,
                     "parent_path": entry.parent_path,
                     "content_hash": _content_hash(entry.content),
+                    "chunk_name": entry.chunk_name,
+                    "line_start": entry.line_start,
+                    "line_end": entry.line_end,
                 },
             )
             for i, entry in enumerate(entries)

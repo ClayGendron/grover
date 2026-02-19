@@ -37,6 +37,7 @@ class FileEvent:
     path: str
     old_path: str | None = None
     content: str | None = None
+    user_id: str | None = None
 
 
 class EventBus:

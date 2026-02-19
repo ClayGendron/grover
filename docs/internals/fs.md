@@ -300,6 +300,23 @@ StorageBackend (core — 12 methods)
 
 `GroverAsync` catches `CapabilityNotSupportedError` and returns appropriate `Result(success=False, message=...)`. The agent loop always gets Results, never unhandled exceptions from normal operations.
 
+### Chunk Storage
+
+Chunks (functions, classes, methods extracted by code analyzers) are stored as **database rows** in the `grover_file_chunks` table, not as VFS files. This avoids polluting glob/tree results with internal metadata.
+
+When `_analyze_and_integrate()` processes a file:
+
+1. The analyzer extracts chunks (list of `ChunkFile` records).
+2. If the backend supports `SupportsFileChunks`, chunk records are written to the DB via `backend.replace_file_chunks()`. This is a full replace: all existing chunks for the file are deleted, then new ones are inserted.
+3. Graph nodes and "contains" edges are created for each chunk (using synthetic `chunk_path` identifiers). These graph nodes have `parent_path`, `line_start`, `line_end`, and `name` attributes.
+4. Chunks are embedded and indexed in the per-mount search engine with enriched metadata (`chunk_name`, `line_start`, `line_end`).
+
+On file delete or move, `_delete_chunks_for_path()` removes the chunk DB rows. The hardened `remove_file_subgraph()` cleans up graph nodes by unioning two child-finding methods: `parent_path` attribute scan and `"contains"` edge traversal.
+
+### FileEvent and user_id
+
+`FileEvent` carries an optional `user_id` field (default `None`). All VFS emit points pass `user_id` through from the originating operation. Event handlers forward `user_id` to `_analyze_and_integrate()`, which passes it to `backend.replace_file_chunks()` so chunk records are tagged with the correct owner in user-scoped environments.
+
 ---
 
 ## Version Snapshotting

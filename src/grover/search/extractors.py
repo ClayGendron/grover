@@ -17,11 +17,17 @@ class EmbeddableChunk:
         path: Chunk path (or file path for whole-file embedding).
         content: Text to embed.
         parent_path: Parent file path if this is a sub-file chunk.
+        chunk_name: Symbol name (e.g. ``"MyClass.my_method"``).
+        line_start: 1-indexed start line in the parent file.
+        line_end: 1-indexed end line in the parent file.
     """
 
     path: str
     content: str
     parent_path: str | None = None
+    chunk_name: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
 
 
 def extract_from_chunks(chunks: list[ChunkFile]) -> list[EmbeddableChunk]:
@@ -34,6 +40,9 @@ def extract_from_chunks(chunks: list[ChunkFile]) -> list[EmbeddableChunk]:
             path=chunk.chunk_path,
             content=chunk.content,
             parent_path=chunk.parent_path,
+            chunk_name=chunk.name,
+            line_start=chunk.line_start,
+            line_end=chunk.line_end,
         )
         for chunk in chunks
         if chunk.content.strip()

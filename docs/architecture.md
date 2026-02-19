@@ -8,7 +8,7 @@ For implementation details about the filesystem layer specifically, see [interna
 
 ## Core principle: everything is a file
 
-Grover's identity model is built on one rule: **every entity is a file or directory**. Graph nodes are file paths. Search index entries are file paths. Chunks (functions, classes extracted from source code) are files stored in `.grover/chunks/`.
+Grover's identity model is built on one rule: **every entity is a file or directory**. Graph nodes are file paths. Search index entries are file paths. Chunks (functions, classes extracted from source code) are stored as database rows in `grover_file_chunks` but are represented in the graph as nodes with synthetic path identifiers.
 
 This means:
 
@@ -123,10 +123,12 @@ The three layers stay in sync through an `EventBus`. When VFS completes a file o
 
 | Event | Triggers |
 |-------|----------|
-| `FILE_WRITTEN` | Re-analyze file, update graph edges, re-index embeddings |
-| `FILE_DELETED` | Remove file and children from graph and search index |
-| `FILE_MOVED` | Remove old path, re-analyze at new path |
+| `FILE_WRITTEN` | Re-analyze file, write chunk DB rows, update graph edges, re-index embeddings |
+| `FILE_DELETED` | Remove file and children from graph, search index, and chunk DB rows |
+| `FILE_MOVED` | Remove old path (graph, search, chunks), re-analyze at new path |
 | `FILE_RESTORED` | Re-analyze restored file |
+
+Events carry an optional `user_id` field so chunk records and other downstream operations are tagged with the correct owner in user-scoped environments.
 
 Event handlers resolve the mount from the event path, then use that mount's graph and search engine. Exceptions in handlers are logged but never propagated — a failed re-index should not cause a file write to fail.
 
@@ -204,7 +206,7 @@ The `AnalyzerRegistry` maps file extensions to analyzer implementations. Built-i
 - **JavaScript/TypeScript** — uses tree-sitter (requires `treesitter` extra)
 - **Go** — uses tree-sitter (requires `treesitter` extra)
 
-Chunks are stored as files in `.grover/chunks/` with stable paths based on symbol names (not line numbers, which drift on edits). This means chunk paths survive refactoring as long as the symbol name doesn't change.
+Chunks are stored as database rows in `grover_file_chunks` (via `SupportsFileChunks` protocol). Their graph node paths use stable synthetic identifiers based on symbol names (not line numbers, which drift on edits). This means chunk paths survive refactoring as long as the symbol name doesn't change.
 
 ## Adding a new analyzer
 
