@@ -1,32 +1,10 @@
-"""EmbeddingProvider protocol."""
+"""EmbeddingProvider protocol — deprecated, use grover.search.protocols instead.
 
-from __future__ import annotations
+This module re-exports the ``EmbeddingProvider`` protocol from
+:mod:`grover.search.protocols` for backward compatibility.  New code
+should import directly from ``grover.search.protocols``.
+"""
 
-from typing import Protocol, runtime_checkable
+from grover.search.protocols import EmbeddingProvider
 
-
-@runtime_checkable
-class EmbeddingProvider(Protocol):
-    """Protocol for embedding providers.
-
-    Implementations convert text into fixed-dimension float vectors
-    suitable for similarity search.
-    """
-
-    def embed(self, text: str) -> list[float]:
-        """Embed a single text string into a vector."""
-        ...
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts into vectors."""
-        ...
-
-    @property
-    def dimensions(self) -> int:
-        """Number of dimensions in the embedding vectors."""
-        ...
-
-    @property
-    def model_name(self) -> str:
-        """Name of the embedding model."""
-        ...
+__all__ = ["EmbeddingProvider"]

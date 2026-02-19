@@ -497,16 +497,16 @@ class TestSentenceTransformerIntegration:
         provider = SentenceTransformerProvider()
         assert provider.model_name == "all-MiniLM-L6-v2"
 
-    def test_embed_returns_correct_dimensions(self):
+    def test_embed_sync_returns_correct_dimensions(self):
         provider = SentenceTransformerProvider()
-        vec = provider.embed("hello world")
+        vec = provider.embed_sync("hello world")
         assert isinstance(vec, list)
         assert len(vec) == 384
         assert all(isinstance(v, float) for v in vec)
 
-    def test_embed_batch_returns_correct_dimensions(self):
+    def test_embed_batch_sync_returns_correct_dimensions(self):
         provider = SentenceTransformerProvider()
-        vecs = provider.embed_batch(["hello", "world"])
+        vecs = provider.embed_batch_sync(["hello", "world"])
         assert len(vecs) == 2
         assert all(len(v) == 384 for v in vecs)
 

@@ -1,7 +1,8 @@
-"""SentenceTransformerProvider — default embedding provider (all-MiniLM-L6-v2)."""
+"""SentenceTransformerEmbedding — local embedding provider (all-MiniLM-L6-v2)."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 try:
@@ -12,17 +13,18 @@ except ImportError:  # pragma: no cover
     _HAS_SENTENCE_TRANSFORMERS = False
 
 
-class SentenceTransformerProvider:
+class SentenceTransformerEmbedding:
     """Embedding provider backed by ``sentence-transformers``.
 
     The model is loaded lazily on the first call to :meth:`embed` or
-    :meth:`embed_batch`.
+    :meth:`embed_batch`.  Async methods run the underlying CPU-bound model
+    inference in a thread pool via :func:`asyncio.to_thread`.
     """
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         if not _HAS_SENTENCE_TRANSFORMERS:
             msg = (
-                "sentence-transformers is required for SentenceTransformerProvider. "
+                "sentence-transformers is required for SentenceTransformerEmbedding. "
                 "Install it with: pip install grover[search]"
             )
             raise ImportError(msg)
@@ -34,17 +36,33 @@ class SentenceTransformerProvider:
             self._model = SentenceTransformer(self._model_name)
         return self._model
 
-    def embed(self, text: str) -> list[float]:
-        """Embed a single text string."""
+    # ------------------------------------------------------------------
+    # Sync methods (used by the legacy SearchIndex)
+    # ------------------------------------------------------------------
+
+    def embed_sync(self, text: str) -> list[float]:
+        """Embed a single text string (synchronous)."""
         model = self._load_model()
         result: Any = model.encode([text])
         return result[0].tolist()
 
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts."""
+    def embed_batch_sync(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts (synchronous)."""
         model = self._load_model()
         result: Any = model.encode(texts)
         return [row.tolist() for row in result]
+
+    # ------------------------------------------------------------------
+    # Async methods (EmbeddingProvider protocol)
+    # ------------------------------------------------------------------
+
+    async def embed(self, text: str) -> list[float]:
+        """Embed a single text string in a thread pool."""
+        return await asyncio.to_thread(self.embed_sync, text)
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts in a thread pool."""
+        return await asyncio.to_thread(self.embed_batch_sync, texts)
 
     @property
     def dimensions(self) -> int:
@@ -60,3 +78,7 @@ class SentenceTransformerProvider:
     def model_name(self) -> str:
         """Return the model name."""
         return self._model_name
+
+
+# Backward-compatible alias
+SentenceTransformerProvider = SentenceTransformerEmbedding

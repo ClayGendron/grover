@@ -7,7 +7,7 @@ import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from usearch.index import Index
@@ -66,6 +66,16 @@ class SearchIndex:
             self._index = Index(ndim=self._provider.dimensions, metric="cos", dtype="f32")
         return self._index
 
+    def _embed(self, text: str) -> list[float]:
+        """Embed text, preferring sync method if available."""
+        fn: Any = getattr(self._provider, "embed_sync", self._provider.embed)
+        return cast("list[float]", fn(text))
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed batch, preferring sync method if available."""
+        fn: Any = getattr(self._provider, "embed_batch_sync", self._provider.embed_batch)
+        return cast("list[list[float]]", fn(texts))
+
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
@@ -84,7 +94,7 @@ class SearchIndex:
         if path in self._path_to_keys:
             self.remove(path)
 
-        vector = np.array(self._provider.embed(content), dtype=np.float32)
+        vector = np.array(self._embed(content), dtype=np.float32)
         key = self._next_key
         self._next_key += 1
 
@@ -110,7 +120,7 @@ class SearchIndex:
                 self.remove(entry.path)
 
         texts = [e.content for e in entries]
-        vectors = np.array(self._provider.embed_batch(texts), dtype=np.float32)
+        vectors = np.array(self._embed_batch(texts), dtype=np.float32)
 
         keys: list[int] = []
         for i, entry in enumerate(entries):
@@ -156,7 +166,7 @@ class SearchIndex:
         if len(self) == 0:
             return []
 
-        vector = np.array(self._provider.embed(query), dtype=np.float32)
+        vector = np.array(self._embed(query), dtype=np.float32)
         effective_k = min(k, len(self))
         with self._lock:
             matches = self._ensure_index().search(vector, effective_k)
