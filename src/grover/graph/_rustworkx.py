@@ -268,6 +268,203 @@ class RustworkxGraph:
         return f"RustworkxGraph(nodes={self.node_count}, edges={self.edge_count})"
 
     # ------------------------------------------------------------------
+    # Centrality algorithms (SupportsCentrality)
+    # ------------------------------------------------------------------
+
+    def pagerank(
+        self,
+        *,
+        alpha: float = 0.85,
+        personalization: dict[str, float] | None = None,
+        max_iter: int = 100,
+        tol: float = 1e-6,
+    ) -> dict[str, float]:
+        """PageRank centrality scores."""
+        pers = None
+        if personalization:
+            pers = {
+                self._path_to_idx[p]: w
+                for p, w in personalization.items()
+                if p in self._path_to_idx
+            }
+            if not pers:
+                pers = None
+        scores = rustworkx.pagerank(
+            self._graph, alpha=alpha, personalization=pers,
+            max_iter=max_iter, tol=tol,
+        )
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    def betweenness_centrality(self, *, normalized: bool = True) -> dict[str, float]:
+        """Betweenness centrality scores."""
+        scores = rustworkx.digraph_betweenness_centrality(
+            self._graph, normalized=normalized,
+        )
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    def closeness_centrality(self) -> dict[str, float]:
+        """Closeness centrality scores."""
+        scores = rustworkx.closeness_centrality(self._graph)
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    def katz_centrality(
+        self,
+        *,
+        alpha: float = 0.1,
+        beta: float = 1.0,
+        max_iter: int = 1000,
+        tol: float = 1e-6,
+    ) -> dict[str, float]:
+        """Katz centrality scores."""
+        if self._graph.num_nodes() == 0:
+            return {}
+        scores = rustworkx.katz_centrality(
+            self._graph, alpha=alpha, beta=beta,
+            max_iter=max_iter, tol=tol,
+        )
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    def degree_centrality(self) -> dict[str, float]:
+        """Degree centrality (in + out) scores."""
+        scores = rustworkx.digraph_degree_centrality(self._graph)
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    def in_degree_centrality(self) -> dict[str, float]:
+        """In-degree centrality scores."""
+        scores = rustworkx.in_degree_centrality(self._graph)
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    def out_degree_centrality(self) -> dict[str, float]:
+        """Out-degree centrality scores."""
+        scores = rustworkx.out_degree_centrality(self._graph)
+        return {
+            self._idx_to_path[idx]: score
+            for idx, score in scores.items()
+            if idx in self._idx_to_path
+        }
+
+    # ------------------------------------------------------------------
+    # Connectivity algorithms (SupportsConnectivity)
+    # ------------------------------------------------------------------
+
+    def weakly_connected_components(self) -> list[set[str]]:
+        """Weakly connected components as sets of paths."""
+        components = rustworkx.weakly_connected_components(self._graph)
+        return [
+            {self._idx_to_path[idx] for idx in comp if idx in self._idx_to_path}
+            for comp in components
+        ]
+
+    def strongly_connected_components(self) -> list[set[str]]:
+        """Strongly connected components as sets of paths."""
+        components = rustworkx.strongly_connected_components(self._graph)
+        return [
+            {self._idx_to_path[idx] for idx in comp if idx in self._idx_to_path}
+            for comp in components
+        ]
+
+    def is_weakly_connected(self) -> bool:
+        """Return ``True`` if the graph is weakly connected.
+
+        Returns ``True`` for an empty graph (matches convention that the
+        null graph is trivially connected).
+        """
+        try:
+            return rustworkx.is_weakly_connected(self._graph)
+        except rustworkx.NullGraph:
+            return True
+
+    # ------------------------------------------------------------------
+    # Traversal algorithms (SupportsTraversal)
+    # ------------------------------------------------------------------
+
+    def ancestors(self, path: str) -> set[str]:
+        """All nodes reachable by following edges backward from *path*."""
+        idx = self._require_node(path)
+        return {
+            self._idx_to_path[i]
+            for i in rustworkx.ancestors(self._graph, idx)
+            if i in self._idx_to_path
+        }
+
+    def descendants(self, path: str) -> set[str]:
+        """All nodes reachable by following edges forward from *path*."""
+        idx = self._require_node(path)
+        return {
+            self._idx_to_path[i]
+            for i in rustworkx.descendants(self._graph, idx)
+            if i in self._idx_to_path
+        }
+
+    def all_simple_paths(
+        self, source: str, target: str, *, cutoff: int | None = None,
+    ) -> list[list[str]]:
+        """All simple (loop-free) paths from *source* to *target*.
+
+        Parameters
+        ----------
+        cutoff:
+            Maximum path length (number of nodes).  ``None`` means no limit.
+        """
+        src_idx = self._require_node(source)
+        tgt_idx = self._require_node(target)
+        raw = rustworkx.digraph_all_simple_paths(
+            self._graph, src_idx, tgt_idx, cutoff=cutoff or 0,
+        )
+        return [
+            [self._idx_to_path[i] for i in path]
+            for path in raw
+        ]
+
+    def topological_sort(self) -> list[str]:
+        """Return nodes in topological order.
+
+        Raises ``ValueError`` if the graph contains cycles.
+        """
+        try:
+            indices = rustworkx.topological_sort(self._graph)
+        except rustworkx.DAGHasCycle:
+            msg = "Graph contains cycles"
+            raise ValueError(msg) from None
+        return [self._idx_to_path[i] for i in indices if i in self._idx_to_path]
+
+    def shortest_path_length(self, source: str, target: str) -> float | None:
+        """Weighted shortest path length, or ``None`` if unreachable."""
+        src_idx = self._require_node(source)
+        tgt_idx = self._require_node(target)
+        lengths = rustworkx.dijkstra_shortest_path_lengths(
+            self._graph, src_idx,
+            lambda e: e.get("weight", 1.0),
+            goal=tgt_idx,
+        )
+        result = dict(lengths)
+        return result.get(tgt_idx)
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 

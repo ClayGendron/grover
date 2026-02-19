@@ -9,13 +9,10 @@ import pytest
 from grover.graph import RustworkxGraph
 from grover.graph.protocols import (
     GraphStore,
-    SupportsCentrality,
-    SupportsConnectivity,
     SupportsFiltering,
     SupportsNodeSimilarity,
     SupportsPersistence,
     SupportsSubgraph,
-    SupportsTraversal,
 )
 from grover.graph.types import SubgraphResult, subgraph_result
 
@@ -54,18 +51,6 @@ class TestSupportsPersistenceProtocol:
 
 
 class TestCapabilityProtocolsNotYetSatisfied:
-    def test_does_not_satisfy_centrality(self) -> None:
-        g = RustworkxGraph()
-        assert not isinstance(g, SupportsCentrality)
-
-    def test_does_not_satisfy_connectivity(self) -> None:
-        g = RustworkxGraph()
-        assert not isinstance(g, SupportsConnectivity)
-
-    def test_does_not_satisfy_traversal(self) -> None:
-        g = RustworkxGraph()
-        assert not isinstance(g, SupportsTraversal)
-
     def test_does_not_satisfy_subgraph(self) -> None:
         g = RustworkxGraph()
         assert not isinstance(g, SupportsSubgraph)
