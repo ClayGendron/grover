@@ -27,7 +27,7 @@ if TYPE_CHECKING:
         WriteResult,
     )
     from grover.fs.vfs import VFS
-    from grover.graph._graph import Graph
+    from grover.graph.protocols import GraphStore
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
     from grover.search.types import SearchResult
@@ -359,6 +359,6 @@ class Grover:
         return self._async.fs
 
     @property
-    def graph(self) -> Graph:
+    def graph(self) -> GraphStore:
         """The knowledge graph."""
         return self._async.graph

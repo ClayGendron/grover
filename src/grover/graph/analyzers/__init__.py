@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import posixpath
 
-from grover.graph._graph import Graph
+from grover.graph._rustworkx import RustworkxGraph
 from grover.graph.analyzers._base import (
     AnalysisResult,
     Analyzer,
@@ -86,8 +86,8 @@ __all__ = [
     "AnalyzerRegistry",
     "ChunkFile",
     "EdgeData",
-    "Graph",
     "PythonAnalyzer",
+    "RustworkxGraph",
     "build_chunk_path",
     "extract_lines",
     "get_analyzer",

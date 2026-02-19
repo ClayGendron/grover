@@ -9,7 +9,7 @@ from sqlmodel import SQLModel, select
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.dialect import upsert_file
-from grover.graph import Graph
+from grover.graph import RustworkxGraph
 from grover.models.edges import GroverEdge
 from grover.models.files import File, FileBase, FileVersionBase
 
@@ -271,7 +271,7 @@ class TestUpsertWithCustomModel:
 
 
 # ---------------------------------------------------------------------------
-# Graph.from_sql with custom model
+# RustworkxGraph.from_sql with custom model
 # ---------------------------------------------------------------------------
 
 
@@ -295,7 +295,7 @@ class TestGraphWithCustomModel:
             )
             await session.commit()
 
-            g = Graph()
+            g = RustworkxGraph()
             await g.from_sql(session, file_model=WikiFile)
 
             assert g.has_node("/wiki/a.md")
@@ -323,7 +323,7 @@ class TestGraphWithCustomModel:
             )
             await session.commit()
 
-            g = Graph()
+            g = RustworkxGraph()
             await g.from_sql(session, file_model=WikiFile)
 
             assert g.has_node("/wiki/active.md")
@@ -342,7 +342,7 @@ class TestGraphWithCustomModel:
             session.add(File(path="/a.py", parent_path="/", name="a.py"))
             await session.commit()
 
-            g = Graph()
+            g = RustworkxGraph()
             await g.from_sql(session)
             assert g.has_node("/a.py")
 
@@ -363,7 +363,7 @@ class TestGraphWithCustomModel:
             await session.commit()
 
             # Load with custom model — should only see wiki_files
-            g = Graph()
+            g = RustworkxGraph()
             await g.from_sql(session, file_model=WikiFile)
             assert g.has_node("/wiki/page.md")
             assert not g.has_node("/default.py")

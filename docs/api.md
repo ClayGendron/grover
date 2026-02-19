@@ -254,7 +254,7 @@ g.close()
 ### Properties
 
 ```python
-g.graph -> Graph   # The knowledge graph instance
+g.graph -> GraphStore   # The knowledge graph instance
 g.fs -> VFS        # The virtual filesystem (for advanced use)
 ```
 
@@ -425,13 +425,13 @@ from grover.fs import (
 
 ---
 
-## Graph
+## RustworkxGraph
 
 ```python
-from grover.graph import Graph
+from grover.graph import RustworkxGraph
 ```
 
-In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string.
+In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string. Implements the `GraphStore` protocol.
 
 ### Node Operations
 

@@ -33,7 +33,7 @@ from grover.fs.types import (
 )
 from grover.fs.utils import normalize_path
 from grover.fs.vfs import VFS
-from grover.graph._graph import Graph
+from grover.graph._rustworkx import RustworkxGraph
 from grover.graph.analyzers import AnalyzerRegistry
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from grover.fs.protocol import StorageBackend
+    from grover.graph.protocols import GraphStore
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
     from grover.search.types import SearchResult
@@ -90,7 +91,7 @@ class GroverAsync:
         self._registry = MountRegistry()
         self._vfs = VFS(self._registry, self._event_bus)
         self._analyzer_registry = AnalyzerRegistry()
-        self._graph = Graph()
+        self.graph: GraphStore = RustworkxGraph()
 
         # Internal metadata mount — lazily created on first mount()
         self._meta_fs: LocalFileSystem | None = None
@@ -324,10 +325,10 @@ class GroverAsync:
 
         # Clean graph nodes and search entries with this mount prefix
         prefix = path + "/"
-        nodes_to_remove = [n for n in self._graph.nodes() if n == path or n.startswith(prefix)]
+        nodes_to_remove = [n for n in self.graph.nodes() if n == path or n.startswith(prefix)]
         for node in nodes_to_remove:
-            if self._graph.has_node(node):
-                self._graph.remove_file_subgraph(node)
+            if self.graph.has_node(node):
+                self.graph.remove_file_subgraph(node)
             if self._search_engine is not None:
                 await self._search_engine.remove_file(node)
 
@@ -402,7 +403,10 @@ class GroverAsync:
                     if hasattr(backend, "file_model"):
                         file_model = backend.file_model
                         break
-                await self._graph.from_sql(session, file_model=file_model)  # type: ignore[arg-type]
+                from grover.graph.protocols import SupportsPersistence
+
+                if isinstance(self.graph, SupportsPersistence):
+                    await self.graph.from_sql(session, file_model=file_model)  # type: ignore[arg-type]
         except Exception:
             logger.debug("No existing graph state to load", exc_info=True)
 
@@ -438,8 +442,8 @@ class GroverAsync:
             return
         if "/.grover/" in event.path:
             return
-        if self._graph.has_node(event.path):
-            self._graph.remove_file_subgraph(event.path)
+        if self.graph.has_node(event.path):
+            self.graph.remove_file_subgraph(event.path)
         if self._search_engine is not None:
             await self._search_engine.remove_file(event.path)
 
@@ -447,8 +451,8 @@ class GroverAsync:
         if self._meta_fs is None:
             return
         if event.old_path and "/.grover/" not in event.old_path:
-            if self._graph.has_node(event.old_path):
-                self._graph.remove_file_subgraph(event.old_path)
+            if self.graph.has_node(event.old_path):
+                self.graph.remove_file_subgraph(event.old_path)
             if self._search_engine is not None:
                 await self._search_engine.remove_file(event.old_path)
 
@@ -470,12 +474,12 @@ class GroverAsync:
     async def _analyze_and_integrate(self, path: str, content: str) -> dict[str, int]:
         stats = {"chunks_created": 0, "edges_added": 0}
 
-        if self._graph.has_node(path):
-            self._graph.remove_file_subgraph(path)
+        if self.graph.has_node(path):
+            self.graph.remove_file_subgraph(path)
         if self._search_engine is not None:
             await self._search_engine.remove_file(path)
 
-        self._graph.add_node(path)
+        self.graph.add_node(path)
 
         analysis = self._analyzer_registry.analyze_file(path, content)
 
@@ -484,19 +488,19 @@ class GroverAsync:
 
             for chunk in chunks:
                 await self._vfs.write(chunk.chunk_path, chunk.content)
-                self._graph.add_node(
+                self.graph.add_node(
                     chunk.chunk_path,
                     parent_path=path,
                     line_start=chunk.line_start,
                     line_end=chunk.line_end,
                     name=chunk.name,
                 )
-                self._graph.add_edge(path, chunk.chunk_path, "contains")
+                self.graph.add_edge(path, chunk.chunk_path, "contains")
                 stats["chunks_created"] += 1
 
             for edge in edges:
                 meta: dict[str, Any] = dict(edge.metadata)
-                self._graph.add_edge(edge.source, edge.target, edge.edge_type, **meta)
+                self.graph.add_edge(edge.source, edge.target, edge.edge_type, **meta)
                 stats["edges_added"] += 1
 
             if self._search_engine is not None:
@@ -868,19 +872,19 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     def dependents(self, path: str) -> list[Ref]:
-        return self._graph.dependents(path)
+        return self.graph.dependents(path)
 
     def dependencies(self, path: str) -> list[Ref]:
-        return self._graph.dependencies(path)
+        return self.graph.dependencies(path)
 
     def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        return self._graph.impacts(path, max_depth)
+        return self.graph.impacts(path, max_depth)
 
     def path_between(self, source: str, target: str) -> list[Ref] | None:
-        return self._graph.path_between(source, target)
+        return self.graph.path_between(source, target)
 
     def contains(self, path: str) -> list[Ref]:
-        return self._graph.contains(path)
+        return self.graph.contains(path)
 
     # ------------------------------------------------------------------
     # Search
@@ -958,9 +962,12 @@ class GroverAsync:
         if self._meta_fs is not None:
             meta_mount = self._registry.get_mount("/.grover")
             if meta_mount is not None:
+                from grover.graph.protocols import SupportsPersistence
+
                 async with self._vfs.session_for(meta_mount) as session:
                     assert session is not None
-                    await self._graph.to_sql(session)
+                    if isinstance(self.graph, SupportsPersistence):
+                        await self.graph.to_sql(session)
 
         if self._search_engine is not None and self._meta_data_dir is not None:
             search_dir = self._meta_data_dir / "search"
@@ -981,10 +988,6 @@ class GroverAsync:
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
-
-    @property
-    def graph(self) -> Graph:
-        return self._graph
 
     @property
     def fs(self) -> VFS:

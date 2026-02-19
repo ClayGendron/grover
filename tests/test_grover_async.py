@@ -10,7 +10,7 @@ import pytest
 
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
-from grover.graph._graph import Graph
+from grover.graph import RustworkxGraph
 from grover.ref import Ref
 from grover.search.types import SearchResult
 
@@ -266,7 +266,7 @@ class TestGroverAsyncMultiMount:
 class TestGroverAsyncGraph:
     @pytest.mark.asyncio
     async def test_graph_property(self, grover: GroverAsync):
-        assert isinstance(grover.graph, Graph)
+        assert isinstance(grover.graph, RustworkxGraph)
 
     @pytest.mark.asyncio
     async def test_write_updates_graph(self, grover: GroverAsync):
@@ -397,7 +397,7 @@ class TestGroverAsyncProperties:
 
     @pytest.mark.asyncio
     async def test_graph_property(self, grover: GroverAsync):
-        assert grover.graph is grover._graph
+        assert isinstance(grover.graph, RustworkxGraph)
 
 
 # ==================================================================

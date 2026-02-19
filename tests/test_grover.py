@@ -13,7 +13,7 @@ import pytest
 
 from grover._grover import Grover
 from grover.fs.local_fs import LocalFileSystem
-from grover.graph._graph import Graph
+from grover.graph import RustworkxGraph
 from grover.search.types import SearchResult
 
 if TYPE_CHECKING:
@@ -194,8 +194,8 @@ class TestGroverFilesystem:
 
 class TestGroverGraph:
     def test_graph_property(self, grover: Grover):
-        assert isinstance(grover.graph, Graph)
-        assert grover.graph is grover._async._graph
+        assert isinstance(grover.graph, RustworkxGraph)
+        assert grover.graph is grover._async.graph
 
     def test_dependents_after_write(self, grover: Grover):
         code = 'import os\n\ndef hello():\n    return "hi"\n'

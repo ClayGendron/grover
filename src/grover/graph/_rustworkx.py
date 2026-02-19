@@ -1,4 +1,4 @@
-"""Graph — rustworkx wrapper, file-path-based nodes."""
+"""RustworkxGraph — rustworkx-backed graph store implementing GraphStore protocol."""
 
 from __future__ import annotations
 
@@ -15,12 +15,14 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-class Graph:
+class RustworkxGraph:
     """Directed knowledge graph over file paths.
 
     Wraps a ``rustworkx.PyDiGraph`` with string-path-keyed nodes and provides
     traversal queries (dependents, impacts, path_between) plus async
     persistence to/from the ``grover_edges`` / ``grover_files`` tables.
+
+    Implements the ``GraphStore`` and ``SupportsPersistence`` protocols.
     """
 
     def __init__(self) -> None:
@@ -263,7 +265,7 @@ class Graph:
         return rustworkx.is_directed_acyclic_graph(self._graph)
 
     def __repr__(self) -> str:
-        return f"Graph(nodes={self.node_count}, edges={self.edge_count})"
+        return f"RustworkxGraph(nodes={self.node_count}, edges={self.edge_count})"
 
     # ------------------------------------------------------------------
     # Persistence
