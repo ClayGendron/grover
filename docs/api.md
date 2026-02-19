@@ -15,14 +15,15 @@ from grover import Grover, GroverAsync
 ### Constructor
 
 ```python
-Grover(*, data_dir=None, embedding_provider=None)
-GroverAsync(*, data_dir=None, embedding_provider=None)
+Grover(*, data_dir=None, embedding_provider=None, vector_store=None)
+GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `data_dir` | `str | Path | None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. |
+| `data_dir` | `str | None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. `GroverAsync` also accepts `Path`. |
 | `embedding_provider` | `EmbeddingProvider | None` | Custom embedding provider for search. Falls back to `SentenceTransformerProvider` if the `search` extra is installed. Search is disabled if neither is available. |
+| `vector_store` | `VectorStore | None` | Custom vector store backend (e.g., `PineconeVectorStore`, `DatabricksVectorStore`). Defaults to `LocalVectorStore` if not set. |
 
 ### Mount / Unmount
 
@@ -272,11 +273,11 @@ Immutable (frozen) reference to a file or chunk.
 ```python
 @dataclass(frozen=True)
 class Ref:
-    path: str                          # Normalized virtual path
-    version: int | str | None = None   # Version identifier
-    line_start: int | None = None      # Chunk start line
-    line_end: int | None = None        # Chunk end line
-    metadata: dict[str, Any] = {}      # Excluded from hash/equality
+    path: str                                    # Normalized virtual path
+    version: int | str | None = None             # Version identifier
+    line_start: int | None = None                # Chunk start line
+    line_end: int | None = None                  # Chunk end line
+    metadata: Mapping[str, Any] = field(...)     # Read-only, excluded from hash/equality
 ```
 
 `file_ref(path, version=None)` is a convenience constructor that normalizes the path.
@@ -508,54 +509,185 @@ Built-in analyzers:
 
 ## Search
 
+Grover's search layer is built around two clean protocol layers — **EmbeddingProvider** (text → vectors) and **VectorStore** (store/search vectors) — wired together by **SearchEngine**.
+
 ```python
-from grover.search import (
-    SearchIndex,
-    SearchResult,
-    EmbeddingProvider,
-    SentenceTransformerProvider,
-    EmbeddableChunk,
-    extract_from_chunks,
-    extract_from_file,
+from grover import (
+    SearchEngine, SearchResult,
+    EmbeddingProvider, VectorStore,
+    VectorEntry, VectorSearchResult, IndexConfig, IndexInfo,
+    FilterExpression, eq, gt, and_, or_,
 )
 ```
 
-### SearchIndex
+### SearchEngine
 
 ```python
-SearchIndex(provider: EmbeddingProvider)
+SearchEngine(store: VectorStore, embedding_provider: EmbeddingProvider | None = None)
 ```
+
+Orchestrates embedding and storage. This is what `GroverAsync` uses internally.
 
 | Method | Description |
 |--------|-------------|
 | `add(path, content, parent_path=None)` | Embed and index a single item |
-| `add_batch(chunks: list[EmbeddableChunk])` | Batch index multiple items |
-| `remove(path)` | Remove all vectors for a path |
-| `remove_file(path)` | Alias for `remove` |
-| `search(query, k=10) -> list[SearchResult]` | Similarity search |
+| `add_batch(chunks: list[EmbeddableChunk])` | Batch embed and index multiple items |
+| `remove(path)` | Remove a single entry by path |
+| `remove_file(path)` | Remove a file and all its chunks |
+| `search(query, k=10) -> list[SearchResult]` | Embed query and search |
 | `has(path) -> bool` | Check if a path is indexed |
-| `save(dir)` | Persist index to disk |
-| `load(dir)` | Load index from disk |
+| `content_hash(path) -> str | None` | Get the content hash of an indexed entry |
+| `save(dir)` | Persist to disk (delegates to store if supported) |
+| `load(dir)` | Load from disk (delegates to store if supported) |
+| `connect()` | Connect the underlying store |
+| `close()` | Close the underlying store |
 
 ### EmbeddingProvider Protocol
 
 ```python
+@runtime_checkable
 class EmbeddingProvider(Protocol):
-    def embed(self, text: str) -> list[float]: ...
-    def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed(self, text: str) -> list[float]: ...
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
     @property
     def dimensions(self) -> int: ...
     @property
     def model_name(self) -> str: ...
 ```
 
-### SentenceTransformerProvider
+### Embedding Providers
+
+**SentenceTransformerEmbedding** — local models (default). Requires the `search` extra.
 
 ```python
-SentenceTransformerProvider(model_name="all-MiniLM-L6-v2")
+from grover.search.providers import SentenceTransformerEmbedding
+provider = SentenceTransformerEmbedding(model_name="all-MiniLM-L6-v2")
 ```
 
-Default provider. Uses `sentence-transformers` and produces 384-dimensional vectors. Runs on CPU, no API key needed. Requires the `search` extra.
+**OpenAIEmbedding** — OpenAI API. Requires the `openai` extra.
+
+```python
+from grover.search.providers import OpenAIEmbedding
+provider = OpenAIEmbedding(model="text-embedding-3-small", dimensions=384)
+```
+
+**LangChainEmbedding** — wraps any LangChain `Embeddings` instance. Requires the `langchain` extra.
+
+```python
+from grover.search.providers import LangChainEmbedding
+provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
+```
+
+### VectorStore Protocol
+
+```python
+@runtime_checkable
+class VectorStore(Protocol):
+    async def upsert(self, entries: list[VectorEntry], *, namespace: str | None = None) -> UpsertResult: ...
+    async def search(self, vector: list[float], *, k: int = 10, namespace: str | None = None, filter: FilterExpression | None = None, ...) -> list[VectorSearchResult]: ...
+    async def delete(self, ids: list[str], *, namespace: str | None = None) -> DeleteResult: ...
+    async def fetch(self, ids: list[str], *, namespace: str | None = None) -> list[VectorEntry | None]: ...
+    async def connect(self) -> None: ...
+    async def close(self) -> None: ...
+    @property
+    def index_name(self) -> str: ...
+```
+
+### Capability Protocols
+
+Vector stores can implement additional capabilities, checked at runtime via `isinstance()`:
+
+| Protocol | Methods | Implemented by |
+|----------|---------|----------------|
+| `SupportsNamespaces` | `list_namespaces()`, `delete_namespace()` | Pinecone |
+| `SupportsMetadataFilter` | `compile_filter()` | Pinecone, Databricks |
+| `SupportsIndexLifecycle` | `create_index()`, `delete_index()`, `list_indexes()` | Pinecone, Databricks |
+| `SupportsHybridSearch` | `hybrid_search()` | Pinecone, Databricks |
+| `SupportsReranking` | `reranked_search()` | Pinecone |
+| `SupportsTextSearch` | `text_search()` | (custom stores) |
+| `SupportsTextIngest` | `text_upsert()` | (custom stores) |
+
+### Vector Store Backends
+
+**LocalVectorStore** — in-process usearch HNSW index for local development.
+
+```python
+from grover.search.stores import LocalVectorStore
+store = LocalVectorStore(dimension=384, metric="cosine")
+```
+
+**PineconeVectorStore** — Pinecone cloud vector database. Requires the `pinecone` extra.
+
+```python
+from grover.search.stores import PineconeVectorStore
+store = PineconeVectorStore(index_name="my-index", api_key="...", namespace="")
+await store.connect()
+```
+
+**DatabricksVectorStore** — Databricks Vector Search (Direct Vector Access). Requires the `databricks` extra.
+
+```python
+from grover.search.stores import DatabricksVectorStore
+store = DatabricksVectorStore(
+    index_name="catalog.schema.my_index",
+    endpoint_name="my_endpoint",
+)
+await store.connect()
+```
+
+### Filter Expressions
+
+Provider-agnostic filter AST with builder helpers:
+
+```python
+from grover import eq, ne, gt, gte, lt, lte, in_, not_in, exists, and_, or_
+
+# Simple comparison
+f = eq("language", "python")
+
+# Combined
+f = and_(eq("language", "python"), gt("year", 2020))
+
+# Nested
+f = or_(eq("type", "code"), and_(eq("type", "doc"), gt("pages", 5)))
+
+# Use in search
+results = await store.search([0.1, ...], k=10, filter=f)
+```
+
+Filters are compiled to provider-native formats automatically (MongoDB-style dicts for Pinecone, SQL-like strings for Databricks, simple dicts for local).
+
+### Data Types
+
+```python
+@dataclass(frozen=True)
+class VectorEntry:
+    id: str
+    vector: list[float]
+    metadata: dict[str, Any]
+
+@dataclass(frozen=True)
+class VectorSearchResult:
+    id: str
+    score: float
+    metadata: dict[str, Any]
+    vector: list[float] | None
+
+@dataclass(frozen=True)
+class IndexConfig:
+    name: str
+    dimension: int
+    metric: str = "cosine"
+    cloud_config: dict[str, Any] = {}
+
+@dataclass(frozen=True)
+class IndexInfo:
+    name: str
+    dimension: int
+    metric: str
+    vector_count: int = 0
+    metadata: dict[str, Any] = {}
+```
 
 ---
 

@@ -224,10 +224,54 @@ Following the git model, **path is identity**. The default `move()` creates a cl
 
 On user-scoped mounts, trash operations are scoped by `owner_id`. Each user can only list, restore, and empty their own trashed files. Regular mounts are unaffected.
 
+## Search layer architecture
+
+The search layer follows the same two-protocol pattern as the filesystem:
+
+- **EmbeddingProvider** — converts text to vectors. Async-first, with `embed()` and `embed_batch()` methods. Built-in providers: sentence-transformers (local), OpenAI (API), LangChain adapter (any LangChain `Embeddings` instance).
+- **VectorStore** — stores and searches vectors. Async-first. Built-in stores: LocalVectorStore (in-process usearch HNSW), PineconeVectorStore (Pinecone cloud), DatabricksVectorStore (Databricks Vector Search).
+
+**SearchEngine** orchestrates them: embed text via provider → store vectors via store → search by embedding queries. `GroverAsync` creates a `SearchEngine` internally and wires it to the `EventBus`.
+
+### Capability protocols (search)
+
+Like filesystem backends, vector stores can advertise capabilities via runtime-checkable protocols:
+
+| Protocol | What it enables | Stores |
+|----------|----------------|--------|
+| `SupportsNamespaces` | Namespace partitioning | Pinecone |
+| `SupportsMetadataFilter` | Filter expressions on metadata | Pinecone, Databricks |
+| `SupportsIndexLifecycle` | Create/delete/list indexes | Pinecone, Databricks |
+| `SupportsHybridSearch` | Dense + sparse/keyword search | Pinecone, Databricks |
+| `SupportsReranking` | Server-side reranking | Pinecone |
+| `SupportsTextSearch` | Text query without external embeddings | (custom) |
+| `SupportsTextIngest` | Text upsert without external embeddings | (custom) |
+
+### Filter expression AST
+
+Metadata filters are expressed as a provider-agnostic AST (`Comparison` and `LogicalGroup` nodes) and compiled to provider-native formats by store-specific compilers:
+
+- `compile_pinecone()` → MongoDB-style dicts (`{"field": {"$eq": value}}`)
+- `compile_databricks()` → SQL-like strings (`"field = 'value'"`)
+- `compile_dict()` → simple dicts for local store (`{"field": value}`)
+
 ## Adding a new embedding provider
 
 1. Create `src/grover/search/providers/your_provider.py`.
-2. Implement the `EmbeddingProvider` protocol: `embed(text)`, `embed_batch(texts)`, plus `dimensions` and `model_name` properties.
-3. Add tests in `tests/test_search.py`.
+2. Implement the `EmbeddingProvider` protocol: async `embed(text)`, async `embed_batch(texts)`, plus `dimensions` and `model_name` properties.
+3. Import-guard any optional dependencies.
+4. Add the provider to `src/grover/search/providers/__init__.py`.
+5. Add tests in `tests/test_embedding_providers.py`.
 
 The provider is passed to `Grover(embedding_provider=...)` at construction time.
+
+## Adding a new vector store
+
+1. Create `src/grover/search/stores/your_store.py`.
+2. Implement the `VectorStore` protocol: `upsert()`, `search()`, `delete()`, `fetch()`, `connect()`, `close()`, and `index_name` property.
+3. Add any applicable capability protocols (e.g., `SupportsMetadataFilter`).
+4. Import-guard any optional dependencies.
+5. Add the store to `src/grover/search/stores/__init__.py`.
+6. Add tests in `tests/test_your_store.py`.
+
+The store is passed to `Grover(vector_store=...)` at construction time.

@@ -12,7 +12,7 @@ Grover gives AI agents a single toolkit for working with codebases and documents
 
 - **Versioned filesystem** — mount local directories or databases, write safely with automatic versioning, and recover mistakes with soft-delete trash and rollback.
 - **Knowledge graph** — dependency, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Code is automatically analyzed (Python via AST; JS/TS/Go via tree-sitter) and wired into the graph.
-- **Semantic search** — HNSW vector index via [usearch](https://github.com/unum-cloud/usearch) with pluggable embedding providers. Search by meaning, not just keywords.
+- **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (sentence-transformers, OpenAI, LangChain). Search by meaning, not just keywords.
 
 All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically.
 
@@ -27,13 +27,16 @@ pip install grover
 Optional extras:
 
 ```bash
-pip install grover[search]       # sentence-transformers + usearch
+pip install grover[search]       # sentence-transformers + usearch (local search)
+pip install grover[openai]       # OpenAI embeddings
+pip install grover[pinecone]     # Pinecone vector store
+pip install grover[databricks]   # Databricks Vector Search
 pip install grover[treesitter]   # JS/TS/Go code analyzers
 pip install grover[postgres]     # PostgreSQL backend
 pip install grover[mssql]        # MSSQL backend
 pip install grover[deepagents]   # deepagents/LangGraph integration
-pip install grover[langchain]   # LangChain retriever + document loader
-pip install grover[langgraph]   # LangGraph persistent store
+pip install grover[langchain]    # LangChain retriever + document loader
+pip install grover[langgraph]    # LangGraph persistent store
 pip install grover[all]          # everything
 ```
 
@@ -102,7 +105,7 @@ graph TD
     A["Grover (sync) / GroverAsync"]
     A --> B["VFS — Virtual Filesystem"]
     A --> C["Graph — Knowledge Graph"]
-    A --> D["SearchIndex — Vector Search"]
+    A --> D["SearchEngine"]
     A --> E["EventBus"]
 
     B --> F["LocalFileSystem<br/><i>disk + SQLite</i>"]
@@ -111,8 +114,8 @@ graph TD
     C --> H["rustworkx DiGraph"]
     C --> I["Analyzers<br/><i>Python · JS/TS · Go</i>"]
 
-    D --> J["usearch HNSW Index"]
-    D --> K["Embedding Providers<br/><i>sentence-transformers · custom</i>"]
+    D --> J["VectorStore<br/><i>Local · Pinecone · Databricks</i>"]
+    D --> K["EmbeddingProvider<br/><i>sentence-transformers · OpenAI · LangChain</i>"]
 
     E -.->|FILE_WRITTEN| C
     E -.->|FILE_WRITTEN| D
@@ -124,9 +127,9 @@ graph TD
 
 **Graph** maintains an in-memory directed graph of file dependencies. Code analyzers automatically extract imports, function definitions, and class hierarchies. You can also add manual edges.
 
-**SearchIndex** embeds file chunks into vectors and serves similarity queries. The default provider uses `all-MiniLM-L6-v2` (80 MB, runs on CPU, no API key needed).
+**SearchEngine** orchestrates embedding and vector storage. It wires together an `EmbeddingProvider` (text → vectors) and a `VectorStore` (store/search vectors). The default setup uses `all-MiniLM-L6-v2` embeddings + local usearch HNSW. For production, swap in Pinecone or Databricks with OpenAI embeddings.
 
-**EventBus** keeps everything consistent — when a file is written or deleted, the graph and search index update automatically.
+**EventBus** keeps everything consistent — when a file is written or deleted, the graph and search engine update automatically.
 
 ## Backends
 
@@ -276,7 +279,7 @@ Grover is in its first release cycle. Here's what's coming:
 - **CLI** — `grover init`, `grover status`, `grover search`, `grover rollback`
 - **More framework integrations** — Aider plugin, fsspec adapter
 - **More language analyzers** — Rust, Java, C#
-- **More embedding providers** — OpenAI, Cohere, Voyage
+- **More embedding providers** — Cohere, Voyage (OpenAI and LangChain adapters are already available)
 
 See the [implementation plan](grover_implementation_plan.md) for the full roadmap.
 
