@@ -21,8 +21,10 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import select
 
+from grover.models.chunks import FileChunk
 from grover.models.files import File, FileVersion
 
+from .chunks import ChunkService
 from .directories import DirectoryService
 from .exceptions import GroverError
 from .metadata import MetadataService
@@ -64,6 +66,7 @@ from .utils import (
 from .versioning import VersioningService
 
 if TYPE_CHECKING:
+    from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
 
     from .sharing import SharingService
@@ -102,15 +105,18 @@ class LocalFileSystem:
         data_dir: str | Path | None = None,
         file_model: type[FileBase] | None = None,
         file_version_model: type[FileVersionBase] | None = None,
+        file_chunk_model: type[FileChunkBase] | None = None,
         schema: str | None = None,
     ) -> None:
         fm: type[FileBase] = file_model or File
         fvm: type[FileVersionBase] = file_version_model or FileVersion
+        fcm: type[FileChunkBase] = file_chunk_model or FileChunk
 
         self.dialect = "sqlite"
         self.schema = schema
         self._file_model = fm
         self._file_version_model = fvm
+        self._file_chunk_model = fcm
 
         self.workspace_dir = Path(workspace_dir) if workspace_dir else Path.cwd()
         self.data_dir = Path(data_dir) if data_dir else _default_data_dir(self.workspace_dir)
@@ -124,6 +130,7 @@ class LocalFileSystem:
         self.versioning = VersioningService(fm, fvm)
         self.directories = DirectoryService(fm, "sqlite", schema)
         self.trash = TrashService(fm, self.versioning, self._delete_content)
+        self.chunks = ChunkService(fcm)
 
     @property
     def file_model(self) -> type[FileBase]:
@@ -132,6 +139,10 @@ class LocalFileSystem:
     @property
     def file_version_model(self) -> type[FileVersionBase]:
         return self._file_version_model
+
+    @property
+    def file_chunk_model(self) -> type[FileChunkBase]:
+        return self._file_chunk_model
 
     @property
     def session_factory(self) -> async_sessionmaker | None:
@@ -187,8 +198,10 @@ class LocalFileSystem:
             async with self._engine.begin() as conn:
                 fm_table = self._file_model.__table__  # type: ignore[unresolved-attribute]
                 fv_table = self._file_version_model.__table__  # type: ignore[unresolved-attribute]
+                fc_table = self._file_chunk_model.__table__  # type: ignore[unresolved-attribute]
                 await conn.run_sync(lambda c: fm_table.create(c, checkfirst=True))
                 await conn.run_sync(lambda c: fv_table.create(c, checkfirst=True))
+                await conn.run_sync(lambda c: fc_table.create(c, checkfirst=True))
 
             self._session_factory = async_sessionmaker(
                 self._engine,
@@ -1301,3 +1314,36 @@ class LocalFileSystem:
 
         await sess.flush()
         return stats
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsFileChunks
+    # ------------------------------------------------------------------
+
+    async def replace_file_chunks(
+        self,
+        file_path: str,
+        chunks: list[dict],
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> int:
+        sess = self._require_session(session)
+        return await self.chunks.replace_file_chunks(sess, file_path, chunks)
+
+    async def delete_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
+        sess = self._require_session(session)
+        return await self.chunks.delete_file_chunks(sess, file_path)
+
+    async def list_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list:
+        sess = self._require_session(session)
+        return await self.chunks.list_file_chunks(sess, file_path)

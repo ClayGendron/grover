@@ -35,6 +35,7 @@ from grover.fs.utils import normalize_path
 from grover.fs.vfs import VFS
 from grover.graph._rustworkx import RustworkxGraph
 from grover.graph.analyzers import AnalyzerRegistry
+from grover.models.chunks import FileChunk
 from grover.models.edges import GroverEdge
 from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from grover.fs.protocol import StorageBackend
     from grover.graph.protocols import GraphStore
     from grover.graph.types import SubgraphResult
+    from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
     from grover.search.types import SearchResult
@@ -144,6 +146,7 @@ class GroverAsync:
         dialect: str = "sqlite",
         file_model: type[FileBase] | None = None,
         file_version_model: type[FileVersionBase] | None = None,
+        file_chunk_model: type[FileChunkBase] | None = None,
         db_schema: str | None = None,
         mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
@@ -166,6 +169,7 @@ class GroverAsync:
                 backend,
                 file_model,
                 file_version_model,
+                file_chunk_model,
                 db_schema,
                 mount_type,
                 permission,
@@ -180,6 +184,7 @@ class GroverAsync:
                 dialect,
                 file_model,
                 file_version_model,
+                file_chunk_model,
                 db_schema,
                 mount_type,
                 permission,
@@ -215,6 +220,7 @@ class GroverAsync:
         backend: StorageBackend | None,
         file_model: type[FileBase] | None,
         file_version_model: type[FileVersionBase] | None,
+        file_chunk_model: type[FileChunkBase] | None,
         db_schema: str | None,
         mount_type: str | None,
         permission: Permission,
@@ -228,6 +234,7 @@ class GroverAsync:
         # Ensure base tables exist
         fm = file_model or File
         fvm = file_version_model or FileVersion
+        fcm = file_chunk_model or FileChunk
         async with engine.begin() as conn:
             await conn.run_sync(
                 lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
@@ -235,12 +242,16 @@ class GroverAsync:
             await conn.run_sync(
                 lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
             )
+            await conn.run_sync(
+                lambda c: fcm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
+            )
 
         if backend is None:
             backend = DatabaseFileSystem(
                 dialect=dialect,
                 file_model=file_model,
                 file_version_model=file_version_model,
+                file_chunk_model=file_chunk_model,
                 schema=db_schema,
             )
 
@@ -269,6 +280,7 @@ class GroverAsync:
         dialect: str,
         file_model: type[FileBase] | None,
         file_version_model: type[FileVersionBase] | None,
+        file_chunk_model: type[FileChunkBase] | None,
         db_schema: str | None,
         mount_type: str | None,
         permission: Permission,
@@ -281,6 +293,7 @@ class GroverAsync:
                 dialect=dialect,
                 file_model=file_model,
                 file_version_model=file_version_model,
+                file_chunk_model=file_chunk_model,
                 schema=db_schema,
             )
 

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
 
     from .sharing import SharingService
@@ -65,12 +66,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
         dialect: str = "sqlite",
         file_model: type[FileBase] | None = None,
         file_version_model: type[FileVersionBase] | None = None,
+        file_chunk_model: type[FileChunkBase] | None = None,
         schema: str | None = None,
     ) -> None:
         super().__init__(
             dialect=dialect,
             file_model=file_model,
             file_version_model=file_version_model,
+            file_chunk_model=file_chunk_model,
             schema=schema,
         )
         self._sharing = sharing
@@ -1002,3 +1005,38 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 )
             )
         return result
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsFileChunks (overrides with user scoping)
+    # ------------------------------------------------------------------
+
+    async def replace_file_chunks(
+        self,
+        file_path: str,
+        chunks: list[dict],
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> int:
+        uid = self._require_user_id(user_id)
+        stored = self._resolve_path(file_path, uid)
+        sess = self._require_session(session)
+        return await self.chunks.replace_file_chunks(sess, stored, chunks, user_id=uid)
+
+    async def delete_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
+        # No user scoping on delete — stored path should already be resolved
+        return await super().delete_file_chunks(file_path, session=session)
+
+    async def list_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list:
+        # No user scoping on list — stored path should already be resolved
+        return await super().list_file_chunks(file_path, session=session)

@@ -317,3 +317,31 @@ class SupportsReconcile(Protocol):
         *,
         session: AsyncSession | None = None,
     ) -> dict[str, int]: ...
+
+
+@runtime_checkable
+class SupportsFileChunks(Protocol):
+    """Opt-in: DB-backed file chunk storage."""
+
+    async def replace_file_chunks(
+        self,
+        file_path: str,
+        chunks: list[dict],
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> int: ...
+
+    async def delete_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int: ...
+
+    async def list_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list[Any]: ...

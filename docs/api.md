@@ -50,6 +50,7 @@ Mount a storage backend at a virtual path. You can pass either:
 | `dialect` | `str` | `"sqlite"` | Database dialect (`"sqlite"`, `"postgresql"`, `"mssql"`) |
 | `file_model` | `type | None` | `None` | Custom SQLModel file table class |
 | `file_version_model` | `type | None` | `None` | Custom SQLModel file version table class |
+| `file_chunk_model` | `type | None` | `None` | Custom SQLModel file chunk table class |
 | `db_schema` | `str | None` | `None` | Database schema name |
 | `mount_type` | `str | None` | `None` | Mount type label (auto-detected if `None`) |
 | `permission` | `Permission` | `READ_WRITE` | `Permission.READ_WRITE` or `Permission.READ_ONLY` |

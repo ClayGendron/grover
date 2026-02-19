@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func
 from sqlmodel import select
 
+from grover.models.chunks import FileChunk
 from grover.models.files import File, FileVersion
 
+from .chunks import ChunkService
 from .directories import DirectoryService
 from .exceptions import GroverError
 from .metadata import MetadataService
@@ -52,6 +54,7 @@ from .versioning import VersioningService
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
 
     from .sharing import SharingService
@@ -78,21 +81,25 @@ class DatabaseFileSystem:
         dialect: str = "sqlite",
         file_model: type[FileBase] | None = None,
         file_version_model: type[FileVersionBase] | None = None,
+        file_chunk_model: type[FileChunkBase] | None = None,
         schema: str | None = None,
     ) -> None:
         fm: type[FileBase] = file_model or File
         fvm: type[FileVersionBase] = file_version_model or FileVersion
+        fcm: type[FileChunkBase] = file_chunk_model or FileChunk
 
         self.dialect = dialect
         self.schema = schema
         self._file_model = fm
         self._file_version_model = fvm
+        self._file_chunk_model = fcm
 
         # Composed services
         self.metadata = MetadataService(fm)
         self.versioning = VersioningService(fm, fvm)
         self.directories = DirectoryService(fm, dialect, schema)
         self.trash = TrashService(fm, self.versioning, self._delete_content)
+        self.chunks = ChunkService(fcm)
 
     @property
     def file_model(self) -> type[FileBase]:
@@ -101,6 +108,10 @@ class DatabaseFileSystem:
     @property
     def file_version_model(self) -> type[FileVersionBase]:
         return self._file_version_model
+
+    @property
+    def file_chunk_model(self) -> type[FileChunkBase]:
+        return self._file_chunk_model
 
     @staticmethod
     def _require_session(session: AsyncSession | None) -> AsyncSession:
@@ -788,3 +799,36 @@ class DatabaseFileSystem:
     ) -> DeleteResult:
         sess = self._require_session(session)
         return await self.trash.empty_trash(sess, owner_id=owner_id)
+
+    # ------------------------------------------------------------------
+    # Capability: SupportsFileChunks
+    # ------------------------------------------------------------------
+
+    async def replace_file_chunks(
+        self,
+        file_path: str,
+        chunks: list[dict],
+        *,
+        session: AsyncSession | None = None,
+        user_id: str | None = None,
+    ) -> int:
+        sess = self._require_session(session)
+        return await self.chunks.replace_file_chunks(sess, file_path, chunks)
+
+    async def delete_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
+        sess = self._require_session(session)
+        return await self.chunks.delete_file_chunks(sess, file_path)
+
+    async def list_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list:
+        sess = self._require_session(session)
+        return await self.chunks.list_file_chunks(sess, file_path)

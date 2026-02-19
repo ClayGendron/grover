@@ -276,17 +276,21 @@ StorageBackend (core — 12 methods)
 │     list_trash → ListResult
 │     restore_from_trash → RestoreResult
 │     empty_trash → DeleteResult
-└── SupportsReconcile (opt-in)
-      reconcile → dict[str, int]
+├── SupportsReconcile (opt-in)
+│     reconcile → dict[str, int]
+└── SupportsFileChunks (opt-in)
+      replace_file_chunks → int (count inserted)
+      delete_file_chunks → int (count deleted)
+      list_file_chunks → list[FileChunkBase]
 ```
 
 ### Implementation
 
-| Backend | StorageBackend | SupportsVersions | SupportsTrash | SupportsReconcile |
-|---------|:---:|:---:|:---:|:---:|
-| LocalFileSystem | Y | Y | Y | Y |
-| DatabaseFileSystem | Y | Y | Y | N |
-| Custom (minimal) | Y | - | - | - |
+| Backend | StorageBackend | SupportsVersions | SupportsTrash | SupportsReconcile | SupportsFileChunks |
+|---------|:---:|:---:|:---:|:---:|:---:|
+| LocalFileSystem | Y | Y | Y | Y | Y |
+| DatabaseFileSystem | Y | Y | Y | N | Y |
+| Custom (minimal) | Y | - | - | - | - |
 
 ### Unsupported Capability Handling
 
@@ -465,7 +469,7 @@ Detection happens only at `write()` and `edit()` time. There is no file watcher,
 | **Path security** | Symlink detection, workspace boundary enforcement | N/A (virtual paths only) |
 | **Delete behavior** | Backs up content before delete, removes from disk | Metadata-only delete |
 | **Restore behavior** | Writes content back to disk from version history | Metadata restoration (content already in DB) |
-| **Capabilities** | Versions, Trash, Reconcile | Versions, Trash |
+| **Capabilities** | Versions, Trash, Reconcile, FileChunks | Versions, Trash, FileChunks |
 
 ### When to Use Which
 
