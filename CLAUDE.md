@@ -38,6 +38,7 @@ src/grover/
 │   ├── diff.py             # Unified diff compute/apply/reconstruct
 │   ├── utils.py            # Path normalization, validation, mime detection, replacers
 │   ├── types.py            # Result dataclasses (ReadResult, WriteResult, ShareResult, etc.)
+│   ├── query_types.py      # New query response types (GlobQueryResult, GrepQueryResult, SearchQueryResult)
 │   ├── exceptions.py       # GroverError hierarchy (+ AuthenticationRequiredError)
 │   ├── permissions.py      # Permission enum (READ_WRITE, READ_ONLY)
 │   └── dialect.py          # Dialect-aware SQL (upsert for SQLite/PostgreSQL/MSSQL)
@@ -113,6 +114,7 @@ tests/                      # pytest + pytest-asyncio (asyncio_mode = "auto")
 ├── test_diff.py            # Diff compute/apply/reconstruct round-trips
 ├── test_mounts.py          # MountConfig, MountRegistry, path resolution
 ├── test_fs_types.py        # Result dataclass fields and defaults
+├── test_query_types.py     # New query response types (frozen immutability, defaults, construction)
 ├── test_search_ops.py      # glob, grep, tree search operations
 ├── test_fs_utils.py        # Path utils, binary detection, replacers
 ├── test_dialect.py         # Multi-DB dialect support (SQLite, PostgreSQL, MSSQL)
