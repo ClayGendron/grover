@@ -253,11 +253,12 @@ class GroverBackend(BackendProtocol):
 
         return [
             {
-                "path": m.file_path,
-                "line": m.line_number,
-                "text": m.line_content,
+                "path": hit.path,
+                "line": lm.line_number,
+                "text": lm.line_content,
             }
-            for m in result.matches
+            for hit in result.hits
+            for lm in hit.line_matches
         ]
 
     async def agrep_raw(
@@ -286,13 +287,13 @@ class GroverBackend(BackendProtocol):
             return []
 
         infos: list[FileInfo] = []
-        for entry in result.entries:
+        for hit in result.hits:
             info: FileInfo = {
-                "path": entry.path,
-                "is_dir": entry.is_directory,
+                "path": hit.path,
+                "is_dir": hit.is_directory,
             }
-            if entry.size_bytes is not None:
-                info["size"] = entry.size_bytes
+            if hit.size_bytes is not None:
+                info["size"] = hit.size_bytes
             infos.append(info)
         return infos
 

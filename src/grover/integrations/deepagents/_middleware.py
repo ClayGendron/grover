@@ -284,24 +284,24 @@ class GroverMiddleware(AgentMiddleware):
             k: Annotated[int, "Maximum number of results to return"] = 10,
         ) -> str:
             try:
-                results = grover.search(query, k=k)
+                result = grover.search(query, k=k)
             except Exception as e:
                 return f"Error: {e}"
 
-            if not results:
+            if not result.success:
+                return f"Error: {result.message}"
+
+            if not result.hits:
                 return f"No results found for: {query}"
 
-            lines = [f"Search results for '{query}' ({len(results)} matches):"]
-            for i, sr in enumerate(results, 1):
-                line = f"  {i}. {sr.ref.path} (score: {sr.score:.3f})"
-                if sr.parent_path:
-                    line += f" [chunk of {sr.parent_path}]"
+            lines = [f"Search results for '{query}' ({len(result.hits)} files):"]
+            for i, hit in enumerate(result.hits, 1):
+                line = f"  {i}. {hit.path} (score: {hit.score:.3f})"
                 lines.append(line)
-                # Show a snippet of the matched content
-                snippet = sr.content[:200].replace("\n", " ")
-                if len(sr.content) > 200:
-                    snippet += "..."
-                lines.append(f"     {snippet}")
+                # Show snippets from chunk matches
+                for cm in hit.chunk_matches[:3]:  # max 3 chunks per file
+                    snippet = cm.snippet.replace("\n", " ")
+                    lines.append(f"     [{cm.name}] {snippet}")
             return "\n".join(lines)
 
         return StructuredTool.from_function(

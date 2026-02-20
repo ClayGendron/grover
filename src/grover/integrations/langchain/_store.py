@@ -118,13 +118,15 @@ class GroverStore(BaseStore):
         # Try semantic search if query is provided
         if op.query:
             try:
-                results = self.grover.search(op.query, k=op.limit + op.offset)
+                result = self.grover.search(op.query, k=op.limit + op.offset)
             except Exception:
-                results = []
+                result = None
+
+            hits = result.hits if result is not None and result.success else ()
 
             items: list[SearchItem] = []
-            for sr in results:
-                path = sr.ref.path
+            for hit in hits:
+                path = hit.path
                 # Filter to only items under the namespace prefix
                 if not path.startswith(ns_dir + "/"):
                     continue
@@ -133,10 +135,15 @@ class GroverStore(BaseStore):
                 if ns is None:
                     continue
 
+                # Read file content to get the stored value
+                read_result = self.grover.read(path)
+                if not read_result.success or read_result.content is None:
+                    continue
+
                 try:
-                    value = json.loads(sr.content)
+                    value = json.loads(read_result.content)
                 except (json.JSONDecodeError, TypeError):
-                    value = {"content": sr.content}
+                    value = {"content": read_result.content}
 
                 items.append(
                     SearchItem(
@@ -145,7 +152,7 @@ class GroverStore(BaseStore):
                         value=value,
                         created_at=now,
                         updated_at=now,
-                        score=sr.score,
+                        score=hit.score,
                     )
                 )
 

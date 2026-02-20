@@ -127,6 +127,7 @@ class TestRetrieverDocumentMetadata:
         assert "score" in doc.metadata
         assert isinstance(doc.metadata["score"], float)
         assert doc.id is not None
+        assert isinstance(doc.id, str)
 
 
 class TestRetrieverEmptyResults:

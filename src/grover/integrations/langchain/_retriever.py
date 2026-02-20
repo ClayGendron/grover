@@ -13,9 +13,9 @@ from grover._grover import Grover
 class GroverRetriever(BaseRetriever):
     """LangChain retriever backed by Grover's semantic search.
 
-    Each :class:`~grover.search._index.SearchResult` is converted to a
+    Each :class:`~grover.fs.query_types.SearchHit` is converted to a
     LangChain :class:`~langchain_core.documents.Document` with metadata
-    containing the file path, similarity score, version, and line range.
+    containing the file path and similarity score.
 
     Usage::
 
@@ -56,11 +56,14 @@ class GroverRetriever(BaseRetriever):
         (e.g. no embedding provider configured).
         """
         try:
-            results = self.grover.search(query, k=self.k)
+            result = self.grover.search(query, k=self.k)
         except Exception:
             return []
 
-        return [self._to_document(sr) for sr in results]
+        if not result.success:
+            return []
+
+        return [self._hit_to_document(hit) for hit in result.hits]
 
     async def _aget_relevant_documents(
         self,
@@ -72,23 +75,22 @@ class GroverRetriever(BaseRetriever):
         return await asyncio.to_thread(self._get_relevant_documents, query, run_manager=run_manager)
 
     @staticmethod
-    def _to_document(sr: Any) -> Document:
-        """Convert a SearchResult to a LangChain Document."""
+    def _hit_to_document(hit: Any) -> Document:
+        """Convert a SearchHit to a LangChain Document."""
         metadata: dict[str, object] = {
-            "path": sr.ref.path,
-            "score": sr.score,
+            "path": hit.path,
+            "score": hit.score,
         }
-        if sr.ref.version is not None:
-            metadata["version"] = sr.ref.version
-        if sr.parent_path is not None:
-            metadata["parent_path"] = sr.parent_path
-        if sr.ref.line_start is not None:
-            metadata["line_start"] = sr.ref.line_start
-        if sr.ref.line_end is not None:
-            metadata["line_end"] = sr.ref.line_end
+        # Include chunk info if available
+        if hit.chunk_matches:
+            metadata["chunks"] = len(hit.chunk_matches)
+
+        # Build page_content from chunk snippets
+        snippets = [cm.snippet for cm in hit.chunk_matches if cm.snippet]
+        page_content = "\n\n".join(snippets) if snippets else hit.path
 
         return Document(
-            page_content=sr.content,
+            page_content=page_content,
             metadata=metadata,
-            id=sr.ref.path,
+            id=hit.path,
         )
