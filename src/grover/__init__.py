@@ -7,6 +7,16 @@ __version__ = "0.0.3"
 
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
+from grover.fs.query_types import (
+    ChunkMatch,
+    GlobHit,
+    GlobQueryResult,
+    GrepHit,
+    GrepQueryResult,
+    LineMatch,
+    SearchHit,
+    SearchQueryResult,
+)
 from grover.fs.types import ListSharesResult, ShareInfo, ShareResult
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.graph.protocols import GraphStore
@@ -51,17 +61,25 @@ from grover.search.types import (
 )
 
 __all__ = [
+    "ChunkMatch",
     "EmbeddingProvider",
     "FilterExpression",
+    "GlobHit",
+    "GlobQueryResult",
     "GraphStore",
+    "GrepHit",
+    "GrepQueryResult",
     "Grover",
     "GroverAsync",
     "IndexConfig",
     "IndexInfo",
+    "LineMatch",
     "ListSharesResult",
     "Ref",
     "SearchDeleteResult",
     "SearchEngine",
+    "SearchHit",
+    "SearchQueryResult",
     "SearchResult",
     "ShareInfo",
     "ShareResult",

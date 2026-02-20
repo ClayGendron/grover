@@ -160,9 +160,9 @@ class TestSearchRouting:
     async def test_search_routes_through_vfs(self, grover: GroverAsync):
         """search() should use VFS routing."""
         await grover.write("/project/auth.py", 'def authenticate():\n    """Auth."""\n    pass\n')
-        results = await grover.search("authenticate")
-        assert isinstance(results, list)
-        assert len(results) >= 1
+        result = await grover.search("authenticate")
+        assert result.success is True
+        assert len(result.hits) >= 1
 
     @pytest.mark.asyncio
     async def test_search_single_mount(self, multi_grover: GroverAsync):
@@ -173,9 +173,9 @@ class TestSearchRouting:
         await multi_grover.write(
             "/mount2/data.py", 'def process_data():\n    """Data."""\n    pass\n'
         )
-        results = await multi_grover.search("authenticate", path="/mount1")
-        paths = [r.ref.path for r in results] + [r.parent_path for r in results if r.parent_path]
-        assert all("/mount1" in p for p in paths if p)
+        result = await multi_grover.search("authenticate", path="/mount1")
+        paths = [h.path for h in result.hits]
+        assert all("/mount1" in p for p in paths)
 
     @pytest.mark.asyncio
     async def test_search_cross_mount_aggregation(self, multi_grover: GroverAsync):
@@ -186,9 +186,9 @@ class TestSearchRouting:
         await multi_grover.write(
             "/mount2/lib.py", 'def compute_more():\n    """Compute more."""\n    pass\n'
         )
-        results = await multi_grover.search("compute", path="/")
+        result = await multi_grover.search("compute", path="/")
         # Should have results from both mounts
-        assert len(results) >= 2
+        assert len(result.hits) >= 2
 
     @pytest.mark.asyncio
     async def test_backend_supports_search_protocol(self, grover: GroverAsync):
@@ -303,8 +303,8 @@ class TestPerMountPersistence:
         assert not g2.get_graph("/mount1").has_node("/mount2/b.py")
 
         # Search should also be restored
-        results = await g2.search("alpha", path="/mount1")
-        assert len(results) >= 1
+        result = await g2.search("alpha", path="/mount1")
+        assert len(result.hits) >= 1
 
         await g2.close()
 
@@ -373,6 +373,6 @@ class TestSearchPathScoping:
         await grover.write("/project/src/auth.py", 'def auth():\n    """Auth."""\n    pass\n')
         await grover.write("/project/tests/test.py", 'def test():\n    """Test."""\n    pass\n')
         # Search scoped to /project/src
-        results = await grover.search("auth", path="/project/src")
+        result = await grover.search("auth", path="/project/src")
         # Should find results
-        assert isinstance(results, list)
+        assert result.success is True

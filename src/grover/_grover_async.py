@@ -15,12 +15,20 @@ from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsFileChunks, SupportsReBAC
+from grover.fs.query_types import (
+    ChunkMatch,
+    GlobHit,
+    GlobQueryResult,
+    GrepHit,
+    GrepQueryResult,
+    LineMatch,
+    SearchHit,
+    SearchQueryResult,
+)
 from grover.fs.types import (
     DeleteResult,
     EditResult,
     GetVersionContentResult,
-    GlobResult,
-    GrepResult,
     ListSharesResult,
     ListVersionsResult,
     MoveResult,
@@ -54,7 +62,6 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
-    from grover.search.types import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -757,13 +764,29 @@ class GroverAsync:
 
     async def glob(
         self, pattern: str, path: str = "/", *, user_id: str | None = None
-    ) -> GlobResult:
+    ) -> GlobQueryResult:
         try:
-            return await self._vfs.glob(pattern, path, user_id=user_id)
+            result = await self._vfs.glob(pattern, path, user_id=user_id)
         except Exception as e:
-            return GlobResult(
+            return GlobQueryResult(
                 success=False, message=f"Glob failed: {e}", pattern=pattern, path=path
             )
+        hits = tuple(
+            GlobHit(
+                path=entry.path,
+                is_directory=entry.is_directory,
+                size_bytes=entry.size_bytes,
+                mime_type=entry.mime_type,
+            )
+            for entry in result.entries
+        )
+        return GlobQueryResult(
+            success=result.success,
+            message=result.message,
+            hits=hits,
+            pattern=result.pattern,
+            path=result.path,
+        )
 
     async def grep(
         self,
@@ -781,9 +804,9 @@ class GroverAsync:
         count_only: bool = False,
         files_only: bool = False,
         user_id: str | None = None,
-    ) -> GrepResult:
+    ) -> GrepQueryResult:
         try:
-            return await self._vfs.grep(
+            result = await self._vfs.grep(
                 pattern,
                 path,
                 glob_filter=glob_filter,
@@ -799,9 +822,33 @@ class GroverAsync:
                 user_id=user_id,
             )
         except Exception as e:
-            return GrepResult(
+            return GrepQueryResult(
                 success=False, message=f"Grep failed: {e}", pattern=pattern, path=path
             )
+        # Group flat GrepMatch list by file_path
+        grouped: dict[str, list[LineMatch]] = {}
+        for m in result.matches:
+            lm = LineMatch(
+                line_number=m.line_number,
+                line_content=m.line_content,
+                context_before=tuple(m.context_before),
+                context_after=tuple(m.context_after),
+            )
+            grouped.setdefault(m.file_path, []).append(lm)
+
+        hits = tuple(
+            GrepHit(path=fp, line_matches=tuple(matches)) for fp, matches in grouped.items()
+        )
+        return GrepQueryResult(
+            success=result.success,
+            message=result.message,
+            hits=hits,
+            pattern=result.pattern,
+            path=result.path,
+            files_searched=result.files_searched,
+            files_matched=result.files_matched,
+            truncated=result.truncated,
+        )
 
     async def tree(
         self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
@@ -1145,7 +1192,7 @@ class GroverAsync:
 
     async def search(
         self, query: str, k: int = 10, *, path: str = "/", user_id: str | None = None
-    ) -> list[SearchResult]:
+    ) -> SearchQueryResult:
         """Semantic search, routed through VFS to per-mount search engines."""
         # Check if any mount has a search engine
         has_search = False
@@ -1154,12 +1201,77 @@ class GroverAsync:
                 has_search = True
                 break
         if not has_search:
-            msg = (
-                "Search is not available: no embedding provider configured. "
-                "Install sentence-transformers or pass embedding_provider= to GroverAsync()."
+            return SearchQueryResult(
+                success=False,
+                message=(
+                    "Search is not available: no embedding provider configured. "
+                    "Install sentence-transformers or pass embedding_provider= "
+                    "to GroverAsync()."
+                ),
+                query=query,
+                path=path,
             )
-            raise RuntimeError(msg)
-        return await self._vfs.search(query, k, path=path, user_id=user_id)
+        try:
+            raw_results = await self._vfs.search(query, k, path=path, user_id=user_id)
+        except Exception as e:
+            return SearchQueryResult(
+                success=False,
+                message=f"Search failed: {e}",
+                query=query,
+                path=path,
+            )
+
+        # Group results by parent file (document-first)
+        file_groups: dict[str, list[Any]] = {}
+        for r in raw_results:
+            file_path = r.parent_path or r.ref.path
+            file_groups.setdefault(file_path, []).append(r)
+
+        search_hits: list[SearchHit] = []
+        for file_path, results in file_groups.items():
+            chunk_matches_list: list[ChunkMatch] = []
+            max_score = 0.0
+            for r in results:
+                if r.score > max_score:
+                    max_score = r.score
+                # Build snippet: first 200 chars + "..." if truncated
+                snippet = r.content[:200]
+                if len(r.content) > 200:
+                    snippet += "..."
+                # Extract chunk metadata from ref or fallback
+                chunk_name = getattr(r.ref, "chunk_name", None) or r.ref.path.rsplit("/", 1)[-1]
+                line_start = getattr(r.ref, "line_start", None) or 0
+                line_end = getattr(r.ref, "line_end", None) or 0
+                chunk_matches_list.append(
+                    ChunkMatch(
+                        name=chunk_name,
+                        line_start=line_start,
+                        line_end=line_end,
+                        score=r.score,
+                        snippet=snippet,
+                    )
+                )
+            search_hits.append(
+                SearchHit(
+                    path=file_path,
+                    score=max_score,
+                    chunk_matches=tuple(chunk_matches_list),
+                )
+            )
+
+        # Sort by score desc, truncate to k
+        search_hits.sort(key=lambda h: h.score, reverse=True)
+        search_hits = search_hits[:k]
+
+        return SearchQueryResult(
+            success=True,
+            message=f"{len(search_hits)} file(s) matched",
+            hits=tuple(search_hits),
+            query=query,
+            path=path,
+            files_matched=len(search_hits),
+            truncated=len(raw_results) >= k,
+        )
 
     # ------------------------------------------------------------------
     # Index and persistence

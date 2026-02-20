@@ -10,9 +10,9 @@ import pytest
 
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
+from grover.fs.query_types import SearchQueryResult
 from grover.graph import RustworkxGraph
 from grover.ref import Ref
-from grover.search.types import SearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -298,31 +298,35 @@ class TestGroverAsyncSearch:
     async def test_search_after_write(self, grover: GroverAsync):
         code = 'def authenticate_user():\n    """Verify user credentials."""\n    pass\n'
         await grover.write("/project/auth.py", code)
-        results = await grover.search("authenticate")
-        assert isinstance(results, list)
-        assert len(results) >= 1
+        result = await grover.search("authenticate")
+        assert isinstance(result, SearchQueryResult)
+        assert result.success is True
+        assert len(result.hits) >= 1
 
     @pytest.mark.asyncio
-    async def test_search_returns_search_results(self, grover: GroverAsync):
+    async def test_search_returns_search_query_result(self, grover: GroverAsync):
         await grover.write("/project/data.txt", "important data content")
-        results = await grover.search("data")
-        assert all(isinstance(r, SearchResult) for r in results)
+        result = await grover.search("data")
+        assert isinstance(result, SearchQueryResult)
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_search_empty(self, grover: GroverAsync):
-        results = await grover.search("nonexistent query")
-        assert results == []
+        result = await grover.search("nonexistent query")
+        assert isinstance(result, SearchQueryResult)
+        assert result.hits == ()
 
     @pytest.mark.asyncio
-    async def test_search_raises_without_provider(self, grover_no_search: GroverAsync):
+    async def test_search_returns_failure_without_provider(self, grover_no_search: GroverAsync):
         has_search = any(
             getattr(m.backend, "_search_engine", None) is not None
             for m in grover_no_search._registry.list_visible_mounts()
         )
         if has_search:
             pytest.skip("sentence-transformers is installed; search available")
-        with pytest.raises(RuntimeError, match="Search is not available"):
-            await grover_no_search.search("anything")
+        result = await grover_no_search.search("anything")
+        assert result.success is False
+        assert "Search is not available" in result.message
 
 
 # ==================================================================
@@ -384,8 +388,9 @@ class TestGroverAsyncPersistence:
             "/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
         )
         assert g2.get_graph().has_node("/project/keep.py")
-        results = await g2.search("keep")
-        assert len(results) >= 1
+        result = await g2.search("keep")
+        assert result.success is True
+        assert len(result.hits) >= 1
         await g2.close()
 
 
@@ -497,10 +502,8 @@ class TestGroverAsyncEventHandlers:
             for m in grover._registry.list_visible_mounts()
         )
         if has_search:
-            results = await grover.search("unique_search_target")
-            found_paths = [r.ref.path for r in results]
-            found_parents = [r.parent_path for r in results if r.parent_path]
-            all_paths = found_paths + found_parents
+            result = await grover.search("unique_search_target")
+            all_paths = [h.path for h in result.hits]
             # Old path should not appear
             assert "/project/before.py" not in all_paths
 
@@ -612,8 +615,8 @@ class TestGroverAsyncUnsupportedFiles:
             for m in grover._registry.list_visible_mounts()
         )
         if has_search:
-            results = await grover.search("Important project notes")
-            assert len(results) >= 1
+            result = await grover.search("Important project notes")
+            assert len(result.hits) >= 1
 
     @pytest.mark.asyncio
     async def test_write_grover_path_skipped(self, grover: GroverAsync):

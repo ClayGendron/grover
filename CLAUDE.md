@@ -16,7 +16,7 @@ All three layers share a single identity model: **everything is a file path**. G
 
 ```
 src/grover/
-├── __init__.py             # Public exports: __version__, Grover, GroverAsync, Ref, SearchResult, file_ref
+├── __init__.py             # Public exports: __version__, Grover, GroverAsync, Ref, query types, file_ref
 ├── _grover.py              # Grover — sync facade (RLock + daemon thread event loop)
 ├── _grover_async.py        # GroverAsync — primary async class, wires all subsystems
 ├── ref.py                  # Ref frozen dataclass (path + version + line range)
@@ -115,6 +115,7 @@ tests/                      # pytest + pytest-asyncio (asyncio_mode = "auto")
 ├── test_mounts.py          # MountConfig, MountRegistry, path resolution
 ├── test_fs_types.py        # Result dataclass fields and defaults
 ├── test_query_types.py     # New query response types (frozen immutability, defaults, construction)
+├── test_query_api.py       # Facade API returns new query types (glob→GlobQueryResult, grep→GrepQueryResult, search→SearchQueryResult)
 ├── test_search_ops.py      # glob, grep, tree search operations
 ├── test_fs_utils.py        # Path utils, binary detection, replacers
 ├── test_dialect.py         # Multi-DB dialect support (SQLite, PostgreSQL, MSSQL)

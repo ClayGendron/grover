@@ -14,11 +14,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+    from grover.fs.query_types import GlobQueryResult, GrepQueryResult, SearchQueryResult
     from grover.fs.types import (
         DeleteResult,
         EditResult,
-        GlobResult,
-        GrepResult,
         ListSharesResult,
         MoveResult,
         ReadResult,
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
-    from grover.search.types import SearchResult
 
 
 class Grover:
@@ -207,7 +205,7 @@ class Grover:
     # Search / Query wrappers (sync)
     # ------------------------------------------------------------------
 
-    def glob(self, pattern: str, path: str = "/", *, user_id: str | None = None) -> GlobResult:
+    def glob(self, pattern: str, path: str = "/", *, user_id: str | None = None) -> GlobQueryResult:
         """Find files matching a glob *pattern* under *path*."""
         return self._run(self._async.glob(pattern, path, user_id=user_id))
 
@@ -227,7 +225,7 @@ class Grover:
         count_only: bool = False,
         files_only: bool = False,
         user_id: str | None = None,
-    ) -> GrepResult:
+    ) -> GrepQueryResult:
         """Search file contents for *pattern* under *path*."""
         return self._run(
             self._async.grep(
@@ -389,7 +387,7 @@ class Grover:
 
     def search(
         self, query: str, k: int = 10, *, path: str = "/", user_id: str | None = None
-    ) -> list[SearchResult]:
+    ) -> SearchQueryResult:
         """Semantic search over indexed content."""
         return self._run(self._async.search(query, k, path=path, user_id=user_id))
 

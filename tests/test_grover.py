@@ -13,8 +13,8 @@ import pytest
 
 from grover._grover import Grover
 from grover.fs.local_fs import LocalFileSystem
+from grover.fs.query_types import SearchQueryResult
 from grover.graph import RustworkxGraph
-from grover.search.types import SearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -234,28 +234,32 @@ class TestGroverSearch:
     def test_search_after_write(self, grover: Grover):
         code = 'def authenticate_user():\n    """Verify user credentials."""\n    pass\n'
         grover.write("/project/auth.py", code)
-        results = grover.search("authenticate")
-        assert isinstance(results, list)
-        assert len(results) >= 1
+        result = grover.search("authenticate")
+        assert isinstance(result, SearchQueryResult)
+        assert result.success is True
+        assert len(result.hits) >= 1
 
-    def test_search_returns_search_results(self, grover: Grover):
+    def test_search_returns_search_query_result(self, grover: Grover):
         grover.write("/project/data.txt", "important data content")
-        results = grover.search("data")
-        assert all(isinstance(r, SearchResult) for r in results)
+        result = grover.search("data")
+        assert isinstance(result, SearchQueryResult)
+        assert result.success is True
 
     def test_search_empty(self, grover: Grover):
-        results = grover.search("nonexistent query")
-        assert results == []
+        result = grover.search("nonexistent query")
+        assert isinstance(result, SearchQueryResult)
+        assert result.hits == ()
 
-    def test_search_raises_without_provider(self, grover_no_search: Grover):
+    def test_search_returns_failure_without_provider(self, grover_no_search: Grover):
         has_search = any(
             getattr(m.backend, "_search_engine", None) is not None
             for m in grover_no_search._async._registry.list_visible_mounts()
         )
         if has_search:
             pytest.skip("sentence-transformers is installed; search available")
-        with pytest.raises(RuntimeError, match="Search is not available"):
-            grover_no_search.search("anything")
+        result = grover_no_search.search("anything")
+        assert result.success is False
+        assert "Search is not available" in result.message
 
 
 # ==================================================================
@@ -317,8 +321,8 @@ class TestGroverEventHandlers:
             "/project/search_me.py",
             'def searchable():\n    """A unique searchable function."""\n    pass\n',
         )
-        results = grover.search("searchable")
-        assert len(results) >= 1
+        result = grover.search("searchable")
+        assert len(result.hits) >= 1
 
     def test_delete_removes_from_graph(self, grover: Grover):
         grover.write("/project/gone.py", "def gone():\n    pass\n")
@@ -392,8 +396,8 @@ class TestGroverPersistence:
         try:
             assert g2.get_graph().has_node("/project/keep.py")
             # Search index should also be loaded
-            results = g2.search("keep")
-            assert len(results) >= 1
+            result = g2.search("keep")
+            assert len(result.hits) >= 1
         finally:
             g2.close()
 
@@ -409,8 +413,8 @@ class TestGroverEdgeCases:
         grover.write("/project/readme.txt", "This is a readme file")
         assert grover.get_graph().has_node("/project/readme.txt")
         # Should be searchable as whole file
-        results = grover.search("readme")
-        assert len(results) >= 1
+        result = grover.search("readme")
+        assert len(result.hits) >= 1
 
     def test_empty_file_no_crash(self, grover: Grover):
         """Empty files should not crash the pipeline."""

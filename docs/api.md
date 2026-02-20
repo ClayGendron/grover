@@ -110,15 +110,15 @@ g.move("/project/old.py", "/project/new.py", follow=True)
 ### Search / Query
 
 ```python
-g.glob(pattern, path="/") -> GlobResult
-g.grep(pattern, path="/", *, ...) -> GrepResult
+g.glob(pattern, path="/") -> GlobQueryResult
+g.grep(pattern, path="/", *, ...) -> GrepQueryResult
 g.tree(path="/", *, max_depth=None) -> TreeResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `entries` (list of `FileInfo`). |
-| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepResult` with `matches` (list of `GrepMatch`). |
+| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobQueryResult` with `hits` (tuple of `GlobHit`). |
+| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepQueryResult` with `hits` (tuple of `GrepHit`, grouped by file). Each `GrepHit` contains `line_matches` (tuple of `LineMatch`). |
 | `tree(path, max_depth)` | List all entries recursively. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
 
 **grep options:**
@@ -255,14 +255,14 @@ g.find_nodes(*, path=None, **attrs) -> list[str]
 ### Search
 
 ```python
-g.search(query, k=10, *, path="/", user_id=None) -> list[SearchResult]
+g.search(query, k=10, *, path="/", user_id=None) -> SearchQueryResult
 ```
 
-Semantic similarity search over indexed content. Returns up to `k` results sorted by relevance.
+Semantic similarity search over indexed content. Returns a `SearchQueryResult` with document-first grouping: each `SearchHit` represents a file, with `chunk_matches` (tuple of `ChunkMatch`) showing which chunks within that file matched. Results are sorted by score (highest first) and truncated to `k` file-level hits.
 
 Search is routed through VFS to per-mount search engines. When `path="/"`, results are aggregated across all mounts and sorted by score. When `path` targets a specific mount or subdirectory, search is scoped to that mount and filtered to the given path prefix.
 
-Raises `RuntimeError` if no embedding provider is available.
+Returns `SearchQueryResult(success=False, ...)` if no embedding provider is available (no longer raises `RuntimeError`).
 
 ### Index and Persistence
 
@@ -331,12 +331,16 @@ class SearchResult:
 All filesystem operations return structured result objects rather than raising exceptions.
 
 ```python
+from grover import (
+    GlobQueryResult, GlobHit,             # glob() return types
+    GrepQueryResult, GrepHit, LineMatch,  # grep() return types
+    SearchQueryResult, SearchHit, ChunkMatch,  # search() return types
+)
 from grover.fs import (
     ReadResult, WriteResult, EditResult, DeleteResult,
     ListResult, MoveResult, RestoreResult,
     ListVersionsResult, GetVersionContentResult,
-    GlobResult, GrepResult, GrepMatch, TreeResult,
-    FileInfo, VersionInfo,
+    TreeResult, FileInfo, VersionInfo,
 )
 ```
 
@@ -367,9 +371,14 @@ This design is intentional: agents running in loops should handle failures grace
 | `RestoreResult` | `file_path`, `restored_version`, `current_version` |
 | `ListVersionsResult` | `versions` (list of `VersionInfo`) |
 | `GetVersionContentResult` | `content` |
-| `GlobResult` | `entries` (list of `FileInfo`), `pattern`, `path` |
-| `GrepResult` | `matches` (list of `GrepMatch`), `pattern`, `path`, `files_searched`, `files_matched`, `truncated` |
-| `GrepMatch` | `file_path`, `line_number`, `line_content`, `context_before`, `context_after` |
+| `GlobQueryResult` | `hits` (tuple of `GlobHit`), `pattern`, `path` |
+| `GlobHit` | `path`, `is_directory`, `size_bytes`, `mime_type` |
+| `GrepQueryResult` | `hits` (tuple of `GrepHit`), `pattern`, `path`, `files_searched`, `files_matched`, `truncated` |
+| `GrepHit` | `path`, `line_matches` (tuple of `LineMatch`) |
+| `LineMatch` | `line_number`, `line_content`, `context_before`, `context_after` |
+| `SearchQueryResult` | `hits` (tuple of `SearchHit`), `query`, `path`, `files_matched`, `truncated` |
+| `SearchHit` | `path`, `score`, `chunk_matches` (tuple of `ChunkMatch`) |
+| `ChunkMatch` | `name`, `line_start`, `line_end`, `score`, `snippet` |
 | `TreeResult` | `entries` (list of `FileInfo`), `path`, `total_files`, `total_dirs` |
 | `FileInfo` | `path`, `name`, `is_directory`, `size_bytes`, `mime_type`, `version` |
 | `VersionInfo` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
