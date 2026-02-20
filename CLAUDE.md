@@ -8,7 +8,7 @@ Grover is a Python toolkit that gives AI agents three integrated capabilities ov
 2. **Knowledge graph** — in-memory rustworkx directed graph of file dependencies, auto-populated by code analyzers (Python AST, JS/TS/Go via tree-sitter).
 3. **Semantic search** — pluggable vector stores (local usearch, Pinecone, Databricks) with pluggable embedding providers (sentence-transformers, OpenAI, LangChain).
 
-All three layers share a single identity model: **everything is a file path**. Graph nodes, search entries, and chunks are all files. An EventBus keeps layers in sync — write a file and the graph rebuilds and embeddings re-index automatically.
+All three layers share a single identity model: **everything is a file path**. Graph nodes and search entries are keyed by file paths. Chunks (functions, classes) are stored as DB rows in `grover_file_chunks` but represented in the graph as nodes with synthetic path identifiers. An EventBus keeps layers in sync — write a file and the graph rebuilds, chunk records update, and embeddings re-index automatically.
 
 **Status:** Alpha (v0.1.0). Core API is functional and tested. Expect breaking changes.
 

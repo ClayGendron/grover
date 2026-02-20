@@ -311,11 +311,13 @@ class Ref:
 
 `file_ref(path, version=None)` is a convenience constructor that normalizes the path.
 
-### SearchResult
+### SearchResult (internal)
 
 ```python
-from grover import SearchResult
+from grover.search.types import SearchResult
 ```
+
+Internal type used by `SearchEngine` and vector store backends. The public `Grover.search()` API returns `SearchQueryResult` (see [Result Types](#result-types) below), which groups these internal results into document-first `SearchHit` objects.
 
 ```python
 @dataclass(frozen=True)
@@ -610,8 +612,8 @@ from grover.graph.protocols import (
     SupportsPersistence,     # SQL persistence (to_sql / from_sql)
 )
 
-if isinstance(g.graph, SupportsCentrality):
-    scores = g.graph.pagerank()
+if isinstance(g.get_graph(), SupportsCentrality):
+    scores = g.get_graph().pagerank()
 ```
 
 `RustworkxGraph` implements all protocols. Custom graph backends only need to implement `GraphStore` plus whichever capabilities they support.
@@ -638,11 +640,12 @@ Grover's search layer is built around two clean protocol layers — **EmbeddingP
 
 ```python
 from grover import (
-    SearchEngine, SearchResult,
+    SearchEngine,
     EmbeddingProvider, VectorStore,
     VectorEntry, VectorSearchResult, IndexConfig, IndexInfo,
     FilterExpression, eq, gt, and_, or_,
 )
+from grover.search.types import SearchResult  # internal type used by SearchEngine
 ```
 
 ### SearchEngine
@@ -934,12 +937,10 @@ docs = retriever.invoke("search query")
 | `k` | `int` | `10` | Maximum number of results |
 
 Returns `list[Document]` with:
-- `page_content` — matched text
+- `page_content` — concatenated chunk snippets (or file path if no snippets)
 - `metadata["path"]` — file path
-- `metadata["score"]` — cosine similarity (0–1)
-- `metadata["version"]` — version number (if available)
-- `metadata["parent_path"]` — parent file path (for chunks)
-- `metadata["line_start"]`, `metadata["line_end"]` — line range (for chunks)
+- `metadata["score"]` — max chunk similarity score (0–1)
+- `metadata["chunks"]` — number of chunk matches (if any)
 - `id` — file path
 
 Has async variant via `asyncio.to_thread()`. Returns empty list when search index is not available.

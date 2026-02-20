@@ -81,9 +81,9 @@ sub = g.meeting_subgraph(["/project/a.py", "/project/b.py"])  # connecting subgr
 nodes = g.find_nodes(lang="python")                       # filter by attributes
 
 # Semantic search (requires the search extra)
-results = g.search("greeting function", k=5)
-for r in results:
-    print(r.ref.path, r.score)
+result = g.search("greeting function", k=5)
+for hit in result.hits:
+    print(hit.path, hit.score)
 
 # Persist and clean up
 g.save()
@@ -228,8 +228,7 @@ When you use Grover, a `.grover/` directory is created to store internal state:
 
 | Path | Contents |
 |------|----------|
-| `grover.db` | SQLite database with file metadata, version history, and graph edges |
-| `chunks/` | Extracted code chunks (functions, classes) as individual files |
+| `grover.db` | SQLite database with file metadata, version history, graph edges, and extracted code chunks |
 | `search.usearch` | The HNSW vector index for semantic search |
 | `search_meta.json` | Metadata mapping for the search index |
 
@@ -252,15 +251,19 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 Key types:
 
 ```python
-from grover import Ref, SearchResult, file_ref
+from grover import Ref, file_ref, SearchQueryResult, SearchHit, ChunkMatch
 
 # Ref — immutable reference to a file or chunk
 Ref(path="/project/hello.py", version=2, line_start=1, line_end=5)
 
-# SearchResult — a search hit with similarity score
-result.ref       # Ref
-result.score     # float (cosine similarity, 0–1)
-result.content   # str
+# SearchQueryResult — document-first search results
+result = g.search("greeting function", k=5)
+result.success       # bool
+result.hits          # tuple[SearchHit, ...]
+hit = result.hits[0]
+hit.path             # str — file path
+hit.score            # float — max chunk similarity (0–1)
+hit.chunk_matches    # tuple[ChunkMatch, ...] — matching chunks within the file
 ```
 
 ## Error handling
