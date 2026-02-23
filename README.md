@@ -8,15 +8,15 @@
 
 > **Alpha** — Grover is under active development. The core API is functional and tested, but expect breaking changes before 1.0.
 
-Grover gives AI agents a single toolkit for working with codebases and documents:
+Grover gives AI agents a single toolkit for working with any knowledge base — documents, codebases, research, datasets, or any collection of files:
 
 - **Versioned filesystem** — mount local directories or databases, write safely with automatic versioning, and recover mistakes with soft-delete trash and rollback.
-- **Knowledge graph** — dependency, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Code is automatically analyzed (Python via AST; JS/TS/Go via tree-sitter) and wired into the graph.
+- **Knowledge graph** — relationship, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Add edges manually or let built-in analyzers extract structure automatically (Python via AST; JS/TS/Go via tree-sitter).
 - **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (sentence-transformers, OpenAI, LangChain). Search by meaning, not just keywords.
 
 All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically.
 
-The name comes from **grove** (a connected cluster of trees) + **rover** (an agent that explores). Grover treats your codebase as a grove of interconnected files and lets agents navigate it safely.
+The name comes from **grove** (a connected cluster of trees) + **rover** (an agent that explores). Grover treats your data as a grove of interconnected files and lets agents navigate it safely.
 
 ## Installation
 
