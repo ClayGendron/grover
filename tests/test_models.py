@@ -13,7 +13,6 @@ from grover.models import (
     FileShare,
     FileShareBase,
     FileVersion,
-    GroverEdge,
 )
 
 # ---------------------------------------------------------------------------
@@ -28,9 +27,6 @@ class TestTableCreation:
 
     def test_grover_file_versions_table_exists(self, engine):
         assert "grover_file_versions" in engine.dialect.get_table_names(engine.connect())
-
-    def test_grover_edges_table_exists(self, engine):
-        assert "grover_edges" in engine.dialect.get_table_names(engine.connect())
 
     def test_grover_file_connections_table_exists(self, engine):
         assert "grover_file_connections" in engine.dialect.get_table_names(engine.connect())
@@ -88,16 +84,6 @@ class TestDefaultFactories:
         assert fv.size_bytes == 42
         assert fv.created_by == "agent"
 
-    def test_grover_edge_defaults(self, session: Session):
-        edge = GroverEdge(source_path="/a.py", target_path="/b.py", type="imports")
-        session.add(edge)
-        session.commit()
-        session.refresh(edge)
-
-        assert edge.id
-        assert edge.type == "imports"
-        assert edge.weight == 1.0
-
     def test_file_connection_defaults(self, session: Session):
         conn = FileConnection(source_path="/a.py", target_path="/b.py", type="imports")
         session.add(conn)
@@ -117,14 +103,6 @@ class TestDefaultFactories:
 
         assert emb.id
         assert emb.model_name == ""
-
-    def test_grover_edge_metadata_json_default(self, session: Session):
-        edge = GroverEdge(source_path="/a.py", target_path="/b.py", type="imports")
-        session.add(edge)
-        session.commit()
-        session.refresh(edge)
-
-        assert edge.metadata_json == "{}"
 
     def test_query_round_trip(self, session: Session):
         """Insert and query back a File."""

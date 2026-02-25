@@ -283,9 +283,7 @@ class TestRoundTrip:
         assert loaded_edge["id"] == original_id
 
     async def test_uses_file_connections_table(self, async_session: AsyncSession):
-        """Verify data is written to grover_file_connections, not grover_edges."""
-        from grover.models.edges import GroverEdge
-
+        """Verify data is written to grover_file_connections."""
         g = RustworkxGraph()
         g.add_node("/a.py", parent_path="/")
         g.add_node("/b.py", parent_path="/")
@@ -299,7 +297,3 @@ class TestRoundTrip:
         # FileConnection table should have the edge
         result = await async_session.execute(select(FileConnection))
         assert len(result.scalars().all()) == 1
-
-        # GroverEdge table should be empty
-        result = await async_session.execute(select(GroverEdge))
-        assert len(result.scalars().all()) == 0
