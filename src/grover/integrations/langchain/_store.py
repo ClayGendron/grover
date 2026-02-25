@@ -33,7 +33,7 @@ class GroverStore(BaseStore):
         from grover.integrations.langchain import GroverStore
 
         g = Grover()
-        g.mount("/data", backend)
+        g.add_mount("/data", backend)
 
         store = GroverStore(grover=g, prefix="/data/store")
         store.put(("users", "alice"), "prefs", {"theme": "dark"})

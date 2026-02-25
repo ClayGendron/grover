@@ -23,7 +23,7 @@ class GroverRetriever(BaseRetriever):
         from grover.integrations.langchain import GroverRetriever
 
         g = Grover(embedding_provider=provider)
-        g.mount("/project", backend)
+        g.add_mount("/project", backend)
         g.index()
 
         retriever = GroverRetriever(grover=g, k=5)

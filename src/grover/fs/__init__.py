@@ -11,7 +11,7 @@ from grover.fs.exceptions import (
     StorageError,
 )
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.mounts import MountConfig, MountRegistry
+from grover.fs.mounts import MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.protocol import (
     StorageBackend,
@@ -55,7 +55,6 @@ __all__ = [
     "ListVersionsResult",
     "LocalFileSystem",
     "MkdirResult",
-    "MountConfig",
     "MountNotFoundError",
     "MountRegistry",
     "MoveResult",

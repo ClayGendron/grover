@@ -657,9 +657,9 @@ async def grover_setup(tmp_path: Path) -> AsyncIterator[tuple[GroverAsync, Async
     data_dir = tmp_path / ".grover_data"
 
     g = GroverAsync(data_dir=str(data_dir))
-    await g.mount("/db", dfs, session_factory=db_factory)
+    await g.add_mount("/db", dfs, session_factory=db_factory)
     lfs = LocalFileSystem(workspace_dir=local_dir, data_dir=data_dir / "local")
-    await g.mount("/local", lfs)
+    await g.add_mount("/local", lfs)
 
     # Seed both mounts
     await g.write("/db/hello.py", "print('hello from db')\n")

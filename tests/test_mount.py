@@ -166,52 +166,6 @@ class TestMountConstruction:
 
 
 # ==================================================================
-# Backward compatibility
-# ==================================================================
-
-
-class TestMountBackwardCompat:
-    def test_mount_path_alias_constructor(self):
-        fs = FakeFilesystem()
-        m = Mount(mount_path="/project", backend=fs)
-        assert m.path == "/project"
-        assert m.filesystem is fs
-
-    def test_mount_path_property(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
-        assert m.mount_path == "/project"
-
-    def test_mount_path_setter(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
-        m.mount_path = "/new"
-        assert m.path == "/new"
-
-    def test_backend_property(self):
-        fs = FakeFilesystem()
-        m = Mount(path="/project", filesystem=fs)
-        assert m.backend is fs
-
-    def test_backend_setter(self):
-        fs1 = FakeFilesystem()
-        fs2 = FakeFilesystem()
-        m = Mount(path="/project", filesystem=fs1)
-        m.backend = fs2
-        assert m.filesystem is fs2
-
-    def test_has_session_factory_false(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
-        assert m.has_session_factory is False
-
-    def test_has_session_factory_true(self):
-        m = Mount(
-            path="/project",
-            filesystem=FakeFilesystem(),
-            session_factory=lambda: None,  # type: ignore[arg-type]
-        )
-        assert m.has_session_factory is True
-
-
-# ==================================================================
 # Protocol dispatch
 # ==================================================================
 

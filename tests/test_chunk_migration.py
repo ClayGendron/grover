@@ -65,7 +65,7 @@ def workspace(tmp_path: Path) -> Path:
 async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-    await g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -76,7 +76,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
 
 
 def _get_mount(g: GroverAsync, mount_path: str):
-    return next(m for m in g._registry.list_visible_mounts() if m.mount_path == mount_path)
+    return next(m for m in g._registry.list_visible_mounts() if m.path == mount_path)
 
 
 PYTHON_CODE = """\
@@ -103,7 +103,7 @@ class TestAnalyzeWritesChunkRows:
         await grover.write("/project/funcs.py", PYTHON_CODE)
 
         mount = _get_mount(grover, "/project")
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, SupportsFileChunks)
 
         async with grover._session_for(mount) as sess:
@@ -173,7 +173,7 @@ class TestReAnalyzeReplacesChunks:
         await grover.write("/project/funcs.py", PYTHON_CODE)
 
         mount = _get_mount(grover, "/project")
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, SupportsFileChunks)
 
         # Check initial chunks
@@ -214,7 +214,7 @@ class TestDeleteCleansChunks:
         await grover.write("/project/funcs.py", PYTHON_CODE)
 
         mount = _get_mount(grover, "/project")
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, SupportsFileChunks)
 
         # Verify chunks exist
@@ -242,7 +242,7 @@ class TestMoveReIndexesChunks:
         await grover.write("/project/old.py", PYTHON_CODE)
 
         mount = _get_mount(grover, "/project")
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, SupportsFileChunks)
 
         # Verify old chunks

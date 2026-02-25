@@ -1,18 +1,15 @@
-"""MountRegistry and Mount integration.
-
-``MountConfig`` is now an alias for :class:`~grover.mount.Mount`.
-"""
+"""MountRegistry and Mount integration."""
 
 from __future__ import annotations
 
-from grover.mount import Mount
+from typing import TYPE_CHECKING
 
 from .exceptions import MountNotFoundError
 from .permissions import Permission
 from .utils import normalize_path
 
-# Backward compat — existing code importing MountConfig gets Mount
-MountConfig = Mount
+if TYPE_CHECKING:
+    from grover.mount import Mount
 
 
 class MountRegistry:
@@ -27,7 +24,7 @@ class MountRegistry:
 
     def add_mount(self, config: Mount) -> None:
         """Add or replace a mount point."""
-        self._mounts[config.mount_path] = config
+        self._mounts[config.path] = config
 
     def remove_mount(self, mount_path: str) -> None:
         """Remove a mount point."""
@@ -63,11 +60,11 @@ class MountRegistry:
         return best_match, relative
 
     def list_mounts(self) -> list[Mount]:
-        """List all registered mounts, sorted by mount_path."""
-        return sorted(self._mounts.values(), key=lambda m: m.mount_path)
+        """List all registered mounts, sorted by path."""
+        return sorted(self._mounts.values(), key=lambda m: m.path)
 
     def list_visible_mounts(self) -> list[Mount]:
-        """List non-hidden mounts, sorted by mount_path."""
+        """List non-hidden mounts, sorted by path."""
         return [m for m in self.list_mounts() if not m.hidden]
 
     def get_permission(self, virtual_path: str) -> Permission:

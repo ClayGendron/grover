@@ -60,7 +60,7 @@ async def grover_with_sharing(
     """GroverAsync with a UserScopedFileSystem backend that has a SharingService."""
     g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
     backend = UserScopedFileSystem(sharing=sharing)
-    await g.mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g
     await g.close()
 
@@ -356,7 +356,7 @@ class TestGroverMoveFollow:
         await grover.write("/ws/doc.md", "content", user_id="alice")
 
         # Create share at stored path level
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
         async with grover._session_for(mount) as sess:
             assert sess is not None

@@ -65,7 +65,7 @@ def workspace(tmp_path: Path) -> Path:
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -276,7 +276,7 @@ class TestSearchSemantic:
         # Create a Grover without embedding provider
         data = tmp_path / "no_search_data"
         g = Grover(data_dir=str(data), embedding_provider=None)
-        g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         try:
             mw = GroverMiddleware(g, enable_search=False)
             names = {t.name for t in mw.tools}

@@ -49,7 +49,7 @@ class Grover:
     Usage::
 
         g = Grover(embedding_provider=FakeProvider())
-        g.mount("/project", LocalFileSystem(workspace_dir="."))
+        g.add_mount("/project", LocalFileSystem(workspace_dir="."))
         g.write("/project/hello.py", "print('hi')")
         g.close()
     """
@@ -105,10 +105,10 @@ class Grover:
     # Mount / Unmount
     # ------------------------------------------------------------------
 
-    def mount(
+    def add_mount(
         self,
-        path: str,
-        backend: Any = None,
+        path_or_mount: Any = None,
+        filesystem: Any = None,
         *,
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
@@ -122,11 +122,11 @@ class Grover:
         label: str = "",
         hidden: bool = False,
     ) -> None:
-        """Mount a backend at *path*."""
+        """Add a mount at *path* with *filesystem*."""
         self._run(
-            self._async.mount(
-                path,
-                backend,
+            self._async.add_mount(
+                path_or_mount,
+                filesystem,
                 engine=engine,
                 session_factory=session_factory,
                 dialect=dialect,

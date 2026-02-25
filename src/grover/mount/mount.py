@@ -27,10 +27,6 @@ class Mount:
     Protocol dispatch checks all three components at construction time and
     builds a dispatch map.  If two components implement the same dispatch
     protocol, ``ProtocolConflictError`` is raised.
-
-    Backward-compatible with the legacy ``MountConfig`` dataclass — the
-    ``mount_path``, ``backend``, and ``has_session_factory`` properties
-    are preserved.
     """
 
     def __init__(
@@ -46,16 +42,9 @@ class Mount:
         mount_type: str = "vfs",
         hidden: bool = False,
         read_only_paths: set[str] | None = None,
-        # Backward compat aliases (MountConfig parameter names)
-        mount_path: str | None = None,
-        backend: Any | None = None,
     ) -> None:
-        # Resolve aliases — backward compat with MountConfig(mount_path=..., backend=...)
-        actual_path = mount_path if mount_path is not None else path
-        actual_fs = backend if backend is not None else filesystem
-
-        self.path: str = normalize_path(actual_path).rstrip("/")
-        self.filesystem: Any = actual_fs
+        self.path: str = normalize_path(path).rstrip("/")
+        self.filesystem: Any = filesystem
         self.graph: Any | None = graph
         self.search: Any | None = search
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
@@ -65,33 +54,6 @@ class Mount:
         self.hidden: bool = hidden
         self.read_only_paths: set[str] = read_only_paths if read_only_paths is not None else set()
         self._dispatch_map: dict[type, tuple[str, Any]] = self._build_dispatch_map()
-
-    # ------------------------------------------------------------------
-    # Backward compat with MountConfig
-    # ------------------------------------------------------------------
-
-    @property
-    def mount_path(self) -> str:
-        """Alias for ``path`` (MountConfig compat)."""
-        return self.path
-
-    @mount_path.setter
-    def mount_path(self, value: str) -> None:
-        self.path = value
-
-    @property
-    def backend(self) -> Any:
-        """Alias for ``filesystem`` (MountConfig compat)."""
-        return self.filesystem
-
-    @backend.setter
-    def backend(self, value: Any) -> None:
-        self.filesystem = value
-
-    @property
-    def has_session_factory(self) -> bool:
-        """True when this mount has a session factory (MountConfig compat)."""
-        return self.session_factory is not None
 
     # ------------------------------------------------------------------
     # Protocol dispatch

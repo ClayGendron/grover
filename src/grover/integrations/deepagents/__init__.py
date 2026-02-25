@@ -11,7 +11,7 @@ Usage::
     from grover.integrations.deepagents import GroverBackend, GroverMiddleware
 
     g = Grover()
-    g.mount("/project", LocalFileSystem(workspace_dir="/tmp/test"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/test"))
 
     backend = GroverBackend(g)
     middleware = GroverMiddleware(g)

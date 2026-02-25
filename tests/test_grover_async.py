@@ -72,7 +72,7 @@ def workspace2(tmp_path: Path) -> Path:
 async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-    await g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -81,7 +81,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
 async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync(data_dir=str(data))
-    await g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -101,7 +101,7 @@ class TestGroverAsyncLifecycle:
     async def test_mount_creates_meta_fs(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         assert g._meta_fs is not None
         await g.close()
 
@@ -109,7 +109,7 @@ class TestGroverAsyncLifecycle:
     async def test_unmount(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         await g.write("/app/test.txt", "hello")
         assert await g.exists("/app/test.txt")
         await g.unmount("/app")
@@ -121,7 +121,7 @@ class TestGroverAsyncLifecycle:
     async def test_unmount_grover_raises(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         with pytest.raises(ValueError, match=r"Cannot unmount /\.grover"):
             await g.unmount("/.grover")
         await g.close()
@@ -130,7 +130,7 @@ class TestGroverAsyncLifecycle:
     async def test_close_idempotent(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         await g.close()
         await g.close()  # Should not raise
 
@@ -221,8 +221,10 @@ class TestGroverAsyncMultiMount:
     async def test_two_mounts(self, workspace: Path, workspace2: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app"))
-        await g.mount(
+        await g.add_mount(
+            "/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app")
+        )
+        await g.add_mount(
             "/data", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data")
         )
 
@@ -247,8 +249,10 @@ class TestGroverAsyncMultiMount:
     ):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/a", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a"))
-        await g.mount("/b", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b"))
+        lfs_a = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a")
+        lfs_b = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b")
+        await g.add_mount("/a", lfs_a)
+        await g.add_mount("/b", lfs_b)
 
         await g.write("/a/file.txt", "in mount a")
         assert await g.exists("/a/file.txt")
@@ -352,8 +356,10 @@ class TestGroverAsyncIndex:
     ):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/a", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a"))
-        await g.mount("/b", LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b"))
+        lfs_a = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a")
+        lfs_b = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b")
+        await g.add_mount("/a", lfs_a)
+        await g.add_mount("/b", lfs_b)
 
         (workspace / "a.py").write_text("def a():\n    pass\n")
         (workspace2 / "b.py").write_text("def b():\n    pass\n")
@@ -377,7 +383,7 @@ class TestGroverAsyncPersistence:
         data_dir = tmp_path / "data"
 
         g1 = GroverAsync(data_dir=str(data_dir), embedding_provider=FakeProvider())
-        await g1.mount(
+        await g1.add_mount(
             "/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
         )
         await g1.write("/project/keep.py", "def keep():\n    pass\n")
@@ -385,7 +391,7 @@ class TestGroverAsyncPersistence:
         await g1.close()
 
         g2 = GroverAsync(data_dir=str(data_dir), embedding_provider=FakeProvider())
-        await g2.mount(
+        await g2.add_mount(
             "/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
         )
         assert g2.get_graph().has_node("/project/keep.py")
@@ -528,12 +534,12 @@ class TestGroverAsyncMountOptions:
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         ws_hidden = tmp_path / "ws_hidden"
         ws_hidden.mkdir()
-        await g.mount(
+        await g.add_mount(
             "/hidden",
             LocalFileSystem(workspace_dir=ws_hidden, data_dir=data / "local_hidden"),
             hidden=True,
         )
-        await g.mount(
+        await g.add_mount(
             "/visible",
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
         )
@@ -556,8 +562,8 @@ class TestGroverAsyncMountOptions:
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
 
         # Local mount
-        await g.mount("/local", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
-        local_mount = next(m for m in g._registry.list_mounts() if m.mount_path == "/local")
+        await g.add_mount("/local", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
+        local_mount = next(m for m in g._registry.list_mounts() if m.path == "/local")
         assert local_mount.mount_type == "local"
 
         # Database mount via session_factory
@@ -565,8 +571,8 @@ class TestGroverAsyncMountOptions:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        await g.mount("/db", session_factory=factory, dialect="sqlite")
-        db_mount = next(m for m in g._registry.list_mounts() if m.mount_path == "/db")
+        await g.add_mount("/db", session_factory=factory, dialect="sqlite")
+        db_mount = next(m for m in g._registry.list_mounts() if m.path == "/db")
         assert db_mount.mount_type == "vfs"
 
         await g.close()
@@ -576,7 +582,7 @@ class TestGroverAsyncMountOptions:
     async def test_unmount_nonexistent(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
+        await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
         # Should not raise
         await g.unmount("/nonexistent")
         await g.close()
@@ -585,7 +591,7 @@ class TestGroverAsyncMountOptions:
     async def test_unmount_cleans_graph_and_search(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
+        await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
         await g.write("/app/file.py", "def demo():\n    pass\n")
         assert g.get_graph().has_node("/app/file.py")
 
@@ -638,7 +644,7 @@ async def auth_grover(tmp_path: Path) -> GroverAsync:
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     sharing = SharingService(FileShare)
     backend = UserScopedFileSystem(sharing=sharing)
-    await g.mount("/ws", backend, engine=engine)
+    await g.add_mount("/ws", backend, engine=engine)
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -719,7 +725,7 @@ class TestGroverAsyncSharing:
     async def test_share_requires_authenticated_mount(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
-        await g.mount(
+        await g.add_mount(
             "/app",
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )

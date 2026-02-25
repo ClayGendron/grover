@@ -67,7 +67,7 @@ def workspace(tmp_path: Path) -> Path:
 def grover_with_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -76,7 +76,7 @@ def grover_with_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
 def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data_nosearch"
     g = Grover(data_dir=str(data))
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 

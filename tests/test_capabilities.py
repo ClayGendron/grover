@@ -282,7 +282,7 @@ class TestProtocolChecks:
 async def minimal_grover(tmp_path: Path):
     """GroverAsync with a single MinimalBackend at /mem (no session_factory)."""
     g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-    await g.mount("/mem", MinimalBackend())
+    await g.add_mount("/mem", MinimalBackend())
     yield g
     await g.close()
 
@@ -371,8 +371,8 @@ class TestMixedMounts:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-        await g.mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
-        await g.mount("/mem", MinimalBackend())
+        await g.add_mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
+        await g.add_mount("/mem", MinimalBackend())
         yield g
         await g.close()
         await engine.dispose()
@@ -436,7 +436,7 @@ class TestSessionRollback:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-        await g.mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
+        await g.add_mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
         yield g, factory
         await g.close()
         await engine.dispose()
@@ -454,13 +454,13 @@ class TestSessionRollback:
 
         # Resolve the mount and monkey-patch the backend to raise on write
         mount, _ = grover._registry.resolve("/db/test.txt")
-        original_write = mount.backend.write
+        original_write = mount.filesystem.write
 
         async def _exploding_write(*args, **kwargs):
             # Partially mutate session state, then blow up
             raise RuntimeError("Simulated mid-write failure")
 
-        mount.backend.write = _exploding_write  # type: ignore[assignment]
+        mount.filesystem.write = _exploding_write  # type: ignore[assignment]
 
         try:
             # This should return failure (GroverAsync.write catches exceptions)
@@ -472,12 +472,12 @@ class TestSessionRollback:
             assert read.success
             assert read.content == "original"
         finally:
-            mount.backend.write = original_write  # type: ignore[assignment]
+            mount.filesystem.write = original_write  # type: ignore[assignment]
 
     async def test_failing_backend_returns_failure(self, tmp_path: Path) -> None:
         """GroverAsync returns failure result for backend exceptions."""
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-        await g.mount("/fail", _FailingBackend())
+        await g.add_mount("/fail", _FailingBackend())
 
         result = await g.write("/fail/test.txt", "content")
         assert not result.success

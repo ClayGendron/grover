@@ -36,7 +36,7 @@ def workspace(tmp_path: Path) -> Path:
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover(data_dir=str(data))
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 

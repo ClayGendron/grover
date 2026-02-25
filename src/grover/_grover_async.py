@@ -13,7 +13,7 @@ from grover.events import EventBus, EventType, FileEvent
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.mounts import MountConfig, MountRegistry
+from grover.fs.mounts import MountRegistry
 from grover.fs.permissions import Permission
 from grover.fs.protocol import (
     SupportsFileChunks,
@@ -45,6 +45,7 @@ from grover.models.connections import FileConnection
 from grover.models.embeddings import Embedding
 from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
+from grover.mount import Mount
 from grover.results import FileSearchResult
 from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
@@ -83,18 +84,18 @@ _DEFAULT_DATA_DIR = Path.home() / ".grover" / "_default"
 class GroverAsync:
     """Async facade wiring filesystem, graph, analyzers, event bus, and search.
 
-    Mount-first API: create an instance, then mount backends.
+    Mount-first API: create an instance, then add mounts.
 
     Engine-based DB mount (primary API)::
 
         engine = create_async_engine("postgresql+asyncpg://...")
         g = GroverAsync(data_dir="/myapp/.grover")
-        await g.mount("/data", engine=engine)
+        await g.add_mount("/data", engine=engine)
 
     Direct access — auto-commits per operation::
 
         g = GroverAsync()
-        await g.mount("/app", backend)
+        await g.add_mount("/app", backend)
         await g.write("/app/test.py", "print('hi')")
     """
 
@@ -132,9 +133,9 @@ class GroverAsync:
     # ------------------------------------------------------------------
 
     @asynccontextmanager
-    async def _session_for(self, mount: MountConfig) -> AsyncGenerator[AsyncSession | None]:
+    async def _session_for(self, mount: Mount) -> AsyncGenerator[AsyncSession | None]:
         """Yield a session for the given mount, or ``None`` for non-SQL backends."""
-        if not mount.has_session_factory:
+        if not mount.session_factory is not None:
             yield None
             return
 
@@ -173,8 +174,8 @@ class GroverAsync:
             return mount_path
         return mount_path + path
 
-    def _prefix_file_info(self, info: FileInfo, mount: MountConfig) -> FileInfo:
-        prefixed_path = self._prefix_path(info.path, mount.mount_path) or info.path
+    def _prefix_file_info(self, info: FileInfo, mount: Mount) -> FileInfo:
+        prefixed_path = self._prefix_path(info.path, mount.path) or info.path
         info.path = prefixed_path
         info.mount_type = mount.mount_type
         info.permission = self._registry.get_permission(prefixed_path).value
@@ -217,19 +218,19 @@ class GroverAsync:
 
         return SearchEngine(vector=vector, embedding=embedding, lexical=lexical)
 
-    async def _create_fulltext_store(self, config: MountConfig) -> Any | None:
+    async def _create_fulltext_store(self, config: Mount) -> Any | None:
         """Create a FullTextStore for the mount based on its dialect."""
         from grover.search.fulltext.sqlite import SQLiteFullTextStore
 
-        if isinstance(config.backend, LocalFileSystem):
-            engine = getattr(config.backend, "_engine", None)
+        if isinstance(config.filesystem, LocalFileSystem):
+            engine = getattr(config.filesystem, "_engine", None)
             if engine is not None:
                 fts = SQLiteFullTextStore(engine=engine)
                 await fts.ensure_table()
                 return fts
             return None
 
-        if config.has_session_factory:
+        if config.session_factory is not None:
             # Detect dialect from session factory's engine if available
             sf = config.session_factory
             bind = getattr(sf, "kw", {}).get("bind", None)
@@ -275,7 +276,7 @@ class GroverAsync:
             msg = f"No mount found for path: {path!r}"
             raise RuntimeError(msg) from None
         if mount.graph is None:
-            msg = f"No graph on mount at {mount.mount_path}"
+            msg = f"No graph on mount at {mount.path}"
             raise RuntimeError(msg)
         return mount.graph
 
@@ -312,17 +313,24 @@ class GroverAsync:
     async def add_mount(
         self,
         mount_or_path: Any = None,
-        *,
         filesystem: StorageBackend | None = None,
+        *,
         graph: GraphStore | None = None,
         search: SearchEngine | None = None,
+        engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
+        dialect: str = "sqlite",
+        file_model: type[FileBase] | None = None,
+        file_version_model: type[FileVersionBase] | None = None,
+        file_chunk_model: type[FileChunkBase] | None = None,
+        db_schema: str | None = None,
+        mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
         hidden: bool = False,
         path: str | None = None,
     ) -> None:
-        """Register a pre-built :class:`~grover.mount.Mount` or build one from kwargs.
+        """Register a :class:`~grover.mount.Mount` or build one from kwargs.
 
         Usage::
 
@@ -330,31 +338,81 @@ class GroverAsync:
             mount = Mount(path="/project", filesystem=LocalFileSystem(...))
             await g.add_mount(mount)
 
-            # From keyword arguments
-            await g.add_mount(
-                path="/data",
-                filesystem=DatabaseFileSystem(dialect="postgresql"),
-                graph=RustworkxGraph(),
-            )
-        """
-        from grover.mount import Mount
+            # From keyword arguments (filesystem-based)
+            await g.add_mount("/data", LocalFileSystem(workspace_dir="."))
 
+            # Engine-based (auto-creates session factory + DatabaseFileSystem)
+            await g.add_mount("/data", engine=engine)
+
+            # Session-factory-based
+            await g.add_mount("/data", filesystem, session_factory=sf)
+        """
         if isinstance(mount_or_path, Mount):
             new_mount = mount_or_path
+            # Auto-detect LocalFileSystem: open() and extract session_factory if not set
+            if (
+                isinstance(new_mount.filesystem, LocalFileSystem)
+                and new_mount.session_factory is None
+            ):
+                await new_mount.filesystem.open()
+                new_mount.session_factory = new_mount.filesystem.session_factory
+        elif engine is not None:
+            if session_factory is not None:
+                raise ValueError("Provide engine or session_factory, not both")
+            new_mount = await self._create_engine_mount(
+                mount_or_path or path or "",
+                engine,
+                filesystem,
+                file_model,
+                file_version_model,
+                file_chunk_model,
+                db_schema,
+                mount_type,
+                permission,
+                label,
+                hidden,
+            )
+        elif session_factory is not None:
+            new_mount = self._create_session_factory_mount(
+                mount_or_path or path or "",
+                session_factory,
+                filesystem,
+                dialect,
+                file_model,
+                file_version_model,
+                file_chunk_model,
+                db_schema,
+                mount_type,
+                permission,
+                label,
+                hidden,
+            )
         else:
             # Resolve path: either from positional arg or keyword
             actual_path = mount_or_path if mount_or_path is not None else path
             if actual_path is None or filesystem is None:
-                raise ValueError("Provide a Mount object or (path + filesystem)")
+                raise ValueError(
+                    "Provide a Mount object, (path + filesystem), or engine/session_factory"
+                )
+
+            # For local backends, eagerly init DB and extract session_factory
+            sf = session_factory
+            mt = mount_type
+            if isinstance(filesystem, LocalFileSystem):
+                await filesystem.open()
+                sf = filesystem.session_factory
+                if mt is None:
+                    mt = "local"
 
             new_mount = Mount(
                 path=actual_path,
                 filesystem=filesystem,
                 graph=graph,
                 search=search,
-                session_factory=session_factory,
+                session_factory=sf,
                 permission=permission,
                 label=label,
+                mount_type=mt or "vfs",
                 hidden=hidden,
             )
 
@@ -364,11 +422,12 @@ class GroverAsync:
 
         # Auto-create search engine if not provided and not hidden
         if not new_mount.hidden and new_mount.search is None:
-            se = self._create_search_engine()
+            lexical = await self._create_fulltext_store(new_mount)
+            se = self._create_search_engine(lexical=lexical)
             if se is not None:
                 new_mount.search = se
 
-        # Call open() on the filesystem if needed
+        # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
             new_mount.filesystem, "open"
         ):
@@ -384,93 +443,6 @@ class GroverAsync:
         if not new_mount.hidden:
             await self._load_mount_state(new_mount)
 
-    async def mount(
-        self,
-        path: str,
-        backend: StorageBackend | None = None,
-        *,
-        engine: AsyncEngine | None = None,
-        session_factory: Callable[..., AsyncSession] | None = None,
-        dialect: str = "sqlite",
-        file_model: type[FileBase] | None = None,
-        file_version_model: type[FileVersionBase] | None = None,
-        file_chunk_model: type[FileChunkBase] | None = None,
-        db_schema: str | None = None,
-        mount_type: str | None = None,
-        permission: Permission = Permission.READ_WRITE,
-        label: str = "",
-        hidden: bool = False,
-    ) -> None:
-        """Mount a backend at *path*.
-
-        When *engine* is provided, a session factory is created from it.
-        If *backend* is also provided, that backend is used; otherwise a
-        plain ``DatabaseFileSystem`` is created.  For user-scoped mounts,
-        pass a ``UserScopedFileSystem`` as *backend* together with *engine*.
-        """
-        if engine is not None:
-            if session_factory is not None:
-                raise ValueError("Provide engine or session_factory, not both")
-            config = await self._create_engine_mount(
-                path,
-                engine,
-                backend,
-                file_model,
-                file_version_model,
-                file_chunk_model,
-                db_schema,
-                mount_type,
-                permission,
-                label,
-                hidden,
-            )
-        elif session_factory is not None:
-            config = self._create_session_factory_mount(
-                path,
-                session_factory,
-                backend,
-                dialect,
-                file_model,
-                file_version_model,
-                file_chunk_model,
-                db_schema,
-                mount_type,
-                permission,
-                label,
-                hidden,
-            )
-        else:
-            if backend is None:
-                raise ValueError("Provide backend, engine, or session_factory")
-            config = await self._create_backend_mount(
-                path,
-                backend,
-                mount_type,
-                permission,
-                label,
-                hidden,
-            )
-
-        # Inject per-mount graph and search engine (skip for hidden meta mount)
-        if not hidden:
-            config.graph = RustworkxGraph()
-            lexical = await self._create_fulltext_store(config)
-            config.search = self._create_search_engine(lexical=lexical)
-
-        # Call open() on the backend BEFORE registering (skip if already opened for LFS)
-        if not isinstance(config.backend, LocalFileSystem) and hasattr(config.backend, "open"):
-            await config.backend.open()
-
-        self._registry.add_mount(config)
-
-        # Lazily initialise meta_fs on first non-hidden mount
-        if not hidden and self._meta_fs is None:
-            await self._init_meta_fs(config.backend)
-
-        # Load existing graph + search state for this mount
-        if not hidden:
-            await self._load_mount_state(config)
-
     async def _create_engine_mount(
         self,
         path: str,
@@ -484,8 +456,8 @@ class GroverAsync:
         permission: Permission,
         label: str,
         hidden: bool,
-    ) -> MountConfig:
-        """Build a MountConfig from an async engine."""
+    ) -> Mount:
+        """Build a Mount from an async engine."""
         sf = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         dialect = engine.dialect.name
 
@@ -524,9 +496,9 @@ class GroverAsync:
                     lambda c: FileShare.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
                 )
 
-        return MountConfig(
-            mount_path=path,
-            backend=backend,
+        return Mount(
+            path=path,
+            filesystem=backend,
             session_factory=sf,
             mount_type=mount_type or "vfs",
             permission=permission,
@@ -548,8 +520,8 @@ class GroverAsync:
         permission: Permission,
         label: str,
         hidden: bool,
-    ) -> MountConfig:
-        """Build a MountConfig from a caller-provided session factory."""
+    ) -> Mount:
+        """Build a Mount from a caller-provided session factory."""
         if backend is None:
             backend = DatabaseFileSystem(
                 dialect=dialect,
@@ -559,9 +531,9 @@ class GroverAsync:
                 schema=db_schema,
             )
 
-        return MountConfig(
-            mount_path=path,
-            backend=backend,
+        return Mount(
+            path=path,
+            filesystem=backend,
             session_factory=session_factory,
             mount_type=mount_type or "vfs",
             permission=permission,
@@ -577,8 +549,8 @@ class GroverAsync:
         permission: Permission,
         label: str,
         hidden: bool,
-    ) -> MountConfig:
-        """Build a MountConfig from a pre-constructed backend."""
+    ) -> Mount:
+        """Build a Mount from a pre-constructed backend."""
         if mount_type is None:
             mount_type = "local" if isinstance(backend, LocalFileSystem) else "vfs"
 
@@ -588,9 +560,9 @@ class GroverAsync:
             await backend.open()
             sf = backend.session_factory
 
-        return MountConfig(
-            mount_path=path,
-            backend=backend,
+        return Mount(
+            path=path,
+            filesystem=backend,
             session_factory=sf,
             mount_type=mount_type,
             permission=permission,
@@ -611,10 +583,10 @@ class GroverAsync:
             return
 
         # Only unmount if the path is an exact mount point, not a subpath
-        if mount.mount_path != path:
+        if mount.path != path:
             return
 
-        backend = mount.backend
+        backend = mount.filesystem
         if hasattr(backend, "close"):
             await backend.close()
         self._registry.remove_mount(path)
@@ -643,9 +615,9 @@ class GroverAsync:
         await self._meta_fs.open()
 
         self._registry.add_mount(
-            MountConfig(
-                mount_path="/.grover",
-                backend=self._meta_fs,
+            Mount(
+                path="/.grover",
+                filesystem=self._meta_fs,
                 session_factory=self._meta_fs.session_factory,
                 mount_type="local",
                 hidden=True,
@@ -675,33 +647,33 @@ class GroverAsync:
     # Per-mount state loading
     # ------------------------------------------------------------------
 
-    async def _load_mount_state(self, mount: MountConfig) -> None:
+    async def _load_mount_state(self, mount: Mount) -> None:
         """Load graph and search state for a single mount."""
         graph = mount.graph
         if graph is None:
             return
 
         # Load graph: file nodes from mount's DB, edges from mount's DB
-        if mount.has_session_factory:
+        if mount.session_factory is not None:
             try:
                 from grover.graph.protocols import SupportsPersistence
 
                 if isinstance(graph, SupportsPersistence):
-                    file_model = getattr(mount.backend, "file_model", None) or File
+                    file_model = getattr(mount.filesystem, "file_model", None) or File
                     async with self._session_for(mount) as session:
                         if session is not None:
                             await graph.from_sql(session, file_model=file_model)
             except Exception:
                 logger.debug(
                     "No existing graph state to load for %s",
-                    mount.mount_path,
+                    mount.path,
                     exc_info=True,
                 )
 
         # Load search index from disk
         search_engine = mount.search
         if search_engine is not None and self._meta_data_dir is not None:
-            slug = mount.mount_path.strip("/").replace("/", "_") or "_default"
+            slug = mount.path.strip("/").replace("/", "_") or "_default"
             search_dir = self._meta_data_dir / "search" / slug
             meta_file = search_dir / "search_meta.json"
             if meta_file.exists():
@@ -710,7 +682,7 @@ class GroverAsync:
                 except Exception:
                     logger.debug(
                         "Failed to load search index for %s",
-                        mount.mount_path,
+                        mount.path,
                         exc_info=True,
                     )
 
@@ -792,9 +764,9 @@ class GroverAsync:
             mount, _rel = self._registry.resolve(path)
         except MountNotFoundError:
             return
-        if isinstance(mount.backend, SupportsFileChunks):
+        if isinstance(mount.filesystem, SupportsFileChunks):
             async with self._session_for(mount) as sess:
-                await mount.backend.delete_file_chunks(path, session=sess)
+                await mount.filesystem.delete_file_chunks(path, session=sess)
 
     # ------------------------------------------------------------------
     # Core pipeline
@@ -832,7 +804,7 @@ class GroverAsync:
             chunks, edges = analysis
 
             # Write chunk DB rows instead of VFS files
-            if isinstance(mount.backend, SupportsFileChunks) and chunks:
+            if isinstance(mount.filesystem, SupportsFileChunks) and chunks:
                 chunk_dicts = [
                     {
                         "chunk_path": chunk.chunk_path,
@@ -846,7 +818,7 @@ class GroverAsync:
                     for chunk in chunks
                 ]
                 async with self._session_for(mount) as sess:
-                    await mount.backend.replace_file_chunks(
+                    await mount.filesystem.replace_file_chunks(
                         path, chunk_dicts, session=sess, user_id=user_id
                     )
 
@@ -895,10 +867,10 @@ class GroverAsync:
         path = normalize_path(path)
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.read(
+            result = await mount.filesystem.read(
                 rel_path, offset, limit, session=sess, user_id=user_id
             )
-        result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+        result.file_path = self._prefix_path(result.file_path, mount.path)
         return result
 
     async def write(
@@ -918,7 +890,7 @@ class GroverAsync:
         try:
             mount, rel_path = self._registry.resolve(path)
             async with self._session_for(mount) as sess:
-                result = await mount.backend.write(
+                result = await mount.filesystem.write(
                     rel_path,
                     content,
                     "agent",
@@ -926,7 +898,7 @@ class GroverAsync:
                     session=sess,
                     user_id=user_id,
                 )
-            result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+            result.file_path = self._prefix_path(result.file_path, mount.path)
             if result.success:
                 await self._emit(
                     FileEvent(
@@ -958,7 +930,7 @@ class GroverAsync:
         try:
             mount, rel_path = self._registry.resolve(path)
             async with self._session_for(mount) as sess:
-                result = await mount.backend.edit(
+                result = await mount.filesystem.edit(
                     rel_path,
                     old,
                     new,
@@ -967,7 +939,7 @@ class GroverAsync:
                     session=sess,
                     user_id=user_id,
                 )
-            result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+            result.file_path = self._prefix_path(result.file_path, mount.path)
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_WRITTEN, path=path, user_id=user_id)
@@ -988,7 +960,7 @@ class GroverAsync:
         try:
             mount, rel_path = self._registry.resolve(path)
 
-            if not permanent and not self._get_capability(mount.backend, SupportsTrash):
+            if not permanent and not self._get_capability(mount.filesystem, SupportsTrash):
                 return DeleteResult(
                     success=False,
                     message="Trash not supported on this mount. "
@@ -996,10 +968,10 @@ class GroverAsync:
                 )
 
             async with self._session_for(mount) as sess:
-                result = await mount.backend.delete(
+                result = await mount.filesystem.delete(
                     rel_path, permanent, session=sess, user_id=user_id
                 )
-            result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+            result.file_path = self._prefix_path(result.file_path, mount.path)
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_DELETED, path=path, user_id=user_id)
@@ -1023,11 +995,9 @@ class GroverAsync:
 
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.mkdir(rel_path, parents, session=sess, user_id=user_id)
-        result.path = self._prefix_path(result.path, mount.mount_path)
-        result.created_dirs = [
-            self._prefix_path(d, mount.mount_path) or d for d in result.created_dirs
-        ]
+            result = await mount.filesystem.mkdir(rel_path, parents, session=sess, user_id=user_id)
+        result.path = self._prefix_path(result.path, mount.path)
+        result.created_dirs = [self._prefix_path(d, mount.path) or d for d in result.created_dirs]
         return result
 
     async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
@@ -1038,18 +1008,18 @@ class GroverAsync:
 
         mount, rel_path = self._registry.resolve(path)
         async with self._session_for(mount) as sess:
-            result = await mount.backend.list_dir(rel_path, session=sess, user_id=user_id)
-        return result.rebase(mount.mount_path)
+            result = await mount.filesystem.list_dir(rel_path, session=sess, user_id=user_id)
+        return result.rebase(mount.path)
 
     def _list_root(self) -> ListDirResult:
         from grover.search.results import ListDirEvidence
 
         entries: dict[str, list] = {}
         for mount in self._registry.list_visible_mounts():
-            entries[mount.mount_path] = [
+            entries[mount.path] = [
                 ListDirEvidence(
                     strategy="list_dir",
-                    path=mount.mount_path,
+                    path=mount.path,
                     is_directory=True,
                 )
             ]
@@ -1074,17 +1044,17 @@ class GroverAsync:
             return False
 
         async with self._session_for(mount) as sess:
-            return await mount.backend.exists(rel_path, session=sess, user_id=user_id)
+            return await mount.filesystem.exists(rel_path, session=sess, user_id=user_id)
 
     async def get_info(self, path: str, *, user_id: str | None = None) -> FileInfo | None:
         path = normalize_path(path)
 
         if self._registry.has_mount(path):
             for mount in self._registry.list_mounts():
-                if mount.mount_path == path:
-                    name = mount.mount_path.lstrip("/")
+                if mount.path == path:
+                    name = mount.path.lstrip("/")
                     return FileInfo(
-                        path=mount.mount_path,
+                        path=mount.path,
                         name=name,
                         is_directory=True,
                         permission=mount.permission.value,
@@ -1097,7 +1067,7 @@ class GroverAsync:
             return None
 
         async with self._session_for(mount) as sess:
-            info = await mount.backend.get_info(rel_path, session=sess, user_id=user_id)
+            info = await mount.filesystem.get_info(rel_path, session=sess, user_id=user_id)
         if info is not None:
             info = self._prefix_file_info(info, mount)
         return info
@@ -1128,11 +1098,11 @@ class GroverAsync:
 
             if src_mount is dest_mount:
                 async with self._session_for(src_mount) as sess:
-                    result = await src_mount.backend.move(
+                    result = await src_mount.filesystem.move(
                         src_rel, dest_rel, session=sess, follow=follow, user_id=user_id
                     )
-                result.old_path = self._prefix_path(result.old_path, src_mount.mount_path)
-                result.new_path = self._prefix_path(result.new_path, dest_mount.mount_path)
+                result.old_path = self._prefix_path(result.old_path, src_mount.path)
+                result.new_path = self._prefix_path(result.new_path, dest_mount.path)
                 if result.success:
                     await self._emit(
                         FileEvent(
@@ -1146,7 +1116,7 @@ class GroverAsync:
 
             # Cross-mount move: read → write → delete (non-atomic)
             async with self._session_for(src_mount) as src_sess:
-                read_result = await src_mount.backend.read(
+                read_result = await src_mount.filesystem.read(
                     src_rel, session=src_sess, user_id=user_id
                 )
             if not read_result.success:
@@ -1158,7 +1128,7 @@ class GroverAsync:
                 return MoveResult(success=False, message=f"Source file has no content: {src}")
 
             async with self._session_for(dest_mount) as dest_sess:
-                write_result = await dest_mount.backend.write(
+                write_result = await dest_mount.filesystem.write(
                     dest_rel, read_result.content, session=dest_sess, user_id=user_id
                 )
             if not write_result.success:
@@ -1170,7 +1140,7 @@ class GroverAsync:
                 )
 
             async with self._session_for(src_mount) as src_sess:
-                delete_result = await src_mount.backend.delete(
+                delete_result = await src_mount.filesystem.delete(
                     src_rel, permanent=False, session=src_sess, user_id=user_id
                 )
             if not delete_result.success:
@@ -1206,10 +1176,10 @@ class GroverAsync:
 
             if src_mount is dest_mount:
                 async with self._session_for(src_mount) as sess:
-                    result = await src_mount.backend.copy(
+                    result = await src_mount.filesystem.copy(
                         src_rel, dest_rel, session=sess, user_id=user_id
                     )
-                result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
+                result.file_path = self._prefix_path(result.file_path, dest_mount.path)
                 if result.success:
                     await self._emit(
                         FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
@@ -1218,7 +1188,7 @@ class GroverAsync:
 
             # Cross-mount copy: read → write
             async with self._session_for(src_mount) as src_sess:
-                read_result = await src_mount.backend.read(
+                read_result = await src_mount.filesystem.read(
                     src_rel, session=src_sess, user_id=user_id
                 )
             if not read_result.success:
@@ -1230,10 +1200,10 @@ class GroverAsync:
                 return WriteResult(success=False, message=f"Source file has no content: {src}")
 
             async with self._session_for(dest_mount) as dest_sess:
-                result = await dest_mount.backend.write(
+                result = await dest_mount.filesystem.write(
                     dest_rel, read_result.content, session=dest_sess, user_id=user_id
                 )
-            result.file_path = self._prefix_path(result.file_path, dest_mount.mount_path)
+            result.file_path = self._prefix_path(result.file_path, dest_mount.path)
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_WRITTEN, path=dest, user_id=user_id)
@@ -1255,19 +1225,21 @@ class GroverAsync:
                 combined = GlobResult(success=True, message="", _entries={}, pattern=pattern)
                 for mount in self._registry.list_visible_mounts():
                     async with self._session_for(mount) as sess:
-                        result = await mount.backend.glob(
+                        result = await mount.filesystem.glob(
                             pattern, "/", session=sess, user_id=user_id
                         )
                     if result.success:
-                        combined = combined | result.rebase(mount.mount_path)
+                        combined = combined | result.rebase(mount.path)
                 combined.message = f"Found {len(combined)} match(es)"
                 combined.pattern = pattern
                 return combined
 
             mount, rel_path = self._registry.resolve(path)
             async with self._session_for(mount) as sess:
-                result = await mount.backend.glob(pattern, rel_path, session=sess, user_id=user_id)
-            return result.rebase(mount.mount_path)
+                result = await mount.filesystem.glob(
+                    pattern, rel_path, session=sess, user_id=user_id
+                )
+            return result.rebase(mount.path)
         except Exception as e:
             return GlobResult(success=False, message=f"Glob failed: {e}", pattern=pattern)
 
@@ -1303,7 +1275,7 @@ class GroverAsync:
                         truncated = True
                         break
                     async with self._session_for(mount) as sess:
-                        result = await mount.backend.grep(
+                        result = await mount.filesystem.grep(
                             pattern,
                             "/",
                             session=sess,
@@ -1320,7 +1292,7 @@ class GroverAsync:
                             user_id=user_id,
                         )
                     if result.success:
-                        rebased = result.rebase(mount.mount_path)
+                        rebased = result.rebase(mount.path)
                         for p, evs in rebased._entries.items():
                             combined_entries.setdefault(p, []).extend(evs)
                             total_matches += sum(
@@ -1354,7 +1326,7 @@ class GroverAsync:
 
             mount, rel_path = self._registry.resolve(path)
             async with self._session_for(mount) as sess:
-                result = await mount.backend.grep(
+                result = await mount.filesystem.grep(
                     pattern,
                     rel_path,
                     session=sess,
@@ -1370,7 +1342,7 @@ class GroverAsync:
                     files_only=files_only,
                     user_id=user_id,
                 )
-            return result.rebase(mount.mount_path)
+            return result.rebase(mount.path)
         except Exception as e:
             return GrepResult(success=False, message=f"Grep failed: {e}", pattern=pattern)
 
@@ -1384,10 +1356,10 @@ class GroverAsync:
 
                 root_entries: dict[str, list] = {}
                 for mount in self._registry.list_visible_mounts():
-                    root_entries[mount.mount_path] = [
+                    root_entries[mount.path] = [
                         TreeEvidence(
                             strategy="tree",
-                            path=mount.mount_path,
+                            path=mount.path,
                             depth=0,
                             is_directory=True,
                         )
@@ -1397,11 +1369,11 @@ class GroverAsync:
                 if max_depth is None or max_depth > 0:
                     for mount in self._registry.list_visible_mounts():
                         async with self._session_for(mount) as sess:
-                            result = await mount.backend.tree(
+                            result = await mount.filesystem.tree(
                                 "/", max_depth=max_depth, session=sess, user_id=user_id
                             )
                         if result.success:
-                            combined = combined | result.rebase(mount.mount_path)
+                            combined = combined | result.rebase(mount.path)
 
                 combined.message = (
                     f"{combined.total_dirs} directories, {combined.total_files} files"
@@ -1410,10 +1382,10 @@ class GroverAsync:
 
             mount, rel_path = self._registry.resolve(path)
             async with self._session_for(mount) as sess:
-                result = await mount.backend.tree(
+                result = await mount.filesystem.tree(
                     rel_path, max_depth=max_depth, session=sess, user_id=user_id
                 )
-            return result.rebase(mount.mount_path)
+            return result.rebase(mount.path)
         except Exception as e:
             return TreeResult(success=False, message=f"Tree failed: {e}")
 
@@ -1425,10 +1397,10 @@ class GroverAsync:
         path = normalize_path(path)
         try:
             mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.backend, SupportsVersions)
+            cap = self._get_capability(mount.filesystem, SupportsVersions)
             if cap is None:
                 raise CapabilityNotSupportedError(
-                    f"Mount at {mount.mount_path} does not support versioning"
+                    f"Mount at {mount.path} does not support versioning"
                 )
             async with self._session_for(mount) as sess:
                 return await cap.list_versions(rel_path, session=sess, user_id=user_id)
@@ -1441,10 +1413,10 @@ class GroverAsync:
         path = normalize_path(path)
         try:
             mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.backend, SupportsVersions)
+            cap = self._get_capability(mount.filesystem, SupportsVersions)
             if cap is None:
                 raise CapabilityNotSupportedError(
-                    f"Mount at {mount.mount_path} does not support versioning"
+                    f"Mount at {mount.path} does not support versioning"
                 )
             async with self._session_for(mount) as sess:
                 return await cap.get_version_content(
@@ -1464,14 +1436,14 @@ class GroverAsync:
 
         try:
             mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.backend, SupportsVersions)
+            cap = self._get_capability(mount.filesystem, SupportsVersions)
             if cap is None:
                 raise CapabilityNotSupportedError(
-                    f"Mount at {mount.mount_path} does not support versioning"
+                    f"Mount at {mount.path} does not support versioning"
                 )
             async with self._session_for(mount) as sess:
                 result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
-            result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+            result.file_path = self._prefix_path(result.file_path, mount.path)
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
@@ -1488,7 +1460,7 @@ class GroverAsync:
         """List all items in trash across all mounts."""
         combined = TrashResult(success=True, message="")
         for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.backend, SupportsTrash)
+            cap = self._get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
                 continue
             async with self._session_for(mount) as sess:
@@ -1496,7 +1468,7 @@ class GroverAsync:
             if result.success:
                 mount_entries: dict[str, list[Any]] = {}
                 for entry in result.entries:
-                    fp = self._prefix_path(entry.path, mount.mount_path) or entry.path
+                    fp = self._prefix_path(entry.path, mount.path) or entry.path
                     ev = TrashEvidence(
                         strategy="trash",
                         path=fp,
@@ -1518,14 +1490,12 @@ class GroverAsync:
 
         try:
             mount, rel_path = self._registry.resolve(path)
-            cap = self._get_capability(mount.backend, SupportsTrash)
+            cap = self._get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
-                raise CapabilityNotSupportedError(
-                    f"Mount at {mount.mount_path} does not support trash"
-                )
+                raise CapabilityNotSupportedError(f"Mount at {mount.path} does not support trash")
             async with self._session_for(mount) as sess:
                 result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
-            result.file_path = self._prefix_path(result.file_path, mount.mount_path)
+            result.file_path = self._prefix_path(result.file_path, mount.path)
             if result.success:
                 await self._emit(
                     FileEvent(event_type=EventType.FILE_RESTORED, path=path, user_id=user_id)
@@ -1539,7 +1509,7 @@ class GroverAsync:
         total_deleted = 0
         mounts_processed = 0
         for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.backend, SupportsTrash)
+            cap = self._get_capability(mount.filesystem, SupportsTrash)
             if cap is None:
                 continue
             async with self._session_for(mount) as sess:
@@ -1579,7 +1549,7 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.backend, SupportsReBAC)
+        cap = self._get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
             return ShareResult(
                 success=False,
@@ -1628,7 +1598,7 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ShareResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.backend, SupportsReBAC)
+        cap = self._get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
             return ShareResult(
                 success=False,
@@ -1663,7 +1633,7 @@ class GroverAsync:
         except MountNotFoundError as e:
             return ListSharesResult(success=False, message=str(e))
 
-        cap = self._get_capability(mount.backend, SupportsReBAC)
+        cap = self._get_capability(mount.filesystem, SupportsReBAC)
         if cap is None:
             return ListSharesResult(
                 success=False,
@@ -1698,7 +1668,7 @@ class GroverAsync:
         """List all files shared with the current user across all mounts."""
         all_shares: list[ShareInfo] = []
         for mount in self._registry.list_mounts():
-            cap = self._get_capability(mount.backend, SupportsReBAC)
+            cap = self._get_capability(mount.filesystem, SupportsReBAC)
             if cap is None:
                 continue
             async with self._session_for(mount) as sess:
@@ -1706,7 +1676,7 @@ class GroverAsync:
                 shares = await cap.list_shared_with_me(user_id=user_id, session=sess)
             for s in shares:
                 # Backend returns paths like /@shared/alice/a.md — prepend mount
-                full_path = mount.mount_path + s.path if s.path != "/" else mount.mount_path
+                full_path = mount.path + s.path if s.path != "/" else mount.path
                 all_shares.append(
                     ShareInfo(
                         path=full_path,
@@ -1734,10 +1704,10 @@ class GroverAsync:
         mounts = self._registry.list_mounts()
         if mount_path is not None:
             mount_path = normalize_path(mount_path).rstrip("/")
-            mounts = [m for m in mounts if m.mount_path == mount_path]
+            mounts = [m for m in mounts if m.path == mount_path]
 
         for mount in mounts:
-            cap = self._get_capability(mount.backend, SupportsReconcile)
+            cap = self._get_capability(mount.filesystem, SupportsReconcile)
             if cap is None:
                 continue
             async with self._session_for(mount) as sess:
@@ -1926,7 +1896,7 @@ class GroverAsync:
                     if mount.search is None:
                         continue
                     results = await mount.search.search(query, k)
-                    tagged.extend((r, mount.mount_path) for r in results)
+                    tagged.extend((r, mount.path) for r in results)
                 tagged.sort(key=lambda t: t[0].score, reverse=True)
                 tagged = tagged[:k]
             else:
@@ -1943,7 +1913,7 @@ class GroverAsync:
                             if (r.parent_path or r.ref.path).startswith(prefix)
                             or (r.parent_path or r.ref.path) == rel_path.rstrip("/")
                         ]
-                    tagged = [(r, mount.mount_path) for r in results]
+                    tagged = [(r, mount.path) for r in results]
         except Exception as e:
             return VectorSearchResult(
                 success=False,
@@ -1993,7 +1963,7 @@ class GroverAsync:
                         fts_results = await mount.search.lexical_search(query, k=k, session=sess)
                     mount_entries: dict[str, list[Any]] = {}
                     for ftr in fts_results:
-                        fp = mount.mount_path + ftr.path
+                        fp = mount.path + ftr.path
                         ev = LexicalEvidence(
                             strategy="lexical_search",
                             path=fp,
@@ -2017,7 +1987,7 @@ class GroverAsync:
                     fts_results = await mount.search.lexical_search(query, k=k, session=sess)
                 entries: dict[str, list[Any]] = {}
                 for ftr in fts_results:
-                    fp = mount.mount_path + ftr.path
+                    fp = mount.path + ftr.path
                     ev = LexicalEvidence(
                         strategy="lexical_search",
                         path=fp,
@@ -2125,7 +2095,7 @@ class GroverAsync:
             await self._walk_and_index(mount_path, stats)
         else:
             for mount in self._registry.list_visible_mounts():
-                await self._walk_and_index(mount.mount_path, stats)
+                await self._walk_and_index(mount.path, stats)
 
         await self._async_save()
         return stats
@@ -2163,9 +2133,9 @@ class GroverAsync:
         except MountNotFoundError:
             return None
 
-        backend = mount.backend
+        backend = mount.filesystem
         if hasattr(backend, "_read_content"):
-            if mount.has_session_factory:
+            if mount.session_factory is not None:
                 async with self._session_for(mount) as sess:
                     content: str | None = await backend._read_content(rel_path, sess)
             else:
@@ -2195,7 +2165,7 @@ class GroverAsync:
         # Save each mount's graph to its own DB
         for mount in self._registry.list_visible_mounts():
             graph = mount.graph
-            if graph is not None and mount.has_session_factory:
+            if graph is not None and mount.session_factory is not None:
                 from grover.graph.protocols import SupportsPersistence
 
                 if isinstance(graph, SupportsPersistence):
@@ -2206,21 +2176,21 @@ class GroverAsync:
                     except Exception:
                         logger.debug(
                             "Failed to save graph for %s",
-                            mount.mount_path,
+                            mount.path,
                             exc_info=True,
                         )
 
             # Save search index to disk
             search_engine = mount.search
             if search_engine is not None and self._meta_data_dir is not None:
-                slug = mount.mount_path.strip("/").replace("/", "_") or "_default"
+                slug = mount.path.strip("/").replace("/", "_") or "_default"
                 search_dir = self._meta_data_dir / "search" / slug
                 try:
                     search_engine.save(str(search_dir))
                 except Exception:
                     logger.debug(
                         "Failed to save search index for %s",
-                        mount.mount_path,
+                        mount.path,
                         exc_info=True,
                     )
 
@@ -2236,8 +2206,8 @@ class GroverAsync:
         await self._async_save()
         # Close all backends directly
         for mount in self._registry.list_mounts():
-            if hasattr(mount.backend, "close"):
+            if hasattr(mount.filesystem, "close"):
                 try:
-                    await mount.backend.close()
+                    await mount.filesystem.close()
                 except Exception:
-                    logger.warning("Backend close failed for %s", mount.mount_path, exc_info=True)
+                    logger.warning("Backend close failed for %s", mount.path, exc_info=True)

@@ -29,7 +29,7 @@ class GroverLoader(BaseLoader):
         from grover.integrations.langchain import GroverLoader
 
         g = Grover()
-        g.mount("/project", backend)
+        g.add_mount("/project", backend)
 
         # Load everything
         loader = GroverLoader(grover=g, path="/project")

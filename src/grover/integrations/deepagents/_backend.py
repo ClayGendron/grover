@@ -48,7 +48,7 @@ class GroverBackend(BackendProtocol):
         from grover.integrations.deepagents import GroverBackend
 
         g = Grover()
-        g.mount("/project", LocalFileSystem(workspace_dir="/tmp/ws"))
+        g.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/ws"))
         backend = GroverBackend(g)
     """
 
@@ -66,7 +66,7 @@ class GroverBackend(BackendProtocol):
         from grover.fs.local_fs import LocalFileSystem
 
         g = Grover()
-        g.mount("/", LocalFileSystem(workspace_dir=workspace_dir), **mount_kwargs)
+        g.add_mount("/", LocalFileSystem(workspace_dir=workspace_dir), **mount_kwargs)
         return cls(g)
 
     @classmethod
@@ -81,7 +81,7 @@ class GroverBackend(BackendProtocol):
         from grover.fs.database_fs import DatabaseFileSystem
 
         g = Grover()
-        g.mount(
+        g.add_mount(
             "/",
             DatabaseFileSystem(),
             engine=engine,

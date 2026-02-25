@@ -237,7 +237,7 @@ class TestEventBusIntegration:
         ws = tmp_path / "workspace"
         ws.mkdir()
         lfs = LocalFileSystem(workspace_dir=ws, data_dir=tmp_path / ".grover_test")
-        await g.mount("/local", lfs)
+        await g.add_mount("/local", lfs)
 
         for et in EventType:
             g._event_bus.register(et, handler)
@@ -327,7 +327,7 @@ class TestEventBusIntegration:
         ws = tmp_path / "ws2"
         ws.mkdir()
         lfs = LocalFileSystem(workspace_dir=ws, data_dir=tmp_path / ".grover_test2")
-        await g.mount("/local", lfs)
+        await g.add_mount("/local", lfs)
 
         result = await g.write("/local/hello.txt", "hello")
         assert result.success
@@ -357,7 +357,7 @@ class TestEventBusRestoreIntegration:
             await _collecting_handler(collected, event)
 
         g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-        await g.mount("/vfs", fs, session_factory=factory)
+        await g.add_mount("/vfs", fs, session_factory=factory)
 
         for et in EventType:
             g._event_bus.register(et, handler)

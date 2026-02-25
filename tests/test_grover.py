@@ -68,7 +68,7 @@ def workspace(tmp_path: Path) -> Path:
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -78,7 +78,7 @@ def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     """Grover without search to test graceful degradation."""
     data = tmp_path / "grover_data"
     g = Grover(data_dir=str(data))
-    g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -92,7 +92,7 @@ class TestGroverConstruction:
     def test_mount_first_api(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-        g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         try:
             assert g._async._meta_fs is not None
         finally:
@@ -104,7 +104,7 @@ class TestGroverConstruction:
             data_dir=str(custom_dir),
             embedding_provider=FakeProvider(),
         )
-        g.mount("/project", LocalFileSystem(workspace_dir=workspace))
+        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace))
         try:
             assert g._async._meta_data_dir == custom_dir
         finally:
@@ -113,7 +113,7 @@ class TestGroverConstruction:
     def test_close_idempotent(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data"
         g = Grover(data_dir=str(data), embedding_provider=FakeProvider())
-        g.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         g.close()
         g.close()  # Should not raise
         assert g._closed
@@ -335,7 +335,7 @@ class TestGroverEventHandlers:
         )
         # Verify it's in search (search engine is now per-mount on the Mount)
         mount = next(
-            m for m in grover._async._registry.list_visible_mounts() if m.mount_path == "/project"
+            m for m in grover._async._registry.list_visible_mounts() if m.path == "/project"
         )
         se = mount.search
         assert se is not None
@@ -380,7 +380,8 @@ class TestGroverPersistence:
             data_dir=str(data_dir),
             embedding_provider=FakeProvider(),
         )
-        g1.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
+        lfs1 = LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
+        g1.add_mount("/project", lfs1)
         g1.write("/project/keep.py", "def keep():\n    pass\n")
         g1.save()
         g1.close()
@@ -390,7 +391,8 @@ class TestGroverPersistence:
             data_dir=str(data_dir),
             embedding_provider=FakeProvider(),
         )
-        g2.mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local"))
+        lfs2 = LocalFileSystem(workspace_dir=workspace, data_dir=data_dir / "local")
+        g2.add_mount("/project", lfs2)
         try:
             assert g2.get_graph().has_node("/project/keep.py")
             # Search index should also be loaded
@@ -446,7 +448,7 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     sharing = SharingService(FileShare)
     backend = UserScopedFileSystem(sharing=sharing)
-    g.mount("/ws", backend, engine=engine)
+    g.add_mount("/ws", backend, engine=engine)
     yield g
     g.close()
 

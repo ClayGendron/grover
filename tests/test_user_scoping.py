@@ -41,7 +41,7 @@ async def auth_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsync:
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-    await g.mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -56,7 +56,7 @@ async def shared_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsyn
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-    await g.mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -70,7 +70,7 @@ async def regular_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsy
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
     g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
-    await g.mount("/ws", backend, session_factory=session_factory)
+    await g.add_mount("/ws", backend, session_factory=session_factory)
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -246,7 +246,7 @@ class TestSharedAccess:
         """Helper to create a share record directly via SharingService."""
         mount = grover._registry.get_mount("/ws")
         assert mount is not None
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
         assert backend._sharing is not None
         await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
@@ -368,7 +368,7 @@ class TestSharedListDir:
     ) -> None:
         mount = grover._registry.get_mount("/ws")
         assert mount is not None
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
         assert backend._sharing is not None
         await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
@@ -533,7 +533,7 @@ class TestSharedMoveAndCopy:
     ) -> None:
         mount = grover._registry.get_mount("/ws")
         assert mount is not None
-        backend = mount.backend
+        backend = mount.filesystem
         assert isinstance(backend, UserScopedFileSystem)
         assert backend._sharing is not None
         await backend._sharing.create_share(async_session, path, grantee_id, permission, granted_by)
