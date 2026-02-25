@@ -11,7 +11,10 @@ from grover.ref import Ref
 from grover.search.types import SearchResult, VectorEntry
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from grover.search.extractors import EmbeddableChunk
+    from grover.search.fulltext.types import FullTextResult
     from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.search.stores.local import LocalVectorStore
 
@@ -55,70 +58,93 @@ class SearchEngine:
         content: str,
         *,
         parent_path: str | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
-        """Embed *content* and upsert to the store."""
-        if self._embedding_provider is None:
-            msg = "Cannot add: no embedding provider configured"
-            raise RuntimeError(msg)
-
-        vector = await self._embed(content)
-        entry = VectorEntry(
-            id=path,
-            vector=vector,
-            metadata={
-                "content": content,
-                "parent_path": parent_path,
-                "content_hash": _content_hash(content),
-            },
-        )
-        await self._store.upsert([entry])
-
-    async def add_batch(self, entries: list[EmbeddableChunk]) -> None:
-        """Embed a batch of entries and upsert to the store."""
-        if not entries:
-            return
-        if self._embedding_provider is None:
-            msg = "Cannot add_batch: no embedding provider configured"
-            raise RuntimeError(msg)
-
-        texts = [e.content for e in entries]
-        vectors = await self._embed_batch(texts)
-
-        vector_entries = [
-            VectorEntry(
-                id=entry.path,
-                vector=vectors[i],
+        """Embed *content* and upsert to the store.  Also indexes in FTS."""
+        if self._store is not None and self._embedding_provider is not None:
+            vector = await self._embed(content)
+            entry = VectorEntry(
+                id=path,
+                vector=vector,
                 metadata={
-                    "content": entry.content,
-                    "parent_path": entry.parent_path,
-                    "content_hash": _content_hash(entry.content),
-                    "chunk_name": entry.chunk_name,
-                    "line_start": entry.line_start,
-                    "line_end": entry.line_end,
+                    "content": content,
+                    "parent_path": parent_path,
+                    "content_hash": _content_hash(content),
                 },
             )
-            for i, entry in enumerate(entries)
-        ]
-        await self._store.upsert(vector_entries)
+            await self._store.upsert([entry])
 
-    async def remove(self, path: str) -> None:
+        if self._lexical is not None:
+            await self._lexical.index(path, content, session=session)
+
+    async def add_batch(
+        self,
+        entries: list[EmbeddableChunk],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
+        """Embed a batch of entries and upsert to the store.  Also indexes in FTS."""
+        if not entries:
+            return
+
+        if self._store is not None and self._embedding_provider is not None:
+            texts = [e.content for e in entries]
+            vectors = await self._embed_batch(texts)
+
+            vector_entries = [
+                VectorEntry(
+                    id=entry.path,
+                    vector=vectors[i],
+                    metadata={
+                        "content": entry.content,
+                        "parent_path": entry.parent_path,
+                        "content_hash": _content_hash(entry.content),
+                        "chunk_name": entry.chunk_name,
+                        "line_start": entry.line_start,
+                        "line_end": entry.line_end,
+                    },
+                )
+                for i, entry in enumerate(entries)
+            ]
+            await self._store.upsert(vector_entries)
+
+        if self._lexical is not None:
+            for entry in entries:
+                await self._lexical.index(entry.path, entry.content, session=session)
+
+    async def remove(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
         """Remove a single entry by path."""
-        await self._store.delete([path])
+        if self._store is not None:
+            await self._store.delete([path])
+        if self._lexical is not None:
+            await self._lexical.remove(path, session=session)
 
-    async def remove_file(self, path: str) -> None:
+    async def remove_file(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
         """Remove *path* and all entries whose ``parent_path`` matches.
 
         For a :class:`LocalVectorStore`, uses the efficient ``remove_file``
         method.  For other stores, falls back to deleting just the path.
+        Also removes entries from the FTS index.
         """
-        local_store = self._get_local_store()
-        if local_store is not None:
-            local_store.remove_file(path)
-        else:
-            # For non-local stores, delete the path itself.
-            # Child cleanup requires metadata filter support, which
-            # will be handled in Phase 4+ store implementations.
-            await self._store.delete([path])
+        if self._store is not None:
+            local_store = self._get_local_store()
+            if local_store is not None:
+                local_store.remove_file(path)
+            else:
+                await self._store.delete([path])
+
+        if self._lexical is not None:
+            await self._lexical.remove_file(path, session=session)
 
     async def search(self, query: str, k: int = 10) -> list[SearchResult]:
         """Embed *query*, search the store, and return Grover-level results."""
@@ -138,6 +164,25 @@ class SearchEngine:
             )
             for vsr in vs_results
         ]
+
+    async def lexical_search(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[FullTextResult]:
+        """Search the FTS index using BM25 ranking.
+
+        Raises
+        ------
+        RuntimeError
+            If no lexical store is configured.
+        """
+        if self._lexical is None:
+            msg = "Cannot lexical_search: no lexical store configured"
+            raise RuntimeError(msg)
+        return await self._lexical.search(query, k=k, session=session)
 
     # ------------------------------------------------------------------
     # Passthrough helpers
@@ -186,11 +231,13 @@ class SearchEngine:
 
     async def connect(self) -> None:
         """Connect the underlying store."""
-        await self._store.connect()
+        if self._store is not None:
+            await self._store.connect()
 
     async def close(self) -> None:
         """Close the underlying store."""
-        await self._store.close()
+        if self._store is not None:
+            await self._store.close()
 
     # ------------------------------------------------------------------
     # Properties

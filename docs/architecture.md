@@ -132,6 +132,13 @@ SearchEngine(
 
 SearchEngine exposes `supported_protocols()` which Mount uses instead of `isinstance()` to determine what dispatch protocols the search component satisfies.
 
+**Full-text (BM25) search**: the `lexical` component of SearchEngine provides keyword search via native DB features. Grover auto-detects the dialect and creates the appropriate store:
+- SQLite → `SQLiteFullTextStore` (FTS5 virtual table, `bm25()` ranking, `snippet()`)
+- PostgreSQL → `PostgresFullTextStore` (`to_tsvector`/`tsquery`, `ts_rank_cd`, GIN index)
+- MSSQL → `MSSQLFullTextStore` (`FREETEXTTABLE`, full-text catalog)
+
+FTS stays in sync with content changes: `add()`, `add_batch()`, `remove()`, and `remove_file()` on SearchEngine propagate to both vector and lexical stores. Event handlers pass DB sessions for FTS operations.
+
 **Graph resolution**: operations like `dependents(path)` resolve the mount from the path, then delegate to that mount's graph. `get_graph(path)` is the public method (replaces the removed `.graph` property).
 
 **Search routing**: `search()` routes through VFS, checking `mount.search` on the resolved mount. Root-level searches aggregate results across all mounts; path-scoped searches target a single mount.

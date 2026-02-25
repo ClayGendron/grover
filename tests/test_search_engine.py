@@ -265,15 +265,15 @@ class TestPassthrough:
 
 class TestNoProvider:
     @pytest.mark.asyncio
-    async def test_add_raises(self, engine_no_provider: SearchEngine):
-        with pytest.raises(RuntimeError, match="no embedding provider"):
-            await engine_no_provider.add("/a.py", "content")
+    async def test_add_skips_without_provider(self, engine_no_provider: SearchEngine):
+        # add() silently skips vector indexing when no embedding provider
+        await engine_no_provider.add("/a.py", "content")
 
     @pytest.mark.asyncio
-    async def test_add_batch_raises(self, engine_no_provider: SearchEngine):
+    async def test_add_batch_skips_without_provider(self, engine_no_provider: SearchEngine):
         entries = [EmbeddableChunk(path="/a.py", content="c")]
-        with pytest.raises(RuntimeError, match="no embedding provider"):
-            await engine_no_provider.add_batch(entries)
+        # add_batch() silently skips vector indexing when no embedding provider
+        await engine_no_provider.add_batch(entries)
 
     @pytest.mark.asyncio
     async def test_search_raises(self, engine_no_provider: SearchEngine):

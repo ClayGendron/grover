@@ -135,19 +135,69 @@ class GroverAsync:
             logger.debug("No embedding provider available; search disabled")
             return None
 
-    def _create_search_engine(self) -> SearchEngine | None:
+    def _create_search_engine(self, *, lexical: Any | None = None) -> SearchEngine | None:
         """Create a new SearchEngine for a mount."""
-        if self._explicit_vector_store is not None:
-            return SearchEngine(
-                vector=self._explicit_vector_store,
-                embedding=self._embedding_provider,
-            )
-        if self._embedding_provider is None:
-            return None
-        from grover.search.stores.local import LocalVectorStore
+        vector: Any = None
+        embedding = self._embedding_provider
 
-        store = LocalVectorStore(dimension=self._embedding_provider.dimensions)
-        return SearchEngine(vector=store, embedding=self._embedding_provider)
+        if self._explicit_vector_store is not None:
+            vector = self._explicit_vector_store
+        elif embedding is not None:
+            from grover.search.stores.local import LocalVectorStore
+
+            vector = LocalVectorStore(dimension=embedding.dimensions)
+
+        # If we have nothing at all, no search engine
+        if vector is None and embedding is None and lexical is None:
+            return None
+
+        return SearchEngine(vector=vector, embedding=embedding, lexical=lexical)
+
+    async def _create_fulltext_store(self, config: MountConfig) -> Any | None:
+        """Create a FullTextStore for the mount based on its dialect."""
+        from grover.search.fulltext.sqlite import SQLiteFullTextStore
+
+        if isinstance(config.backend, LocalFileSystem):
+            engine = getattr(config.backend, "_engine", None)
+            if engine is not None:
+                fts = SQLiteFullTextStore(engine=engine)
+                await fts.ensure_table()
+                return fts
+            return None
+
+        if config.has_session_factory:
+            # Detect dialect from session factory's engine if available
+            sf = config.session_factory
+            bind = getattr(sf, "kw", {}).get("bind", None)
+            if bind is None:
+                bind = getattr(sf, "class_", None)
+                if bind is None:
+                    return None
+                bind = getattr(bind, "bind", None)
+            if bind is None:
+                return None
+
+            from grover.fs.dialect import get_dialect
+
+            dialect = get_dialect(bind)
+            if dialect == "sqlite":
+                fts = SQLiteFullTextStore(engine=bind)
+                await fts.ensure_table()
+                return fts
+            if dialect == "postgresql":
+                from grover.search.fulltext.postgres import PostgresFullTextStore
+
+                fts_pg = PostgresFullTextStore(engine=bind)
+                await fts_pg.ensure_table()
+                return fts_pg
+            if dialect == "mssql":
+                from grover.search.fulltext.mssql import MSSQLFullTextStore
+
+                fts_mssql = MSSQLFullTextStore(engine=bind)
+                await fts_mssql.ensure_table()
+                return fts_mssql
+
+        return None
 
     # ------------------------------------------------------------------
     # Per-mount graph / search resolution
@@ -340,7 +390,8 @@ class GroverAsync:
         # Inject per-mount graph and search engine (skip for hidden meta mount)
         if not hidden:
             config.graph = RustworkxGraph()
-            config.search = self._create_search_engine()
+            lexical = await self._create_fulltext_store(config)
+            config.search = self._create_search_engine(lexical=lexical)
 
         # Call open() on the backend BEFORE registering (skip if already opened for LFS)
         if not isinstance(config.backend, LocalFileSystem) and hasattr(config.backend, "open"):
@@ -631,7 +682,9 @@ class GroverAsync:
         try:
             search_engine = self._resolve_search_engine(event.path)
             if search_engine is not None:
-                await search_engine.remove_file(event.path)
+                mount, _rel = self._registry.resolve(event.path)
+                async with self._vfs.session_for(mount) as sess:
+                    await search_engine.remove_file(event.path, session=sess)
         except RuntimeError:
             pass
         # Clean up chunk DB rows
@@ -650,7 +703,9 @@ class GroverAsync:
             try:
                 search_engine = self._resolve_search_engine(event.old_path)
                 if search_engine is not None:
-                    await search_engine.remove_file(event.old_path)
+                    mount, _rel = self._registry.resolve(event.old_path)
+                    async with self._vfs.session_for(mount) as sess:
+                        await search_engine.remove_file(event.old_path, session=sess)
             except RuntimeError:
                 pass
             # Clean up chunk DB rows for old path
@@ -702,7 +757,8 @@ class GroverAsync:
         if graph.has_node(path):
             graph.remove_file_subgraph(path)
         if search_engine is not None:
-            await search_engine.remove_file(path)
+            async with self._vfs.session_for(mount) as sess:
+                await search_engine.remove_file(path, session=sess)
 
         graph.add_node(path)
 
@@ -749,12 +805,14 @@ class GroverAsync:
             if search_engine is not None:
                 embeddable = extract_from_chunks(chunks)
                 if embeddable:
-                    await search_engine.add_batch(embeddable)
+                    async with self._vfs.session_for(mount) as sess:
+                        await search_engine.add_batch(embeddable, session=sess)
         else:
             if search_engine is not None:
                 embeddable = extract_from_file(path, content)
                 if embeddable:
-                    await search_engine.add_batch(embeddable)
+                    async with self._vfs.session_for(mount) as sess:
+                        await search_engine.add_batch(embeddable, session=sess)
 
         return stats
 

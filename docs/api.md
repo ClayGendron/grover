@@ -636,7 +636,7 @@ Frozen dataclass returned by subgraph extraction methods. Deeply immutable — `
 
 ## Search
 
-Grover's search layer is built around two clean protocol layers — **EmbeddingProvider** (text → vectors) and **VectorStore** (store/search vectors) — wired together by **SearchEngine**.
+Grover's search layer is built around three protocol layers — **EmbeddingProvider** (text → vectors), **VectorStore** (store/search vectors), and **FullTextStore** (BM25 keyword search) — wired together by **SearchEngine**.
 
 ```python
 from grover import (
@@ -646,29 +646,61 @@ from grover import (
     FilterExpression, eq, gt, and_, or_,
 )
 from grover.search.types import SearchResult  # internal type used by SearchEngine
+from grover.search.fulltext import FullTextStore, FullTextResult
 ```
 
 ### SearchEngine
 
 ```python
-SearchEngine(store: VectorStore, embedding_provider: EmbeddingProvider | None = None)
+SearchEngine(*, vector=None, embedding=None, lexical=None, hybrid=None)
 ```
 
-Orchestrates embedding and storage. This is what `GroverAsync` uses internally.
+Orchestrates embedding, vector storage, and full-text search. This is what `GroverAsync` uses internally. All components are optional — configure only what you need.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `vector` | `VectorStore | None` | Vector store for semantic search |
+| `embedding` | `EmbeddingProvider | None` | Embedding provider for vectorization |
+| `lexical` | `FullTextStore | None` | Full-text store for BM25 keyword search |
+| `hybrid` | `Any | None` | Hybrid search provider (reserved) |
 
 | Method | Description |
 |--------|-------------|
-| `add(path, content, parent_path=None)` | Embed and index a single item |
-| `add_batch(chunks: list[EmbeddableChunk])` | Batch embed and index multiple items |
-| `remove(path)` | Remove a single entry by path |
-| `remove_file(path)` | Remove a file and all its chunks |
-| `search(query, k=10) -> list[SearchResult]` | Embed query and search |
+| `add(path, content, *, parent_path=None, session=None)` | Embed and index a single item (vector + FTS) |
+| `add_batch(chunks, *, session=None)` | Batch embed and index multiple items |
+| `remove(path, *, session=None)` | Remove a single entry by path |
+| `remove_file(path, *, session=None)` | Remove a file and all its chunks |
+| `search(query, k=10) -> list[SearchResult]` | Embed query and search (vector) |
+| `lexical_search(query, *, k=10, session=None) -> list[FullTextResult]` | BM25 keyword search |
 | `has(path) -> bool` | Check if a path is indexed |
 | `content_hash(path) -> str | None` | Get the content hash of an indexed entry |
 | `save(dir)` | Persist to disk (delegates to store if supported) |
 | `load(dir)` | Load from disk (delegates to store if supported) |
 | `connect()` | Connect the underlying store |
 | `close()` | Close the underlying store |
+| `supported_protocols() -> set[type]` | Return mount-level dispatch protocols based on configured components |
+
+### FullTextStore Protocol
+
+```python
+@runtime_checkable
+class FullTextStore(Protocol):
+    async def index(self, path: str, content: str, *, session=None) -> None: ...
+    async def remove(self, path: str, *, session=None) -> None: ...
+    async def remove_file(self, path: str, *, session=None) -> None: ...
+    async def search(self, query: str, *, k: int = 10, session=None) -> list[FullTextResult]: ...
+```
+
+**Implementations:**
+- `SQLiteFullTextStore` — FTS5 virtual table with `bm25()` ranking and `snippet()`
+- `PostgresFullTextStore` — `to_tsvector`/`tsquery` with `ts_rank_cd` and GIN index
+- `MSSQLFullTextStore` — `FREETEXTTABLE` with full-text catalog
+
+```python
+from grover.search.fulltext.sqlite import SQLiteFullTextStore
+from grover.search.fulltext.postgres import PostgresFullTextStore
+from grover.search.fulltext.mssql import MSSQLFullTextStore
+```
 
 ### EmbeddingProvider Protocol
 
