@@ -24,13 +24,12 @@ if TYPE_CHECKING:
         WriteResult,
     )
     from grover.graph.protocols import GraphStore
-    from grover.graph.types import SubgraphResult
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.ref import Ref
     from grover.results import FileSearchResult
     from grover.search.results import (
         GlobResult,
+        GraphResult,
         GrepResult,
         LexicalSearchResult,
         ListDirResult,
@@ -323,19 +322,19 @@ class Grover:
     # Graph query wrappers (sync — Graph methods are already sync)
     # ------------------------------------------------------------------
 
-    def dependents(self, path: str) -> list[Ref]:
+    def dependents(self, path: str) -> GraphResult:
         return self._async.dependents(path)
 
-    def dependencies(self, path: str) -> list[Ref]:
+    def dependencies(self, path: str) -> GraphResult:
         return self._async.dependencies(path)
 
-    def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
+    def impacts(self, path: str, max_depth: int = 3) -> GraphResult:
         return self._async.impacts(path, max_depth)
 
-    def path_between(self, source: str, target: str) -> list[Ref] | None:
+    def path_between(self, source: str, target: str) -> GraphResult:
         return self._async.path_between(source, target)
 
-    def contains(self, path: str) -> list[Ref]:
+    def contains(self, path: str) -> GraphResult:
         return self._async.contains(path)
 
     # ------------------------------------------------------------------
@@ -347,15 +346,15 @@ class Grover:
         *,
         personalization: dict[str, float] | None = None,
         path: str | None = None,
-    ) -> dict[str, float]:
+    ) -> GraphResult:
         """Run PageRank on the knowledge graph."""
         return self._async.pagerank(personalization=personalization, path=path)
 
-    def ancestors(self, path: str) -> set[str]:
+    def ancestors(self, path: str) -> GraphResult:
         """All transitive predecessors of *path* in the knowledge graph."""
         return self._async.ancestors(path)
 
-    def descendants(self, path: str) -> set[str]:
+    def descendants(self, path: str) -> GraphResult:
         """All transitive successors of *path* in the knowledge graph."""
         return self._async.descendants(path)
 
@@ -364,7 +363,7 @@ class Grover:
         paths: list[str],
         *,
         max_size: int = 50,
-    ) -> SubgraphResult:
+    ) -> GraphResult:
         """Extract the subgraph connecting *paths* via shortest paths."""
         return self._async.meeting_subgraph(paths, max_size=max_size)
 
@@ -375,7 +374,7 @@ class Grover:
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
-    ) -> SubgraphResult:
+    ) -> GraphResult:
         """Extract the neighborhood subgraph around *path*."""
         return self._async.neighborhood(
             path,
@@ -384,7 +383,7 @@ class Grover:
             edge_types=edge_types,
         )
 
-    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> list[str]:
+    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> GraphResult:
         """Find graph nodes matching all attribute predicates."""
         return self._async.find_nodes(path=path, **attrs)
 

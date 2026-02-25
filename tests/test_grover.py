@@ -14,7 +14,7 @@ import pytest
 from grover._grover import Grover
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
-from grover.search.results import VectorSearchResult
+from grover.search.results import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -200,26 +200,28 @@ class TestGroverGraph:
         # File should be in graph now
         assert grover.get_graph().has_node("/project/app.py")
         # Check dependents doesn't crash (may be empty if no other file depends on it)
-        deps = grover.dependents("/project/app.py")
-        assert isinstance(deps, list)
+        result = grover.dependents("/project/app.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
 
     def test_dependencies_after_write(self, grover: Grover):
         code = 'def greet():\n    return "hello"\n'
         grover.write("/project/greet.py", code)
         # The file should have "contains" edges to its chunks
-        deps = grover.dependencies("/project/greet.py")
-        assert isinstance(deps, list)
+        result = grover.dependencies("/project/greet.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
         # Should contain the greet function chunk
-        assert len(deps) >= 1
+        assert len(result) >= 1
 
     def test_contains_returns_chunks(self, grover: Grover):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
-        chunks = grover.contains("/project/funcs.py")
-        assert len(chunks) >= 2
-        chunk_paths = [c.path for c in chunks]
-        assert any("foo" in p for p in chunk_paths)
-        assert any("bar" in p for p in chunk_paths)
+        result = grover.contains("/project/funcs.py")
+        assert isinstance(result, GraphResult)
+        assert len(result) >= 2
+        assert any("foo" in p for p in result.paths)
+        assert any("bar" in p for p in result.paths)
 
 
 # ==================================================================

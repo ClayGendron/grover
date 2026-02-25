@@ -50,6 +50,8 @@ from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
 from grover.search.results import (
     GlobResult,
+    GraphEvidence,
+    GraphResult,
     GrepResult,
     LexicalEvidence,
     LexicalSearchResult,
@@ -68,10 +70,8 @@ if TYPE_CHECKING:
 
     from grover.fs.protocol import StorageBackend
     from grover.graph.protocols import GraphStore
-    from grover.graph.types import SubgraphResult
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
-    from grover.ref import Ref
 
 logger = logging.getLogger(__name__)
 
@@ -1751,20 +1751,35 @@ class GroverAsync:
     # Graph query wrappers (resolve mount → delegate to backend's graph)
     # ------------------------------------------------------------------
 
-    def dependents(self, path: str) -> list[Ref]:
-        return self._resolve_graph(path).dependents(path)
+    def dependents(self, path: str) -> GraphResult:
+        """Return files that depend on *path*."""
+        refs = self._resolve_graph(path).dependents(path)
+        return GraphResult.from_refs(refs, strategy="dependents")
 
-    def dependencies(self, path: str) -> list[Ref]:
-        return self._resolve_graph(path).dependencies(path)
+    def dependencies(self, path: str) -> GraphResult:
+        """Return files that *path* depends on."""
+        refs = self._resolve_graph(path).dependencies(path)
+        return GraphResult.from_refs(refs, strategy="dependencies")
 
-    def impacts(self, path: str, max_depth: int = 3) -> list[Ref]:
-        return self._resolve_graph(path).impacts(path, max_depth)
+    def impacts(self, path: str, max_depth: int = 3) -> GraphResult:
+        """Return files transitively impacted by changes to *path*."""
+        refs = self._resolve_graph(path).impacts(path, max_depth)
+        return GraphResult.from_refs(refs, strategy="impacts")
 
-    def path_between(self, source: str, target: str) -> list[Ref] | None:
-        return self._resolve_graph(source).path_between(source, target)
+    def path_between(self, source: str, target: str) -> GraphResult:
+        """Return the shortest path from *source* to *target*."""
+        refs = self._resolve_graph(source).path_between(source, target)
+        if refs is None:
+            return GraphResult(
+                success=True,
+                message="No path found",
+            )
+        return GraphResult.from_refs(refs, strategy="path_between")
 
-    def contains(self, path: str) -> list[Ref]:
-        return self._resolve_graph(path).contains(path)
+    def contains(self, path: str) -> GraphResult:
+        """Return files contained by *path*."""
+        refs = self._resolve_graph(path).contains(path)
+        return GraphResult.from_refs(refs, strategy="contains")
 
     # ------------------------------------------------------------------
     # Graph algorithm wrappers (capability-checked)
@@ -1775,7 +1790,7 @@ class GroverAsync:
         *,
         personalization: dict[str, float] | None = None,
         path: str | None = None,
-    ) -> dict[str, float]:
+    ) -> GraphResult:
         """Run PageRank on the knowledge graph.
 
         *path* selects which mount's graph to use (defaults to first visible).
@@ -1788,9 +1803,23 @@ class GroverAsync:
         if not isinstance(graph, SupportsCentrality):
             msg = "Graph backend does not support centrality algorithms"
             raise CapabilityNotSupportedError(msg)
-        return graph.pagerank(personalization=personalization)
+        scores = graph.pagerank(personalization=personalization)
+        entries: dict[str, list[Any]] = {}
+        for node_path in scores:
+            entries[node_path] = [
+                GraphEvidence(
+                    strategy="pagerank",
+                    path=node_path,
+                    algorithm="pagerank",
+                )
+            ]
+        return GraphResult(
+            success=True,
+            message=f"PageRank computed for {len(entries)} node(s)",
+            _entries=entries,
+        )
 
-    def ancestors(self, path: str) -> set[str]:
+    def ancestors(self, path: str) -> GraphResult:
         """All transitive predecessors of *path* in the knowledge graph."""
         from grover.graph.protocols import SupportsTraversal
 
@@ -1798,9 +1827,10 @@ class GroverAsync:
         if not isinstance(graph, SupportsTraversal):
             msg = "Graph backend does not support traversal algorithms"
             raise CapabilityNotSupportedError(msg)
-        return graph.ancestors(path)
+        node_set = graph.ancestors(path)
+        return GraphResult.from_paths(sorted(node_set), strategy="ancestors")
 
-    def descendants(self, path: str) -> set[str]:
+    def descendants(self, path: str) -> GraphResult:
         """All transitive successors of *path* in the knowledge graph."""
         from grover.graph.protocols import SupportsTraversal
 
@@ -1808,14 +1838,15 @@ class GroverAsync:
         if not isinstance(graph, SupportsTraversal):
             msg = "Graph backend does not support traversal algorithms"
             raise CapabilityNotSupportedError(msg)
-        return graph.descendants(path)
+        node_set = graph.descendants(path)
+        return GraphResult.from_paths(sorted(node_set), strategy="descendants")
 
     def meeting_subgraph(
         self,
         paths: list[str],
         *,
         max_size: int = 50,
-    ) -> SubgraphResult:
+    ) -> GraphResult:
         """Extract the subgraph connecting *paths* via shortest paths."""
         from grover.graph.protocols import SupportsSubgraph
 
@@ -1823,7 +1854,8 @@ class GroverAsync:
         if not isinstance(graph, SupportsSubgraph):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
-        return graph.meeting_subgraph(paths, max_size=max_size)
+        sub = graph.meeting_subgraph(paths, max_size=max_size)
+        return GraphResult.from_paths(sorted(sub.nodes), strategy="meeting_subgraph")
 
     def neighborhood(
         self,
@@ -1832,7 +1864,7 @@ class GroverAsync:
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
-    ) -> SubgraphResult:
+    ) -> GraphResult:
         """Extract the neighborhood subgraph around *path*."""
         from grover.graph.protocols import SupportsSubgraph
 
@@ -1840,14 +1872,15 @@ class GroverAsync:
         if not isinstance(graph, SupportsSubgraph):
             msg = "Graph backend does not support subgraph extraction"
             raise CapabilityNotSupportedError(msg)
-        return graph.neighborhood(
+        sub = graph.neighborhood(
             path,
             max_depth=max_depth,
             direction=direction,
             edge_types=edge_types,
         )
+        return GraphResult.from_paths(sorted(sub.nodes), strategy="neighborhood")
 
-    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> list[str]:
+    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> GraphResult:
         """Find graph nodes matching all attribute predicates."""
         from grover.graph.protocols import SupportsFiltering
 
@@ -1855,7 +1888,8 @@ class GroverAsync:
         if not isinstance(graph, SupportsFiltering):
             msg = "Graph backend does not support filtering"
             raise CapabilityNotSupportedError(msg)
-        return graph.find_nodes(**attrs)
+        node_list = graph.find_nodes(**attrs)
+        return GraphResult.from_paths(node_list, strategy="find_nodes")
 
     # ------------------------------------------------------------------
     # Search

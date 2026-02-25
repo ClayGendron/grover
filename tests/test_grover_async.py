@@ -11,8 +11,7 @@ import pytest
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
-from grover.ref import Ref
-from grover.search.results import VectorSearchResult
+from grover.search.results import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -274,11 +273,12 @@ class TestGroverAsyncGraph:
         assert grover.get_graph().has_node("/project/mod.py")
 
     @pytest.mark.asyncio
-    async def test_contains_returns_chunks(self, grover: GroverAsync):
+    async def test_contains_returns_graph_result(self, grover: GroverAsync):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await grover.write("/project/funcs.py", code)
-        chunks = grover.contains("/project/funcs.py")
-        assert len(chunks) >= 2
+        result = grover.contains("/project/funcs.py")
+        assert isinstance(result, GraphResult)
+        assert len(result) >= 2
 
     @pytest.mark.asyncio
     async def test_delete_removes_from_graph(self, grover: GroverAsync):
@@ -413,29 +413,28 @@ class TestGroverAsyncProperties:
 
 class TestGroverAsyncGraphQueries:
     @pytest.mark.asyncio
-    async def test_dependents_returns_refs(self, grover: GroverAsync):
+    async def test_dependents_returns_graph_result(self, grover: GroverAsync):
         await grover.write("/project/lib.py", "def helper():\n    return 42\n")
         await grover.write(
             "/project/main.py",
             "from lib import helper\n\ndef run():\n    return helper()\n",
         )
-        deps = grover.dependents("/project/lib.py")
+        result = grover.dependents("/project/lib.py")
         # main.py imports lib.py, so main.py is a dependent
         # The graph stores "imports" edges from analyzer
-        assert isinstance(deps, list)
-        # All items are Refs
-        assert all(isinstance(r, Ref) for r in deps)
+        assert isinstance(result, GraphResult)
+        assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_dependencies_returns_refs(self, grover: GroverAsync):
+    async def test_dependencies_returns_graph_result(self, grover: GroverAsync):
         await grover.write("/project/dep.py", "def util():\n    pass\n")
         await grover.write(
             "/project/consumer.py",
             "from dep import util\n\ndef main():\n    util()\n",
         )
-        deps = grover.dependencies("/project/consumer.py")
-        assert isinstance(deps, list)
-        assert all(isinstance(r, Ref) for r in deps)
+        result = grover.dependencies("/project/consumer.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_impacts_transitive(self, grover: GroverAsync):
@@ -445,8 +444,9 @@ class TestGroverAsyncGraphQueries:
             "/project/a.py",
             "from b import get\n\ndef run():\n    return get()\n",
         )
-        imp = grover.impacts("/project/c.py")
-        assert isinstance(imp, list)
+        result = grover.impacts("/project/c.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_path_between_found(self, grover: GroverAsync):
@@ -459,18 +459,22 @@ class TestGroverAsyncGraphQueries:
             "/project/end.py",
             "from mid import mid\n\ndef end():\n    return mid()\n",
         )
-        path = grover.path_between("/project/end.py", "/project/start.py")
+        result = grover.path_between("/project/end.py", "/project/start.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
         # May or may not find a path depending on import analysis depth
-        if path is not None:
-            assert isinstance(path, list)
-            assert all(isinstance(r, Ref) for r in path)
+        # If path found, result.paths will be non-empty
+        if len(result) > 0:
+            assert len(result.paths) > 0
 
     @pytest.mark.asyncio
     async def test_path_between_none(self, grover: GroverAsync):
         await grover.write("/project/island_a.py", "A = 1\n")
         await grover.write("/project/island_b.py", "B = 2\n")
-        path = grover.path_between("/project/island_a.py", "/project/island_b.py")
-        assert path is None
+        result = grover.path_between("/project/island_a.py", "/project/island_b.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
+        assert len(result) == 0
 
 
 # ==================================================================

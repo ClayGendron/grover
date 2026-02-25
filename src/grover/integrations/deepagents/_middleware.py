@@ -16,21 +16,18 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------
 
 
-def _format_ref_list(refs: list, label: str) -> str:
-    """Format a list of Ref objects into a readable string."""
-    if not refs:
-        return f"No {label} found."
-    lines = [f"Found {len(refs)} {label}:"]
-    for ref in refs:
-        line = f"  - {ref.path}"
-        if ref.version is not None:
-            line += f" (v{ref.version})"
-        if ref.line_start is not None:
-            line += f" L{ref.line_start}"
-            if ref.line_end is not None:
-                line += f"-{ref.line_end}"
-        lines.append(line)
-    return "\n".join(lines)
+def _format_graph_result(result: object, label: str) -> str:
+    """Format a GraphResult into a readable string."""
+    from grover.search.results import GraphResult
+
+    if isinstance(result, GraphResult):
+        if len(result) == 0:
+            return f"No {label} found."
+        lines = [f"Found {len(result)} {label}:"]
+        lines.extend(f"  - {path}" for path in result.paths)
+        return "\n".join(lines)
+    # Fallback for any unexpected type
+    return f"No {label} found."
 
 
 # ------------------------------------------------------------------
@@ -323,10 +320,10 @@ class GroverMiddleware(AgentMiddleware):
             path: Annotated[str, "Absolute virtual path to the file"],
         ) -> str:
             try:
-                refs = grover.dependencies(path)
+                result = grover.dependencies(path)
             except Exception as e:
                 return f"Error: {e}"
-            return _format_ref_list(refs, "dependencies")
+            return _format_graph_result(result, "dependencies")
 
         return StructuredTool.from_function(
             name="dependencies",
@@ -344,10 +341,10 @@ class GroverMiddleware(AgentMiddleware):
             path: Annotated[str, "Absolute virtual path to the file"],
         ) -> str:
             try:
-                refs = grover.dependents(path)
+                result = grover.dependents(path)
             except Exception as e:
                 return f"Error: {e}"
-            return _format_ref_list(refs, "dependents")
+            return _format_graph_result(result, "dependents")
 
         return StructuredTool.from_function(
             name="dependents",
@@ -367,10 +364,10 @@ class GroverMiddleware(AgentMiddleware):
             max_depth: Annotated[int, "Maximum depth for transitive impact analysis"] = 3,
         ) -> str:
             try:
-                refs = grover.impacts(path, max_depth=max_depth)
+                result = grover.impacts(path, max_depth=max_depth)
             except Exception as e:
                 return f"Error: {e}"
-            return _format_ref_list(refs, "impacted files")
+            return _format_graph_result(result, "impacted files")
 
         return StructuredTool.from_function(
             name="impacts",

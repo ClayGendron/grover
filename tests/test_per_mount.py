@@ -12,6 +12,7 @@ from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.graph import RustworkxGraph
 from grover.search._engine import SearchEngine
+from grover.search.results import GraphResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -239,23 +240,26 @@ class TestGraphOpsResolveMount:
     async def test_dependents_resolves_mount(self, multi_grover: GroverAsync):
         """dependents() uses the correct mount's graph."""
         await multi_grover.write("/mount1/lib.py", "def helper():\n    return 42\n")
-        deps = multi_grover.dependents("/mount1/lib.py")
-        assert isinstance(deps, list)
+        result = multi_grover.dependents("/mount1/lib.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_dependencies_resolves_mount(self, multi_grover: GroverAsync):
         """dependencies() uses the correct mount's graph."""
         await multi_grover.write("/mount2/consumer.py", "def main():\n    pass\n")
-        deps = multi_grover.dependencies("/mount2/consumer.py")
-        assert isinstance(deps, list)
+        result = multi_grover.dependencies("/mount2/consumer.py")
+        assert isinstance(result, GraphResult)
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_contains_resolves_mount(self, multi_grover: GroverAsync):
         """contains() uses the correct mount's graph."""
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await multi_grover.write("/mount1/funcs.py", code)
-        chunks = multi_grover.contains("/mount1/funcs.py")
-        assert len(chunks) >= 2
+        result = multi_grover.contains("/mount1/funcs.py")
+        assert isinstance(result, GraphResult)
+        assert len(result) >= 2
 
 
 # ==================================================================
