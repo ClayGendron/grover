@@ -154,9 +154,6 @@ class TestGroverFilesystem:
         grover.write("/project/yes.txt", "yes")
         assert grover.exists("/project/yes.txt")
 
-    def test_fs_property(self, grover: Grover):
-        assert grover.fs is grover._async._vfs
-
     def test_write_overwrite_false_fails_when_exists(self, grover: Grover):
         grover.write("/project/exists.txt", "original")
         result = grover.write("/project/exists.txt", "new", overwrite=False)

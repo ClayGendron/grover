@@ -1,4 +1,4 @@
-"""Tests for glob, grep, and tree operations on DatabaseFS, LocalFS, and VFS."""
+"""Tests for glob, grep, and tree operations on DatabaseFS, LocalFS, and GroverAsync."""
 
 from __future__ import annotations
 
@@ -8,11 +8,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
+from grover._grover_async import GroverAsync
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.utils import glob_to_sql_like, match_glob
-from grover.fs.vfs import VFS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -637,13 +636,13 @@ class TestLocalTree:
 
 
 # =========================================================================
-# VFS cross-mount aggregation
+# GroverAsync cross-mount aggregation
 # =========================================================================
 
 
 @pytest.fixture
-async def vfs_setup(tmp_path: Path) -> AsyncIterator[tuple[VFS, AsyncEngine]]:
-    """VFS with a DatabaseFS at /db and a LocalFS at /local."""
+async def grover_setup(tmp_path: Path) -> AsyncIterator[tuple[GroverAsync, AsyncEngine]]:
+    """GroverAsync with a DatabaseFS at /db and a LocalFS at /local."""
     # DB backend
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
@@ -655,86 +654,75 @@ async def vfs_setup(tmp_path: Path) -> AsyncIterator[tuple[VFS, AsyncEngine]]:
     # Local backend
     local_dir = tmp_path / "workspace"
     local_dir.mkdir()
-    data_dir = tmp_path / ".grover_vfs"
-    lfs = LocalFileSystem(workspace_dir=local_dir, data_dir=data_dir)
-    await lfs.open()
+    data_dir = tmp_path / ".grover_data"
 
-    registry = MountRegistry()
-    registry.add_mount(
-        MountConfig(
-            mount_path="/db",
-            backend=dfs,
-            session_factory=db_factory,
-            mount_type="database",
-        )
-    )
-    registry.add_mount(
-        MountConfig(
-            mount_path="/local",
-            backend=lfs,
-            session_factory=lfs.session_factory,
-            mount_type="local",
-        )
-    )
-
-    vfs = VFS(registry)
+    g = GroverAsync(data_dir=str(data_dir))
+    await g.mount("/db", dfs, session_factory=db_factory)
+    lfs = LocalFileSystem(workspace_dir=local_dir, data_dir=data_dir / "local")
+    await g.mount("/local", lfs)
 
     # Seed both mounts
-    await vfs.write("/db/hello.py", "print('hello from db')\n")
-    await vfs.write("/db/data.txt", "some data\n")
-    await vfs.write("/local/world.py", "print('hello from local')\n")
-    await vfs.write("/local/notes.txt", "notes here\n")
+    await g.write("/db/hello.py", "print('hello from db')\n")
+    await g.write("/db/data.txt", "some data\n")
+    await g.write("/local/world.py", "print('hello from local')\n")
+    await g.write("/local/notes.txt", "notes here\n")
 
-    yield vfs, engine
+    yield g, engine
 
-    await lfs.close()
+    await g.close()
     await engine.dispose()
 
 
-class TestVfsGlob:
-    async def test_root_glob_aggregates(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.glob("**/*.py", "/")
+class TestGroverGlob:
+    async def test_root_glob_aggregates(
+        self, grover_setup: tuple[GroverAsync, AsyncEngine]
+    ) -> None:
+        grover, _ = grover_setup
+        result = await grover.glob("**/*.py", "/")
         assert result.success
         paths = set(result.paths)
         assert "/db/hello.py" in paths
         assert "/local/world.py" in paths
 
-    async def test_mount_specific_glob(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.glob("*.py", "/db")
+    async def test_mount_specific_glob(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.glob("*.py", "/db")
         assert result.success
         paths = set(result.paths)
         assert "/db/hello.py" in paths
         assert "/local/world.py" not in paths
 
 
-class TestVfsGrep:
-    async def test_root_grep_aggregates(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.grep("hello")
+class TestGroverGrep:
+    async def test_root_grep_aggregates(
+        self, grover_setup: tuple[GroverAsync, AsyncEngine]
+    ) -> None:
+        grover, _ = grover_setup
+        result = await grover.grep("hello")
         assert result.success
         file_paths = set(result.paths)
         assert "/db/hello.py" in file_paths
         assert "/local/world.py" in file_paths
 
-    async def test_mount_specific_grep(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.grep("hello", "/db")
+    async def test_mount_specific_grep(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.grep("hello", "/db")
         assert result.success
         file_paths = set(result.paths)
         assert "/db/hello.py" in file_paths
         assert "/local/world.py" not in file_paths
 
-    async def test_max_results_across_mounts(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.grep(".", "/", max_results=1)
+    async def test_max_results_across_mounts(
+        self, grover_setup: tuple[GroverAsync, AsyncEngine]
+    ) -> None:
+        grover, _ = grover_setup
+        result = await grover.grep(".", "/", max_results=1)
         assert result.success
         assert len(result.all_matches()) <= 1
 
-    async def test_count_only_at_root(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.grep("hello", "/", count_only=True)
+    async def test_count_only_at_root(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.grep("hello", "/", count_only=True)
         assert result.success
         assert "Count:" in result.message
         assert len(result.all_matches()) == 0
@@ -744,10 +732,12 @@ class TestVfsGrep:
         assert result.files_matched >= 2
 
 
-class TestVfsTree:
-    async def test_root_tree_includes_mounts(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.tree("/")
+class TestGroverTree:
+    async def test_root_tree_includes_mounts(
+        self, grover_setup: tuple[GroverAsync, AsyncEngine]
+    ) -> None:
+        grover, _ = grover_setup
+        result = await grover.tree("/")
         assert result.success
         paths = set(result.paths)
         # Mount roots should be present
@@ -757,17 +747,19 @@ class TestVfsTree:
         assert "/db/hello.py" in paths
         assert "/local/world.py" in paths
 
-    async def test_mount_specific_tree(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.tree("/db")
+    async def test_mount_specific_tree(self, grover_setup: tuple[GroverAsync, AsyncEngine]) -> None:
+        grover, _ = grover_setup
+        result = await grover.tree("/db")
         assert result.success
         paths = set(result.paths)
         assert "/db/hello.py" in paths
         assert "/local/world.py" not in paths
 
-    async def test_root_tree_max_depth_0(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.tree("/", max_depth=0)
+    async def test_root_tree_max_depth_0(
+        self, grover_setup: tuple[GroverAsync, AsyncEngine]
+    ) -> None:
+        grover, _ = grover_setup
+        result = await grover.tree("/", max_depth=0)
         assert result.success
         # With depth 0 at root, should only show mount roots (no children)
         paths = set(result.paths)
@@ -777,9 +769,11 @@ class TestVfsTree:
         # No files inside mounts
         assert "/db/hello.py" not in paths
 
-    async def test_root_tree_max_depth_1(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
-        vfs, _ = vfs_setup
-        result = await vfs.tree("/", max_depth=1)
+    async def test_root_tree_max_depth_1(
+        self, grover_setup: tuple[GroverAsync, AsyncEngine]
+    ) -> None:
+        grover, _ = grover_setup
+        result = await grover.tree("/", max_depth=1)
         assert result.success
         paths = set(result.paths)
         # Mount roots (depth 0) and their children (depth 1)

@@ -1,4 +1,4 @@
-"""Tests for capability protocols, VFS capability gating, and session handling."""
+"""Tests for capability protocols, GroverAsync capability gating, and session handling."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
+from grover._grover_async import GroverAsync
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.exceptions import CapabilityNotSupportedError, GroverError
+from grover.fs.exceptions import GroverError
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.protocol import (
     StorageBackend,
     SupportsReconcile,
@@ -28,7 +28,6 @@ from grover.fs.types import (
     ReadResult,
     WriteResult,
 )
-from grover.fs.vfs import VFS
 from grover.search.results import GlobResult, GrepResult, TreeResult
 
 if TYPE_CHECKING:
@@ -275,84 +274,83 @@ class TestProtocolChecks:
 
 
 # =========================================================================
-# VFS with MinimalBackend — capability gating
+# GroverAsync with MinimalBackend — capability gating
 # =========================================================================
 
 
 @pytest.fixture
-def minimal_vfs():
-    """VFS with a single MinimalBackend at /mem (no session_factory)."""
-    backend = MinimalBackend()
-    registry = MountRegistry()
-    registry.add_mount(
-        MountConfig(
-            mount_path="/mem",
-            backend=backend,
-            session_factory=None,
-            mount_type="memory",
-        )
-    )
-    return VFS(registry)
+async def minimal_grover(tmp_path: Path):
+    """GroverAsync with a single MinimalBackend at /mem (no session_factory)."""
+    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+    await g.mount("/mem", MinimalBackend())
+    yield g
+    await g.close()
 
 
 class TestCapabilityGating:
-    """VFS raises CapabilityNotSupportedError for unsupported capabilities."""
+    """GroverAsync returns failure results for unsupported capabilities."""
 
-    async def test_core_ops_work(self, minimal_vfs: VFS) -> None:
-        """MinimalBackend handles basic CRUD through VFS."""
-        result = await minimal_vfs.write("/mem/hello.txt", "hi")
+    async def test_core_ops_work(self, minimal_grover: GroverAsync) -> None:
+        """MinimalBackend handles basic CRUD through GroverAsync."""
+        result = await minimal_grover.write("/mem/hello.txt", "hi")
         assert result.success
 
-        read = await minimal_vfs.read("/mem/hello.txt")
+        read = await minimal_grover.read("/mem/hello.txt")
         assert read.success
         assert read.content == "hi"
 
-        assert await minimal_vfs.exists("/mem/hello.txt")
+        assert await minimal_grover.exists("/mem/hello.txt")
 
-    async def test_list_versions_raises(self, minimal_vfs: VFS) -> None:
-        with pytest.raises(CapabilityNotSupportedError, match="does not support versioning"):
-            await minimal_vfs.list_versions("/mem/hello.txt")
+    async def test_list_versions_returns_failure(self, minimal_grover: GroverAsync) -> None:
+        result = await minimal_grover.list_versions("/mem/hello.txt")
+        assert result.success is False
+        assert "does not support versioning" in result.message
 
-    async def test_get_version_content_raises(self, minimal_vfs: VFS) -> None:
-        with pytest.raises(CapabilityNotSupportedError, match="does not support versioning"):
-            await minimal_vfs.get_version_content("/mem/hello.txt", 1)
+    async def test_get_version_content_returns_failure(self, minimal_grover: GroverAsync) -> None:
+        result = await minimal_grover.get_version_content("/mem/hello.txt", 1)
+        assert result.success is False
+        assert "does not support versioning" in result.message
 
-    async def test_restore_version_raises(self, minimal_vfs: VFS) -> None:
-        with pytest.raises(CapabilityNotSupportedError, match="does not support versioning"):
-            await minimal_vfs.restore_version("/mem/hello.txt", 1)
+    async def test_restore_version_returns_failure(self, minimal_grover: GroverAsync) -> None:
+        result = await minimal_grover.restore_version("/mem/hello.txt", 1)
+        assert result.success is False
+        assert "does not support versioning" in result.message
 
-    async def test_restore_from_trash_raises(self, minimal_vfs: VFS) -> None:
-        with pytest.raises(CapabilityNotSupportedError, match="does not support trash"):
-            await minimal_vfs.restore_from_trash("/mem/hello.txt")
+    async def test_restore_from_trash_returns_failure(self, minimal_grover: GroverAsync) -> None:
+        result = await minimal_grover.restore_from_trash("/mem/hello.txt")
+        assert result.success is False
+        assert "does not support trash" in result.message
 
-    async def test_delete_without_trash_rejects_soft_delete(self, minimal_vfs: VFS) -> None:
+    async def test_delete_without_trash_rejects_soft_delete(
+        self, minimal_grover: GroverAsync
+    ) -> None:
         """delete(permanent=False) on non-trash backend returns failure, not raise."""
-        await minimal_vfs.write("/mem/hello.txt", "hi")
-        result = await minimal_vfs.delete("/mem/hello.txt", permanent=False)
+        await minimal_grover.write("/mem/hello.txt", "hi")
+        result = await minimal_grover.delete("/mem/hello.txt", permanent=False)
         assert not result.success
         assert "Trash not supported" in result.message
 
-    async def test_delete_permanent_works(self, minimal_vfs: VFS) -> None:
+    async def test_delete_permanent_works(self, minimal_grover: GroverAsync) -> None:
         """delete(permanent=True) bypasses trash check."""
-        await minimal_vfs.write("/mem/hello.txt", "hi")
-        result = await minimal_vfs.delete("/mem/hello.txt", permanent=True)
+        await minimal_grover.write("/mem/hello.txt", "hi")
+        result = await minimal_grover.delete("/mem/hello.txt", permanent=True)
         assert result.success
 
-    async def test_list_trash_skips_unsupported(self, minimal_vfs: VFS) -> None:
+    async def test_list_trash_skips_unsupported(self, minimal_grover: GroverAsync) -> None:
         """Aggregation endpoint skips unsupported mounts, returns empty."""
-        result = await minimal_vfs.list_trash()
+        result = await minimal_grover.list_trash()
         assert result.success
         assert len(result.entries) == 0
 
-    async def test_empty_trash_skips_unsupported(self, minimal_vfs: VFS) -> None:
+    async def test_empty_trash_skips_unsupported(self, minimal_grover: GroverAsync) -> None:
         """Aggregation endpoint skips unsupported mounts, returns success."""
-        result = await minimal_vfs.empty_trash()
+        result = await minimal_grover.empty_trash()
         assert result.success
         assert result.total_deleted == 0
 
-    async def test_reconcile_skips_unsupported(self, minimal_vfs: VFS) -> None:
+    async def test_reconcile_skips_unsupported(self, minimal_grover: GroverAsync) -> None:
         """Reconcile skips non-reconcilable backends."""
-        stats = await minimal_vfs.reconcile()
+        stats = await minimal_grover.reconcile()
         assert stats == {"created": 0, "updated": 0, "deleted": 0}
 
 
@@ -362,67 +360,49 @@ class TestCapabilityGating:
 
 
 class TestMixedMounts:
-    """VFS with both a SQL backend and a MinimalBackend."""
+    """GroverAsync with both a SQL backend and a MinimalBackend."""
 
     @pytest.fixture
-    async def mixed_vfs(self):
+    async def mixed_grover(self, tmp_path: Path):
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        dfs = DatabaseFileSystem(dialect="sqlite")
 
-        minimal = MinimalBackend()
-
-        registry = MountRegistry()
-        registry.add_mount(
-            MountConfig(
-                mount_path="/db",
-                backend=dfs,
-                session_factory=factory,
-                mount_type="vfs",
-            )
-        )
-        registry.add_mount(
-            MountConfig(
-                mount_path="/mem",
-                backend=minimal,
-                session_factory=None,
-                mount_type="memory",
-            )
-        )
-
-        vfs = VFS(registry)
-        yield vfs
-        await vfs.close()
+        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        await g.mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
+        await g.mount("/mem", MinimalBackend())
+        yield g
+        await g.close()
         await engine.dispose()
 
-    async def test_list_trash_aggregates_across_mounts(self, mixed_vfs: VFS) -> None:
+    async def test_list_trash_aggregates_across_mounts(self, mixed_grover: GroverAsync) -> None:
         """list_trash aggregates trash-capable mounts, skips others."""
-        await mixed_vfs.write("/db/a.txt", "content")
-        await mixed_vfs.delete("/db/a.txt")  # soft-delete
+        await mixed_grover.write("/db/a.txt", "content")
+        await mixed_grover.delete("/db/a.txt")  # soft-delete
 
-        result = await mixed_vfs.list_trash()
+        result = await mixed_grover.list_trash()
         assert result.success
         # Should have the DFS trashed file, MinimalBackend skipped
         assert len(result.entries) == 1
 
-    async def test_versioning_works_on_sql_mount(self, mixed_vfs: VFS) -> None:
-        await mixed_vfs.write("/db/a.txt", "v1")
-        await mixed_vfs.write("/db/a.txt", "v2")
-        result = await mixed_vfs.list_versions("/db/a.txt")
+    async def test_versioning_works_on_sql_mount(self, mixed_grover: GroverAsync) -> None:
+        await mixed_grover.write("/db/a.txt", "v1")
+        await mixed_grover.write("/db/a.txt", "v2")
+        result = await mixed_grover.list_versions("/db/a.txt")
         assert result.success
         assert len(result.versions) == 2
 
-    async def test_versioning_fails_on_minimal_mount(self, mixed_vfs: VFS) -> None:
-        await mixed_vfs.write("/mem/a.txt", "v1")
-        with pytest.raises(CapabilityNotSupportedError):
-            await mixed_vfs.list_versions("/mem/a.txt")
+    async def test_versioning_fails_on_minimal_mount(self, mixed_grover: GroverAsync) -> None:
+        await mixed_grover.write("/mem/a.txt", "v1")
+        result = await mixed_grover.list_versions("/mem/a.txt")
+        assert result.success is False
+        assert "does not support versioning" in result.message
 
 
 # =========================================================================
-# VFS session rollback
+# GroverAsync session rollback
 # =========================================================================
 
 
@@ -443,46 +423,37 @@ class _FailingBackend(MinimalBackend):
         raise RuntimeError("Simulated backend failure")
 
 
-class TestVFSSessionRollback:
-    """Test that VFS session_for rolls back on backend exception."""
+class TestSessionRollback:
+    """Test that GroverAsync._session_for rolls back on backend exception."""
 
     @pytest.fixture
-    async def rollback_vfs(self):
-        """VFS with a DFS mount where we can verify rollback."""
+    async def rollback_grover(self, tmp_path: Path):
+        """GroverAsync with a DFS mount where we can verify rollback."""
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        dfs = DatabaseFileSystem(dialect="sqlite")
 
-        registry = MountRegistry()
-        registry.add_mount(
-            MountConfig(
-                mount_path="/db",
-                backend=dfs,
-                session_factory=factory,
-                mount_type="vfs",
-            )
-        )
-        vfs = VFS(registry)
-        yield vfs, factory
-        await vfs.close()
+        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        await g.mount("/db", DatabaseFileSystem(dialect="sqlite"), session_factory=factory)
+        yield g, factory
+        await g.close()
         await engine.dispose()
 
     async def test_backend_exception_triggers_rollback(
         self,
-        rollback_vfs: tuple[VFS, async_sessionmaker],
+        rollback_grover: tuple[GroverAsync, async_sessionmaker],
     ) -> None:
-        """Write succeeds, then a forced failure rolls back — original intact."""
-        vfs, _factory = rollback_vfs
+        """Write succeeds, then a forced failure rolls back -- original intact."""
+        grover, _factory = rollback_grover
 
-        # Successful write — committed
-        result = await vfs.write("/db/test.txt", "original")
+        # Successful write -- committed
+        result = await grover.write("/db/test.txt", "original")
         assert result.success
 
         # Resolve the mount and monkey-patch the backend to raise on write
-        mount, _ = vfs._registry.resolve("/db/test.txt")
+        mount, _ = grover._registry.resolve("/db/test.txt")
         original_write = mount.backend.write
 
         async def _exploding_write(*args, **kwargs):
@@ -492,33 +463,25 @@ class TestVFSSessionRollback:
         mount.backend.write = _exploding_write  # type: ignore[assignment]
 
         try:
-            # This should raise, and session_for should rollback
-            with pytest.raises(RuntimeError, match="Simulated mid-write failure"):
-                await vfs.write("/db/test.txt", "corrupted")
+            # This should return failure (GroverAsync.write catches exceptions)
+            result = await grover.write("/db/test.txt", "corrupted")
+            assert not result.success
 
             # Original content must still be intact (session was rolled back)
-            read = await vfs.read("/db/test.txt")
+            read = await grover.read("/db/test.txt")
             assert read.success
             assert read.content == "original"
         finally:
             mount.backend.write = original_write  # type: ignore[assignment]
 
-    async def test_failing_backend_propagates_exception(self) -> None:
-        """VFS propagates backend exceptions (not swallowed)."""
-        backend = _FailingBackend()
-        registry = MountRegistry()
-        registry.add_mount(
-            MountConfig(
-                mount_path="/fail",
-                backend=backend,
-                session_factory=None,
-                mount_type="memory",
-            )
-        )
-        vfs = VFS(registry)
+    async def test_failing_backend_returns_failure(self, tmp_path: Path) -> None:
+        """GroverAsync returns failure result for backend exceptions."""
+        g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
+        await g.mount("/fail", _FailingBackend())
 
-        with pytest.raises(RuntimeError, match="Simulated backend failure"):
-            await vfs.write("/fail/test.txt", "content")
+        result = await g.write("/fail/test.txt", "content")
+        assert not result.success
+        await g.close()
 
 
 # =========================================================================

@@ -106,7 +106,7 @@ class TestAnalyzeWritesChunkRows:
         backend = mount.backend
         assert isinstance(backend, SupportsFileChunks)
 
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             chunks = await backend.list_file_chunks("/project/funcs.py", session=sess)
 
         assert len(chunks) >= 2
@@ -177,7 +177,7 @@ class TestReAnalyzeReplacesChunks:
         assert isinstance(backend, SupportsFileChunks)
 
         # Check initial chunks
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             chunks_before = await backend.list_file_chunks("/project/funcs.py", session=sess)
         assert len(chunks_before) >= 2
 
@@ -194,7 +194,7 @@ def gamma():
 """
         await grover.write("/project/funcs.py", new_code)
 
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             chunks_after = await backend.list_file_chunks("/project/funcs.py", session=sess)
         names = [c.name for c in chunks_after]
         assert "alpha" in names
@@ -218,14 +218,14 @@ class TestDeleteCleansChunks:
         assert isinstance(backend, SupportsFileChunks)
 
         # Verify chunks exist
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             chunks = await backend.list_file_chunks("/project/funcs.py", session=sess)
         assert len(chunks) >= 2
 
         # Delete the file
         await grover.delete("/project/funcs.py")
 
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             chunks_after = await backend.list_file_chunks("/project/funcs.py", session=sess)
         assert len(chunks_after) == 0
 
@@ -246,7 +246,7 @@ class TestMoveReIndexesChunks:
         assert isinstance(backend, SupportsFileChunks)
 
         # Verify old chunks
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             old_chunks = await backend.list_file_chunks("/project/old.py", session=sess)
         assert len(old_chunks) >= 2
 
@@ -254,12 +254,12 @@ class TestMoveReIndexesChunks:
         await grover.move("/project/old.py", "/project/new.py")
 
         # Old chunks should be gone
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             old_chunks_after = await backend.list_file_chunks("/project/old.py", session=sess)
         assert len(old_chunks_after) == 0
 
         # New chunks should exist
-        async with grover._vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             new_chunks = await backend.list_file_chunks("/project/new.py", session=sess)
         assert len(new_chunks) >= 2
 

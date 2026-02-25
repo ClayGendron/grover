@@ -36,11 +36,9 @@ from grover.fs.types import (
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.utils import format_read_output
-from grover.fs.vfs import VFS
 from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
 
 __all__ = [
-    "VFS",
     "AuthenticationRequiredError",
     "CapabilityNotSupportedError",
     "ConsistencyError",

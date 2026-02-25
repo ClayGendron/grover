@@ -24,7 +24,6 @@ if TYPE_CHECKING:
         ShareResult,
         WriteResult,
     )
-    from grover.fs.vfs import VFS
     from grover.graph.protocols import GraphStore
     from grover.graph.types import SubgraphResult
     from grover.models.chunks import FileChunkBase
@@ -406,11 +405,6 @@ class Grover:
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
-
-    @property
-    def fs(self) -> VFS:
-        """The underlying ``VFS`` (for advanced async use)."""
-        return self._async.fs
 
     def get_graph(self, path: str | None = None) -> GraphStore:
         """Return the graph for the mount owning *path*, or the first available."""

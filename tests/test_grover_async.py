@@ -400,10 +400,6 @@ class TestGroverAsyncPersistence:
 
 class TestGroverAsyncProperties:
     @pytest.mark.asyncio
-    async def test_fs_property(self, grover: GroverAsync):
-        assert grover.fs is grover._vfs
-
-    @pytest.mark.asyncio
     async def test_get_graph(self, grover: GroverAsync):
         assert isinstance(grover.get_graph(), RustworkxGraph)
 
@@ -486,7 +482,7 @@ class TestGroverAsyncEventHandlers:
         await grover.write("/project/old.py", "def foo():\n    pass\n")
         assert grover.get_graph().has_node("/project/old.py")
 
-        result = await grover.fs.move("/project/old.py", "/project/new.py")
+        result = await grover.move("/project/old.py", "/project/new.py")
         assert result.success
         assert not grover.get_graph().has_node("/project/old.py")
         assert grover.get_graph().has_node("/project/new.py")
@@ -495,7 +491,7 @@ class TestGroverAsyncEventHandlers:
     async def test_move_updates_search_engine(self, grover: GroverAsync):
         code = 'def unique_search_target():\n    """Locate me after move."""\n    pass\n'
         await grover.write("/project/before.py", code)
-        await grover.fs.move("/project/before.py", "/project/after.py")
+        await grover.move("/project/before.py", "/project/after.py")
         has_search = any(m.search is not None for m in grover._registry.list_visible_mounts())
         if has_search:
             result = await grover.search("unique_search_target")
@@ -510,7 +506,7 @@ class TestGroverAsyncEventHandlers:
         await grover.delete("/project/restore_me.py")
         assert not grover.get_graph().has_node("/project/restore_me.py")
         # Restore it (for LocalFileSystem this is restore_from_trash)
-        result = await grover.fs.restore_from_trash("/project/restore_me.py")
+        result = await grover.restore_from_trash("/project/restore_me.py")
         if result.success:
             assert grover.get_graph().has_node("/project/restore_me.py")
 
@@ -614,7 +610,7 @@ class TestGroverAsyncUnsupportedFiles:
     @pytest.mark.asyncio
     async def test_write_grover_path_skipped(self, grover: GroverAsync):
         # Writes to /.grover/ should not create graph nodes
-        await grover.fs.write("/.grover/internal.txt", "metadata")
+        await grover.write("/.grover/internal.txt", "metadata")
         assert not grover.get_graph().has_node("/.grover/internal.txt")
 
 

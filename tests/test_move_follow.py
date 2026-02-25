@@ -6,15 +6,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from grover._grover_async import GroverAsync
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.mounts import MountConfig, MountRegistry
 from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.fs.vfs import VFS
 from grover.models.shares import FileShare
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -54,22 +54,15 @@ def sharing() -> SharingService:
 
 
 @pytest.fixture
-def vfs_with_sharing(session_factory, sharing: SharingService, engine: AsyncEngine) -> VFS:
-    """VFS with a UserScopedFileSystem backend that has a SharingService."""
-    from grover.events import EventBus
-
-    registry = MountRegistry()
-    bus = EventBus()
-    v = VFS(registry, bus)
+async def grover_with_sharing(
+    session_factory, sharing: SharingService, engine: AsyncEngine, tmp_path: Path
+) -> AsyncIterator[GroverAsync]:
+    """GroverAsync with a UserScopedFileSystem backend that has a SharingService."""
+    g = GroverAsync(data_dir=str(tmp_path / "grover_data"))
     backend = UserScopedFileSystem(sharing=sharing)
-    config = MountConfig(
-        mount_path="/ws",
-        backend=backend,
-        session_factory=session_factory,
-        mount_type="vfs",
-    )
-    registry.add_mount(config)
-    return v
+    await g.mount("/ws", backend, session_factory=session_factory)
+    yield g
+    await g.close()
 
 
 # ==================================================================
@@ -141,7 +134,7 @@ class TestMoveFileFollow:
     async def test_move_no_follow_no_version_history(
         self, dfs: DatabaseFileSystem, session_factory
     ):
-        """follow=False creates fresh file — version history starts at v1."""
+        """follow=False creates fresh file -- version history starts at v1."""
         async with session_factory() as sess:
             await dfs.write("/old.py", "v1", session=sess)
             await dfs.write("/old.py", "v2", session=sess)
@@ -185,7 +178,7 @@ class TestMoveFileFollow:
     async def test_move_no_follow_shares_stale(
         self, dfs: DatabaseFileSystem, session_factory, sharing: SharingService
     ):
-        """follow=False does NOT update share paths — they become stale."""
+        """follow=False does NOT update share paths -- they become stale."""
         async with session_factory() as sess:
             await dfs.write("/alice/doc.md", "data", session=sess)
             await sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
@@ -334,47 +327,47 @@ class TestMoveFileFollow:
 
 
 # ==================================================================
-# VFS-level tests (authenticated mounts)
+# GroverAsync-level tests (authenticated mounts)
 # ==================================================================
 
 
-class TestVFSMoveFollow:
-    """Test follow parameter through VFS with authenticated mounts."""
+class TestGroverMoveFollow:
+    """Test follow parameter through GroverAsync with authenticated mounts."""
 
     @pytest.mark.asyncio
-    async def test_vfs_move_follow_authenticated(self, vfs_with_sharing: VFS):
-        vfs = vfs_with_sharing
-        await vfs.write("/ws/notes.md", "data", user_id="alice")
-        result = await vfs.move("/ws/notes.md", "/ws/moved.md", user_id="alice", follow=True)
+    async def test_move_follow_authenticated(self, grover_with_sharing: GroverAsync):
+        grover = grover_with_sharing
+        await grover.write("/ws/notes.md", "data", user_id="alice")
+        result = await grover.move("/ws/notes.md", "/ws/moved.md", user_id="alice", follow=True)
         assert result.success is True
         assert result.new_path == "/ws/moved.md"
 
-        r = await vfs.read("/ws/moved.md", user_id="alice")
+        r = await grover.read("/ws/moved.md", user_id="alice")
         assert r.success
         assert r.content == "data"
 
     @pytest.mark.asyncio
-    async def test_vfs_move_follow_shares_updated(self, vfs_with_sharing: VFS):
-        """VFS passes sharing through to backend when follow=True."""
-        vfs = vfs_with_sharing
-        mount = vfs._registry.get_mount("/ws")
+    async def test_move_follow_shares_updated(self, grover_with_sharing: GroverAsync):
+        """GroverAsync passes sharing through to backend when follow=True."""
+        grover = grover_with_sharing
+        mount = grover._registry.get_mount("/ws")
         assert mount is not None
 
-        await vfs.write("/ws/doc.md", "content", user_id="alice")
+        await grover.write("/ws/doc.md", "content", user_id="alice")
 
         # Create share at stored path level
         backend = mount.backend
         assert isinstance(backend, UserScopedFileSystem)
-        async with vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
             await backend._sharing.create_share(sess, "/alice/doc.md", "bob", "read", "alice")
 
-        result = await vfs.move("/ws/doc.md", "/ws/renamed.md", user_id="alice", follow=True)
+        result = await grover.move("/ws/doc.md", "/ws/renamed.md", user_id="alice", follow=True)
         assert result.success is True
 
         # Verify share updated
-        async with vfs.session_for(mount) as sess:
+        async with grover._session_for(mount) as sess:
             assert sess is not None
             assert backend._sharing is not None
             new_shares = await backend._sharing.list_shares_on_path(sess, "/alice/renamed.md")
@@ -383,13 +376,13 @@ class TestVFSMoveFollow:
             assert len(old_shares) == 0
 
     @pytest.mark.asyncio
-    async def test_vfs_move_default_no_follow(self, vfs_with_sharing: VFS):
+    async def test_move_default_no_follow(self, grover_with_sharing: GroverAsync):
         """Default move (follow=False) creates clean break."""
-        vfs = vfs_with_sharing
-        await vfs.write("/ws/old.md", "old", user_id="alice")
-        result = await vfs.move("/ws/old.md", "/ws/new.md", user_id="alice")
+        grover = grover_with_sharing
+        await grover.write("/ws/old.md", "old", user_id="alice")
+        result = await grover.move("/ws/old.md", "/ws/new.md", user_id="alice")
         assert result.success is True
 
-        r = await vfs.read("/ws/new.md", user_id="alice")
+        r = await grover.read("/ws/new.md", user_id="alice")
         assert r.success
         assert r.content == "old"
