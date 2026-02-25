@@ -1,9 +1,16 @@
-"""Result types: ReadResult, WriteResult, EditResult, etc."""
+"""Result types: ReadResult, WriteResult, EditResult, etc.
+
+All content-operation result types subclass ``FileOperationResult``
+from ``grover.results``. The base class provides ``success: bool``
+and ``message: str``.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from grover.results import FileOperationResult
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -37,11 +44,9 @@ class VersionInfo:
 
 
 @dataclass
-class ReadResult:
+class ReadResult(FileOperationResult):
     """Result of a read operation."""
 
-    success: bool
-    message: str
     content: str | None = None
     file_path: str | None = None
     total_lines: int | None = None
@@ -51,84 +56,68 @@ class ReadResult:
 
 
 @dataclass
-class WriteResult:
+class WriteResult(FileOperationResult):
     """Result of a write operation."""
 
-    success: bool
-    message: str
     file_path: str | None = None
     created: bool = False
     version: int = 1
 
 
 @dataclass
-class EditResult:
+class EditResult(FileOperationResult):
     """Result of an edit operation."""
 
-    success: bool
-    message: str
     file_path: str | None = None
     version: int = 1
 
 
 @dataclass
-class DeleteResult:
+class DeleteResult(FileOperationResult):
     """Result of a delete operation."""
 
-    success: bool
-    message: str
     file_path: str | None = None
     permanent: bool = False
     total_deleted: int | None = None
 
 
 @dataclass
-class MkdirResult:
+class MkdirResult(FileOperationResult):
     """Result of a mkdir operation."""
 
-    success: bool
-    message: str
     path: str | None = None
     created_dirs: list[str] = field(default_factory=list)
 
 
 @dataclass
-class ListResult:
+class ListResult(FileOperationResult):
     """Result of a list directory operation."""
 
-    success: bool
-    message: str
     entries: list[FileInfo] = field(default_factory=list)
     path: str = "/"
 
 
 @dataclass
-class MoveResult:
+class MoveResult(FileOperationResult):
     """Result of a move operation."""
 
-    success: bool
-    message: str
     old_path: str | None = None
     new_path: str | None = None
 
 
 @dataclass
-class RestoreResult:
+class RestoreResult(FileOperationResult):
     """Result of a restore operation."""
 
-    success: bool
-    message: str
     file_path: str | None = None
     restored_version: int = 0
     current_version: int = 0
 
 
 @dataclass
-class ListVersionsResult:
+class ListVersionsResult(FileOperationResult):
     """Result of a list_versions operation."""
 
-    success: bool
-    message: str
     versions: list[VersionInfo] = field(default_factory=list)
 
 
@@ -181,11 +170,9 @@ class TreeResult:
 
 
 @dataclass
-class GetVersionContentResult:
+class GetVersionContentResult(FileOperationResult):
     """Result of a get_version_content operation."""
 
-    success: bool
-    message: str
     content: str | None = None
 
 
@@ -202,18 +189,14 @@ class ShareInfo:
 
 
 @dataclass
-class ShareResult:
+class ShareResult(FileOperationResult):
     """Result of a share/unshare operation."""
 
-    success: bool
-    message: str
     share: ShareInfo | None = None
 
 
 @dataclass
-class ListSharesResult:
+class ListSharesResult(FileOperationResult):
     """Result of a list_shares operation."""
 
-    success: bool
-    message: str
     shares: list[ShareInfo] = field(default_factory=list)
