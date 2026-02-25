@@ -213,7 +213,7 @@ class TestVFSAuthenticatedOtherOps:
         """User-scoped mount root listing includes virtual @shared/ entry."""
         await auth_vfs.write("/ws/notes.md", "content", user_id="alice")
         result = await auth_vfs.list_dir("/ws", user_id="alice")
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "@shared" in names
 
     async def test_glob_authenticated(self, auth_vfs: VFS):
@@ -221,17 +221,17 @@ class TestVFSAuthenticatedOtherOps:
         await auth_vfs.write("/ws/notes.md", "other", user_id="bob")
         result = await auth_vfs.glob("*.md", "/ws", user_id="alice")
         assert result.success is True
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/ws/notes.md" in paths
         # Bob's file should not appear
-        assert len(result.entries) == 1
+        assert len(result) == 1
 
     async def test_tree_authenticated(self, auth_vfs: VFS):
         await auth_vfs.write("/ws/a.md", "a", user_id="alice")
         await auth_vfs.write("/ws/b.md", "b", user_id="alice")
         result = await auth_vfs.tree("/ws", user_id="alice")
         assert result.success is True
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/ws/a.md" in paths
         assert "/ws/b.md" in paths
 
@@ -396,10 +396,10 @@ class TestVFSSharedListDir:
 
         result = await shared_vfs.list_dir("/ws/@shared", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "alice" in names
         assert "charlie" in names
-        assert all(e.is_directory for e in result.entries)
+        assert set(result.paths) == set(result.directories())
 
     async def test_list_dir_shared_owner(self, shared_vfs: VFS, async_session: AsyncSession):
         """/@shared/{owner} lists that owner's shared content."""
@@ -410,7 +410,7 @@ class TestVFSSharedListDir:
 
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "notes.md" in names
         assert "readme.md" in names
 
@@ -418,7 +418,7 @@ class TestVFSSharedListDir:
         """@shared list_dir with no SharingService returns empty."""
         result = await auth_vfs.list_dir("/ws/@shared", user_id="alice")
         assert result.success is True
-        assert result.entries == []
+        assert len(result) == 0
 
     async def test_list_dir_shared_owner_no_permission(
         self, shared_vfs: VFS, async_session: AsyncSession
@@ -440,7 +440,7 @@ class TestVFSSharedListDir:
 
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"doc1.md", "doc2.md"}
         # secret.md should NOT appear
         assert "secret.md" not in names
@@ -460,7 +460,7 @@ class TestVFSSharedListDir:
         # At the /alice level, bob should see both projects/ dir and readme.md
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "projects" in names
         assert "readme.md" in names
 
@@ -476,23 +476,23 @@ class TestVFSSharedListDir:
         # Level 1: /@shared/alice → shows "deep/"
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"deep"}
-        assert result.entries[0].is_directory is True
+        assert len(result.directories()) == 1
 
         # Level 2: /@shared/alice/deep → shows "nested/"
         result = await shared_vfs.list_dir("/ws/@shared/alice/deep", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"nested"}
-        assert result.entries[0].is_directory is True
+        assert len(result.directories()) == 1
 
         # Level 3: /@shared/alice/deep/nested → shows "file.md"
         result = await shared_vfs.list_dir("/ws/@shared/alice/deep/nested", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"file.md"}
-        assert result.entries[0].is_directory is False
+        assert len(result.files()) == 1
 
     async def test_list_dir_shared_directory_share_unchanged(
         self, shared_vfs: VFS, async_session: AsyncSession
@@ -505,7 +505,7 @@ class TestVFSSharedListDir:
 
         result = await shared_vfs.list_dir("/ws/@shared/alice", user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "notes.md" in names
         assert "readme.md" in names
 

@@ -12,13 +12,13 @@ from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.query_types import (
     ChunkMatch,
-    GlobHit,
-    GlobQueryResult,
-    GrepHit,
-    GrepQueryResult,
-    LineMatch,
     SearchHit,
     SearchQueryResult,
+)
+from grover.search.results import (
+    GlobResult,
+    GrepResult,
+    LineMatch,
 )
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ async def grover(tmp_path: Path) -> GroverAsync:
 
 
 # ==================================================================
-# Glob returns GlobQueryResult
+# Glob returns GlobResult
 # ==================================================================
 
 
@@ -82,38 +82,38 @@ class TestGlobQueryApi:
         await grover.write("/project/a.py", "print('a')")
         await grover.write("/project/b.py", "print('b')")
         result = await grover.glob("*.py", "/project")
-        assert isinstance(result, GlobQueryResult)
+        assert isinstance(result, GlobResult)
         assert result.success is True
         assert result.pattern == "*.py"
-        assert result.path == "/project"
 
     @pytest.mark.asyncio
     async def test_glob_hits_are_glob_hit(self, grover: GroverAsync):
         await grover.write("/project/mod.py", "x = 1")
         result = await grover.glob("*.py", "/project")
-        assert len(result.hits) >= 1
-        for hit in result.hits:
-            assert isinstance(hit, GlobHit)
-            assert hit.path.endswith(".py")
+        assert len(result) >= 1
+        for path in result.paths:
+            assert path.endswith(".py")
 
     @pytest.mark.asyncio
     async def test_glob_hit_has_metadata(self, grover: GroverAsync):
         await grover.write("/project/data.txt", "some data")
         result = await grover.glob("*.txt", "/project")
-        assert len(result.hits) >= 1
-        hit = result.hits[0]
-        assert hit.size_bytes is not None
-        assert hit.size_bytes > 0
+        assert len(result) >= 1
+        path = result.paths[0]
+        evidence = result.file_info(path)
+        assert evidence is not None
+        assert evidence.size_bytes is not None
+        assert evidence.size_bytes > 0
 
     @pytest.mark.asyncio
     async def test_glob_empty_pattern(self, grover: GroverAsync):
         result = await grover.glob("*.nonexistent", "/project")
-        assert isinstance(result, GlobQueryResult)
-        assert result.hits == ()
+        assert isinstance(result, GlobResult)
+        assert len(result) == 0
 
 
 # ==================================================================
-# Grep returns GrepQueryResult
+# Grep returns GrepResult
 # ==================================================================
 
 
@@ -122,19 +122,18 @@ class TestGrepQueryApi:
     async def test_grep_returns_grep_query_result(self, grover: GroverAsync):
         await grover.write("/project/code.py", "def hello():\n    pass\n")
         result = await grover.grep("def ", "/project")
-        assert isinstance(result, GrepQueryResult)
+        assert isinstance(result, GrepResult)
         assert result.success is True
         assert result.pattern == "def "
-        assert result.path == "/project"
 
     @pytest.mark.asyncio
     async def test_grep_groups_by_file(self, grover: GroverAsync):
         await grover.write("/project/a.py", "def alpha():\n    pass\ndef beta():\n    pass\n")
         await grover.write("/project/b.py", "def gamma():\n    pass\n")
         result = await grover.grep("def ", "/project")
-        assert isinstance(result, GrepQueryResult)
-        # Should have hits grouped by file
-        paths = [h.path for h in result.hits]
+        assert isinstance(result, GrepResult)
+        # Should have paths grouped by file
+        paths = list(result.paths)
         assert "/project/a.py" in paths
         assert "/project/b.py" in paths
 
@@ -142,9 +141,8 @@ class TestGrepQueryApi:
     async def test_grep_hits_are_grep_hit_with_line_matches(self, grover: GroverAsync):
         await grover.write("/project/code.py", "def foo():\n    pass\ndef bar():\n    pass\n")
         result = await grover.grep("def ", "/project")
-        for hit in result.hits:
-            assert isinstance(hit, GrepHit)
-            for lm in hit.line_matches:
+        for path in result.paths:
+            for lm in result.line_matches(path):
                 assert isinstance(lm, LineMatch)
                 assert lm.line_number > 0
                 assert "def " in lm.line_content
@@ -153,8 +151,8 @@ class TestGrepQueryApi:
     async def test_grep_context_as_tuples(self, grover: GroverAsync):
         await grover.write("/project/ctx.py", "# before\ndef foo():\n    pass\n")
         result = await grover.grep("def ", "/project", context_lines=1)
-        for hit in result.hits:
-            for lm in hit.line_matches:
+        for path in result.paths:
+            for lm in result.line_matches(path):
                 assert isinstance(lm.context_before, tuple)
                 assert isinstance(lm.context_after, tuple)
 
@@ -170,8 +168,8 @@ class TestGrepQueryApi:
     async def test_grep_no_matches(self, grover: GroverAsync):
         await grover.write("/project/empty.py", "x = 1\n")
         result = await grover.grep("nonexistent_pattern", "/project")
-        assert isinstance(result, GrepQueryResult)
-        assert result.hits == ()
+        assert isinstance(result, GrepResult)
+        assert len(result) == 0
         assert result.files_matched == 0
 
 

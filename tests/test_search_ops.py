@@ -155,7 +155,7 @@ class TestDatabaseGlob:
         await _seed_db(dfs, db_session)
         result = await dfs.glob("*.py", "/src", session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/utils.py" in paths
         # Should not include deep subdirectory files
@@ -167,7 +167,7 @@ class TestDatabaseGlob:
         await _seed_db(dfs, db_session)
         result = await dfs.glob("**/*.py", "/src", session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/sub/deep.py" in paths
 
@@ -176,14 +176,14 @@ class TestDatabaseGlob:
         # guide.txt has 5 chars before extension; readme.md doesn't match
         result = await dfs.glob("*.md", "/docs", session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/docs/readme.md" in paths
 
     async def test_empty_result(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.glob("*.rs", "/src", session=db_session)
         assert result.success
-        assert len(result.entries) == 0
+        assert len(result) == 0
 
     async def test_nonexistent_directory(
         self, dfs: DatabaseFileSystem, db_session: AsyncSession
@@ -197,7 +197,7 @@ class TestDatabaseGlob:
         await _seed_db(dfs, db_session)
         result = await dfs.glob("**/*.py", "/", session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/sub/deep.py" in paths
 
@@ -206,7 +206,7 @@ class TestDatabaseGlob:
         # [mu]*.py should match main.py and utils.py
         result = await dfs.glob("[mu]*.py", "/src", session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/utils.py" in paths
 
@@ -222,14 +222,15 @@ class TestDatabaseGrep:
         result = await dfs.grep("def ", "/src", session=db_session)
         assert result.success
         assert result.files_matched >= 2
-        assert len(result.matches) >= 2
+        assert len(result.all_matches()) >= 2
 
     async def test_fixed_string(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("print('hello')", "/src", fixed_string=True, session=db_session)
         assert result.success
         assert result.files_matched == 1
-        assert result.matches[0].file_path == "/src/main.py"
+        all_matches = result.all_matches()
+        assert all_matches[0][0] == "/src/main.py"
 
     async def test_case_insensitive(
         self, dfs: DatabaseFileSystem, db_session: AsyncSession
@@ -244,9 +245,10 @@ class TestDatabaseGrep:
         # Invert: lines that don't match "def" in a single file
         result = await dfs.grep("def", "/src/main.py", invert=True, session=db_session)
         assert result.success
-        assert len(result.matches) >= 1  # Should have non-def lines
-        for m in result.matches:
-            assert "def" not in m.line_content
+        all_matches = result.all_matches()
+        assert len(all_matches) >= 1  # Should have non-def lines
+        for _path, lm in all_matches:
+            assert "def" not in lm.line_content
 
     async def test_grep_single_file(
         self, dfs: DatabaseFileSystem, db_session: AsyncSession
@@ -255,8 +257,9 @@ class TestDatabaseGrep:
         result = await dfs.grep("def main", "/src/main.py", session=db_session)
         assert result.success
         assert result.files_matched == 1
-        assert len(result.matches) == 1
-        assert result.matches[0].file_path == "/src/main.py"
+        all_matches = result.all_matches()
+        assert len(all_matches) == 1
+        assert all_matches[0][0] == "/src/main.py"
 
     async def test_word_match(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
@@ -269,32 +272,33 @@ class TestDatabaseGrep:
         # "print" is on line 2 of main.py ("def main():\n    print('hello')\n")
         result = await dfs.grep("print", "/src/main.py", context_lines=1, session=db_session)
         assert result.success
-        assert len(result.matches) == 1
-        m = result.matches[0]
-        assert "print" in m.line_content
+        all_matches = result.all_matches()
+        assert len(all_matches) == 1
+        _path, lm = all_matches[0]
+        assert "print" in lm.line_content
         # Line 2 has 1 line before it (line 1: "def main():")
-        assert len(m.context_before) == 1
-        assert "def main" in m.context_before[0]
+        assert len(lm.context_before) == 1
+        assert "def main" in lm.context_before[0]
 
     async def test_max_results(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep(".", "/", max_results=2, session=db_session)
         assert result.success
-        assert len(result.matches) <= 2
+        assert len(result.all_matches()) <= 2
 
     async def test_count_only(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def", "/src", count_only=True, session=db_session)
         assert result.success
         assert "Count:" in result.message
-        assert len(result.matches) == 0  # count_only returns no matches
+        assert len(result.all_matches()) == 0  # count_only returns no matches
 
     async def test_files_only(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def", "/src", files_only=True, session=db_session)
         assert result.success
         # Each file should appear only once
-        file_paths = [m.file_path for m in result.matches]
+        file_paths = list(result.paths)
         assert len(file_paths) == len(set(file_paths))
 
     async def test_glob_filter(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
@@ -302,7 +306,8 @@ class TestDatabaseGrep:
         result = await dfs.grep("Step", "/docs", glob_filter="*.txt", session=db_session)
         assert result.success
         assert result.files_matched == 1
-        assert result.matches[0].file_path == "/docs/guide.txt"
+        all_matches = result.all_matches()
+        assert all_matches[0][0] == "/docs/guide.txt"
 
     async def test_invalid_regex(self, dfs: DatabaseFileSystem, db_session: AsyncSession) -> None:
         await _seed_db(dfs, db_session)
@@ -317,7 +322,7 @@ class TestDatabaseGrep:
         result = await dfs.grep(".", "/src/main.py", max_results_per_file=1, session=db_session)
         assert result.success
         # Should have at most 1 match for main.py
-        main_matches = [m for m in result.matches if m.file_path == "/src/main.py"]
+        main_matches = result.line_matches("/src/main.py")
         assert len(main_matches) <= 1
 
     async def test_line_numbers_are_1_indexed(
@@ -326,8 +331,9 @@ class TestDatabaseGrep:
         await _seed_db(dfs, db_session)
         result = await dfs.grep("def main", "/src", session=db_session)
         assert result.success
-        assert len(result.matches) >= 1
-        assert result.matches[0].line_number == 1
+        all_matches = result.all_matches()
+        assert len(all_matches) >= 1
+        assert all_matches[0][1].line_number == 1
 
     async def test_nonexistent_directory(
         self, dfs: DatabaseFileSystem, db_session: AsyncSession
@@ -355,7 +361,7 @@ class TestDatabaseTree:
         await _seed_db(dfs, db_session)
         result = await dfs.tree("/src", session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/sub" in paths
         assert "/src/sub/deep.py" in paths
@@ -366,7 +372,7 @@ class TestDatabaseTree:
         await _seed_db(dfs, db_session)
         result = await dfs.tree("/src", max_depth=1, session=db_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/sub" in paths
         # deep.py is at depth 2 relative to /src, should be excluded
@@ -392,7 +398,7 @@ class TestDatabaseTree:
         await _seed_db(dfs, db_session)
         result = await dfs.tree("/", session=db_session)
         assert result.success
-        paths = [e.path for e in result.entries]
+        paths = list(result.paths)
         assert paths == sorted(paths)
 
 
@@ -444,7 +450,7 @@ class TestLocalGlob:
         await _seed_local(local_fs, local_session)
         result = await local_fs.glob("*.py", "/src", session=local_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/utils.py" in paths
         assert "/src/sub/deep.py" not in paths
@@ -455,7 +461,7 @@ class TestLocalGlob:
         await _seed_local(local_fs, local_session)
         result = await local_fs.glob("**/*.py", "/src", session=local_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/sub/deep.py" in paths
 
@@ -465,7 +471,7 @@ class TestLocalGlob:
         await _seed_local(local_fs, local_session)
         result = await local_fs.glob("*.rs", "/src", session=local_session)
         assert result.success
-        assert len(result.entries) == 0
+        assert len(result) == 0
 
     async def test_nonexistent_directory(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -532,9 +538,10 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def", "/src/main.py", invert=True, session=local_session)
         assert result.success
-        assert len(result.matches) >= 1
-        for m in result.matches:
-            assert "def" not in m.line_content
+        all_matches = result.all_matches()
+        assert len(all_matches) >= 1
+        for _path, lm in all_matches:
+            assert "def" not in lm.line_content
 
     async def test_context_lines(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -544,10 +551,11 @@ class TestLocalGrep:
             "print", "/src/main.py", context_lines=1, session=local_session
         )
         assert result.success
-        assert len(result.matches) == 1
-        m = result.matches[0]
-        assert len(m.context_before) == 1
-        assert "def main" in m.context_before[0]
+        all_matches = result.all_matches()
+        assert len(all_matches) == 1
+        _path, lm = all_matches[0]
+        assert len(lm.context_before) == 1
+        assert "def main" in lm.context_before[0]
 
     async def test_word_match(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
@@ -560,13 +568,13 @@ class TestLocalGrep:
         result = await local_fs.grep("def", "/src", count_only=True, session=local_session)
         assert result.success
         assert "Count:" in result.message
-        assert len(result.matches) == 0
+        assert len(result.all_matches()) == 0
 
     async def test_files_only(self, local_fs: LocalFileSystem, local_session: AsyncSession) -> None:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep("def", "/src", files_only=True, session=local_session)
         assert result.success
-        file_paths = [m.file_path for m in result.matches]
+        file_paths = list(result.paths)
         assert len(file_paths) == len(set(file_paths))
 
     async def test_max_results(
@@ -575,7 +583,7 @@ class TestLocalGrep:
         await _seed_local(local_fs, local_session)
         result = await local_fs.grep(".", "/", max_results=2, session=local_session)
         assert result.success
-        assert len(result.matches) <= 2
+        assert len(result.all_matches()) <= 2
 
     async def test_max_results_per_file(
         self, local_fs: LocalFileSystem, local_session: AsyncSession
@@ -585,7 +593,7 @@ class TestLocalGrep:
             ".", "/src/main.py", max_results_per_file=1, session=local_session
         )
         assert result.success
-        main_matches = [m for m in result.matches if m.file_path == "/src/main.py"]
+        main_matches = result.line_matches("/src/main.py")
         assert len(main_matches) <= 1
 
     async def test_grep_single_file(
@@ -595,7 +603,7 @@ class TestLocalGrep:
         result = await local_fs.grep("def main", "/src/main.py", session=local_session)
         assert result.success
         assert result.files_matched == 1
-        assert len(result.matches) == 1
+        assert len(result.all_matches()) == 1
 
 
 # =========================================================================
@@ -615,7 +623,7 @@ class TestLocalTree:
         await _seed_local(local_fs, local_session)
         result = await local_fs.tree("/src", max_depth=1, session=local_session)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/src/main.py" in paths
         assert "/src/sub" in paths
         assert "/src/sub/deep.py" not in paths
@@ -624,7 +632,7 @@ class TestLocalTree:
         await _seed_local(local_fs, local_session)
         result = await local_fs.tree("/", session=local_session)
         assert result.success
-        paths = [e.path for e in result.entries]
+        paths = list(result.paths)
         assert paths == sorted(paths)
 
 
@@ -688,7 +696,7 @@ class TestVfsGlob:
         vfs, _ = vfs_setup
         result = await vfs.glob("**/*.py", "/")
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/db/hello.py" in paths
         assert "/local/world.py" in paths
 
@@ -696,7 +704,7 @@ class TestVfsGlob:
         vfs, _ = vfs_setup
         result = await vfs.glob("*.py", "/db")
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/db/hello.py" in paths
         assert "/local/world.py" not in paths
 
@@ -706,7 +714,7 @@ class TestVfsGrep:
         vfs, _ = vfs_setup
         result = await vfs.grep("hello")
         assert result.success
-        file_paths = {m.file_path for m in result.matches}
+        file_paths = set(result.paths)
         assert "/db/hello.py" in file_paths
         assert "/local/world.py" in file_paths
 
@@ -714,7 +722,7 @@ class TestVfsGrep:
         vfs, _ = vfs_setup
         result = await vfs.grep("hello", "/db")
         assert result.success
-        file_paths = {m.file_path for m in result.matches}
+        file_paths = set(result.paths)
         assert "/db/hello.py" in file_paths
         assert "/local/world.py" not in file_paths
 
@@ -722,14 +730,14 @@ class TestVfsGrep:
         vfs, _ = vfs_setup
         result = await vfs.grep(".", "/", max_results=1)
         assert result.success
-        assert len(result.matches) <= 1
+        assert len(result.all_matches()) <= 1
 
     async def test_count_only_at_root(self, vfs_setup: tuple[VFS, AsyncEngine]) -> None:
         vfs, _ = vfs_setup
         result = await vfs.grep("hello", "/", count_only=True)
         assert result.success
         assert "Count:" in result.message
-        assert len(result.matches) == 0
+        assert len(result.all_matches()) == 0
         # Count should reflect actual matches across mounts
         count = int(result.message.split(":")[1].strip())
         assert count >= 2  # "hello" appears in both mounts
@@ -741,7 +749,7 @@ class TestVfsTree:
         vfs, _ = vfs_setup
         result = await vfs.tree("/")
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         # Mount roots should be present
         assert "/db" in paths
         assert "/local" in paths
@@ -753,7 +761,7 @@ class TestVfsTree:
         vfs, _ = vfs_setup
         result = await vfs.tree("/db")
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/db/hello.py" in paths
         assert "/local/world.py" not in paths
 
@@ -762,7 +770,7 @@ class TestVfsTree:
         result = await vfs.tree("/", max_depth=0)
         assert result.success
         # With depth 0 at root, should only show mount roots (no children)
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         # Mount roots are depth 0
         assert "/db" in paths
         assert "/local" in paths
@@ -773,7 +781,7 @@ class TestVfsTree:
         vfs, _ = vfs_setup
         result = await vfs.tree("/", max_depth=1)
         assert result.success
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         # Mount roots (depth 0) and their children (depth 1)
         assert "/db" in paths
         assert "/local" in paths

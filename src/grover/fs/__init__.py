@@ -25,22 +25,19 @@ from grover.fs.types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
-    GlobResult,
-    GrepMatch,
-    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    TreeResult,
     VersionInfo,
     WriteResult,
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.utils import format_read_output
 from grover.fs.vfs import VFS
+from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
 
 __all__ = [
     "VFS",
@@ -53,9 +50,9 @@ __all__ = [
     "FileInfo",
     "GetVersionContentResult",
     "GlobResult",
-    "GrepMatch",
     "GrepResult",
     "GroverError",
+    "ListDirResult",
     "ListResult",
     "ListVersionsResult",
     "LocalFileSystem",

@@ -22,16 +22,14 @@ from grover.fs.types import (
     DeleteResult,
     EditResult,
     FileInfo,
-    GlobResult,
-    GrepResult,
     ListResult,
     MkdirResult,
     MoveResult,
     ReadResult,
-    TreeResult,
     WriteResult,
 )
 from grover.fs.vfs import VFS
+from grover.search.results import GlobResult, GrepResult, TreeResult
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -345,9 +345,9 @@ class TestOperations:
         )
         result = await usfs.glob("*.md", "/", session=async_session, user_id="alice")
         assert result.success is True
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/notes.md" in paths
-        assert len(result.entries) == 1
+        assert len(result) == 1
 
     async def test_grep(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write(
@@ -358,8 +358,9 @@ class TestOperations:
         )
         result = await usfs.grep("hello", "/", session=async_session, user_id="alice")
         assert result.success is True
-        assert len(result.matches) == 1
-        assert result.matches[0].file_path == "/notes.md"
+        all_matches = result.all_matches()
+        assert len(all_matches) == 1
+        assert all_matches[0][0] == "/notes.md"
 
     async def test_grep_strips_user_prefix_from_matches(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -372,15 +373,15 @@ class TestOperations:
         )
         result = await usfs.grep("import", "/", session=async_session, user_id="alice")
         assert result.success is True
-        for m in result.matches:
-            assert not m.file_path.startswith("/alice/")
+        for path, _lm in result.all_matches():
+            assert not path.startswith("/alice/")
 
     async def test_tree(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs.write("/a.md", "a", session=async_session, user_id="alice")
         await usfs.write("/b.md", "b", session=async_session, user_id="alice")
         result = await usfs.tree("/", session=async_session, user_id="alice")
         assert result.success is True
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert "/a.md" in paths
         assert "/b.md" in paths
 
@@ -407,8 +408,9 @@ class TestOperations:
             user_id="alice",
         )
         assert result.success is True
-        assert len(result.matches) == 1
-        assert result.matches[0].file_path == "/notes.md"
+        all_matches = result.all_matches()
+        assert len(all_matches) == 1
+        assert all_matches[0][0] == "/notes.md"
 
     async def test_list_dir_shows_shared_entry(
         self, usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -420,7 +422,7 @@ class TestOperations:
             user_id="alice",
         )
         result = await usfs.list_dir("/", session=async_session, user_id="alice")
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "@shared" in names
 
 
@@ -801,10 +803,10 @@ class TestSharedListDir:
 
         result = await shared_usfs.list_dir("/@shared", session=async_session, user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "alice" in names
         assert "charlie" in names
-        assert all(e.is_directory for e in result.entries)
+        assert set(result.paths) == set(result.directories())
 
     async def test_shared_owner_level(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -825,7 +827,7 @@ class TestSharedListDir:
 
         result = await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "notes.md" in names
         assert "readme.md" in names
 
@@ -834,7 +836,7 @@ class TestSharedListDir:
     ):
         result = await usfs.list_dir("/@shared", session=async_session, user_id="alice")
         assert result.success is True
-        assert result.entries == []
+        assert len(result) == 0
 
     async def test_shared_owner_no_permission_raises(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -859,7 +861,7 @@ class TestSharedListDir:
 
         result = await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"doc1.md", "doc2.md"}
 
     async def test_deep_navigation(
@@ -882,15 +884,15 @@ class TestSharedListDir:
         # Level 1
         result = await shared_usfs.list_dir("/@shared/alice", session=async_session, user_id="bob")
         assert result.success is True
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"deep"}
-        assert result.entries[0].is_directory is True
+        assert len(result.directories()) == 1
 
         # Level 2
         result = await shared_usfs.list_dir(
             "/@shared/alice/deep", session=async_session, user_id="bob"
         )
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"nested"}
 
         # Level 3
@@ -899,9 +901,9 @@ class TestSharedListDir:
             session=async_session,
             user_id="bob",
         )
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert names == {"file.md"}
-        assert result.entries[0].is_directory is False
+        assert len(result.files()) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1262,7 +1264,7 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        assert len(result.entries) >= 1
+        assert len(result) >= 1
 
     async def test_glob_shared_returns_shared_paths(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1281,8 +1283,8 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        for e in result.entries:
-            assert e.path.startswith("/@shared/alice"), f"Expected @shared path, got {e.path}"
+        for path in result.paths:
+            assert path.startswith("/@shared/alice"), f"Expected @shared path, got {path}"
 
     async def test_grep_shared_no_permission_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1318,7 +1320,7 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        assert len(result.matches) >= 1
+        assert len(result.all_matches()) >= 1
 
     async def test_grep_shared_returns_shared_paths(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1337,10 +1339,8 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        for m in result.matches:
-            assert m.file_path.startswith("/@shared/alice"), (
-                f"Expected @shared path, got {m.file_path}"
-            )
+        for path, _lm in result.all_matches():
+            assert path.startswith("/@shared/alice"), f"Expected @shared path, got {path}"
 
     async def test_tree_shared_no_permission_denied(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1374,7 +1374,7 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        assert len(result.entries) >= 1
+        assert len(result) >= 1
 
     async def test_tree_shared_returns_shared_paths(
         self, shared_usfs: UserScopedFileSystem, async_session: AsyncSession
@@ -1392,8 +1392,8 @@ class TestSecurityVulnerabilities:
             user_id="bob",
         )
         assert result.success is True
-        for e in result.entries:
-            assert e.path.startswith("/@shared/alice"), f"Expected @shared path, got {e.path}"
+        for path in result.paths:
+            assert path.startswith("/@shared/alice"), f"Expected @shared path, got {path}"
 
     # -- Fix 2: copy destination share permission check --
 

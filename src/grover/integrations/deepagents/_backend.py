@@ -104,11 +104,15 @@ class GroverBackend(BackendProtocol):
         except Exception:
             return []
 
+        from grover.search.results import ListDirEvidence
+
         result: list[FileInfo] = []
-        for entry in entries:
+        for entry_path in entries.paths:
+            evs = entries._entries.get(entry_path, [])
+            is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in evs)
             info: FileInfo = {
-                "path": entry["path"],
-                "is_dir": entry.get("is_directory", False),
+                "path": entry_path,
+                "is_dir": is_dir,
             }
             result.append(info)
         return result
@@ -253,12 +257,11 @@ class GroverBackend(BackendProtocol):
 
         return [
             {
-                "path": hit.path,
+                "path": file_path,
                 "line": lm.line_number,
                 "text": lm.line_content,
             }
-            for hit in result.hits
-            for lm in hit.line_matches
+            for file_path, lm in result.all_matches()
         ]
 
     async def agrep_raw(
@@ -287,13 +290,14 @@ class GroverBackend(BackendProtocol):
             return []
 
         infos: list[FileInfo] = []
-        for hit in result.hits:
+        for entry_path in result.paths:
+            ev = result.file_info(entry_path)
             info: FileInfo = {
-                "path": hit.path,
-                "is_dir": hit.is_directory,
+                "path": entry_path,
+                "is_dir": ev.is_directory if ev else False,
             }
-            if hit.size_bytes is not None:
-                info["size"] = hit.size_bytes
+            if ev and ev.size_bytes is not None:
+                info["size"] = ev.size_bytes
             infos.append(info)
         return infos
 

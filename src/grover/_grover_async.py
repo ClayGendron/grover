@@ -17,11 +17,6 @@ from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsFileChunks, SupportsReBAC
 from grover.fs.query_types import (
     ChunkMatch,
-    GlobHit,
-    GlobQueryResult,
-    GrepHit,
-    GrepQueryResult,
-    LineMatch,
     SearchHit,
     SearchQueryResult,
 )
@@ -36,7 +31,6 @@ from grover.fs.types import (
     RestoreResult,
     ShareInfo,
     ShareResult,
-    TreeResult,
     WriteResult,
 )
 from grover.fs.utils import normalize_path
@@ -50,6 +44,7 @@ from grover.models.files import File, FileVersion
 from grover.models.shares import FileShare
 from grover.search._engine import SearchEngine
 from grover.search.extractors import extract_from_chunks, extract_from_file
+from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -865,13 +860,8 @@ class GroverAsync:
         except Exception as e:
             return DeleteResult(success=False, message=f"Delete failed: {e}")
 
-    async def list_dir(
-        self, path: str = "/", *, user_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        result = await self._vfs.list_dir(path, user_id=user_id)
-        return [
-            {"path": e.path, "name": e.name, "is_directory": e.is_directory} for e in result.entries
-        ]
+    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
+        return await self._vfs.list_dir(path, user_id=user_id)
 
     async def exists(self, path: str, *, user_id: str | None = None) -> bool:
         return await self._vfs.exists(path, user_id=user_id)
@@ -896,29 +886,11 @@ class GroverAsync:
 
     async def glob(
         self, pattern: str, path: str = "/", *, user_id: str | None = None
-    ) -> GlobQueryResult:
+    ) -> GlobResult:
         try:
-            result = await self._vfs.glob(pattern, path, user_id=user_id)
+            return await self._vfs.glob(pattern, path, user_id=user_id)
         except Exception as e:
-            return GlobQueryResult(
-                success=False, message=f"Glob failed: {e}", pattern=pattern, path=path
-            )
-        hits = tuple(
-            GlobHit(
-                path=entry.path,
-                is_directory=entry.is_directory,
-                size_bytes=entry.size_bytes,
-                mime_type=entry.mime_type,
-            )
-            for entry in result.entries
-        )
-        return GlobQueryResult(
-            success=result.success,
-            message=result.message,
-            hits=hits,
-            pattern=result.pattern,
-            path=result.path,
-        )
+            return GlobResult(success=False, message=f"Glob failed: {e}", pattern=pattern)
 
     async def grep(
         self,
@@ -936,9 +908,9 @@ class GroverAsync:
         count_only: bool = False,
         files_only: bool = False,
         user_id: str | None = None,
-    ) -> GrepQueryResult:
+    ) -> GrepResult:
         try:
-            result = await self._vfs.grep(
+            return await self._vfs.grep(
                 pattern,
                 path,
                 glob_filter=glob_filter,
@@ -954,33 +926,7 @@ class GroverAsync:
                 user_id=user_id,
             )
         except Exception as e:
-            return GrepQueryResult(
-                success=False, message=f"Grep failed: {e}", pattern=pattern, path=path
-            )
-        # Group flat GrepMatch list by file_path
-        grouped: dict[str, list[LineMatch]] = {}
-        for m in result.matches:
-            lm = LineMatch(
-                line_number=m.line_number,
-                line_content=m.line_content,
-                context_before=tuple(m.context_before),
-                context_after=tuple(m.context_after),
-            )
-            grouped.setdefault(m.file_path, []).append(lm)
-
-        hits = tuple(
-            GrepHit(path=fp, line_matches=tuple(matches)) for fp, matches in grouped.items()
-        )
-        return GrepQueryResult(
-            success=result.success,
-            message=result.message,
-            hits=hits,
-            pattern=result.pattern,
-            path=result.path,
-            files_searched=result.files_searched,
-            files_matched=result.files_matched,
-            truncated=result.truncated,
-        )
+            return GrepResult(success=False, message=f"Grep failed: {e}", pattern=pattern)
 
     async def tree(
         self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
@@ -988,7 +934,7 @@ class GroverAsync:
         try:
             return await self._vfs.tree(path, max_depth=max_depth, user_id=user_id)
         except Exception as e:
-            return TreeResult(success=False, message=f"Tree failed: {e}", path=path)
+            return TreeResult(success=False, message=f"Tree failed: {e}")
 
     # ------------------------------------------------------------------
     # Version operations (normalize exceptions to Results)
@@ -1426,16 +1372,20 @@ class GroverAsync:
         if not result.success:
             return
 
-        for entry in result.entries:
-            if "/.grover/" in entry.path:
+        from grover.search.results import ListDirEvidence
+
+        for entry_path in result.paths:
+            if "/.grover/" in entry_path:
                 continue
-            if entry.is_directory:
-                await self._walk_and_index(entry.path, stats)
+            evs = result._entries.get(entry_path, [])
+            is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in evs)
+            if is_dir:
+                await self._walk_and_index(entry_path, stats)
             else:
-                content = await self._read_file_content(entry.path)
+                content = await self._read_file_content(entry_path)
                 if content is None:
                     continue
-                file_stats = await self._analyze_and_integrate(entry.path, content)
+                file_stats = await self._analyze_and_integrate(entry_path, content)
                 stats["files_scanned"] += 1
                 stats["chunks_created"] += file_stats["chunks_created"]
                 stats["edges_added"] += file_stats["edges_added"]

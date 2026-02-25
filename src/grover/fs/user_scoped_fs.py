@@ -13,6 +13,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from grover.search.results import (
+    GlobResult,
+    GrepResult,
+    ListDirEvidence,
+    ListDirResult,
+    TreeResult,
+)
+
 from .database_fs import DatabaseFileSystem
 from .exceptions import AuthenticationRequiredError
 from .types import (
@@ -20,8 +28,6 @@ from .types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
-    GlobResult,
-    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
@@ -29,7 +35,6 @@ from .types import (
     ReadResult,
     RestoreResult,
     ShareInfo,
-    TreeResult,
     WriteResult,
 )
 from .utils import normalize_path
@@ -191,19 +196,20 @@ class UserScopedFileSystem(DatabaseFileSystem):
         segments: list[str],
         user_id: str,
         session: AsyncSession,
-    ) -> ListResult:
+    ) -> ListDirResult:
         """List virtual ``@shared/`` directories.
 
         - ``/@shared`` → list distinct owners who shared with *user_id*
         - ``/@shared/{owner}`` → list that owner's shared files
         - ``/@shared/{owner}/sub/...`` → list sub-path (permission-checked)
         """
+        from grover.search.results import ListDirEvidence, ListDirResult
+
         if self._sharing is None:
-            return ListResult(
+            return ListDirResult(
                 success=True,
                 message="No sharing configured",
-                entries=[],
-                path="/@shared",
+                _entries={},
             )
 
         if len(segments) == 1:
@@ -214,19 +220,20 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 parts = share.path.strip("/").split("/")
                 if parts:
                     owners.add(parts[0])
-            entries = [
-                FileInfo(
-                    path=f"/@shared/{owner}",
-                    name=owner,
-                    is_directory=True,
-                )
-                for owner in sorted(owners)
-            ]
-            return ListResult(
+            result_entries: dict[str, list] = {}
+            for owner in sorted(owners):
+                entry_path = f"/@shared/{owner}"
+                result_entries[entry_path] = [
+                    ListDirEvidence(
+                        strategy="list_dir",
+                        path=entry_path,
+                        is_directory=True,
+                    )
+                ]
+            return ListDirResult(
                 success=True,
-                message=f"Found {len(entries)} shared owner(s)",
-                entries=entries,
-                path="/@shared",
+                message=f"Found {len(result_entries)} shared owner(s)",
+                _entries=result_entries,
             )
 
         # /@shared/{owner}/... — resolve to /{owner}/... and list
@@ -239,11 +246,13 @@ class UserScopedFileSystem(DatabaseFileSystem):
         try:
             await self._check_share_access(session, stored_path, user_id, "read")
             result = await super().list_dir(stored_path, session=session)
-
-            result.path = shared_prefix + sub_path if sub_path != "/" else shared_prefix
-            for entry in result.entries:
-                stripped = self._strip_user_prefix(entry.path, owner)
-                entry.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+            result = result.remap_paths(
+                lambda p: (
+                    shared_prefix + (self._strip_user_prefix(p, owner) or "")
+                    if self._strip_user_prefix(p, owner) != "/"
+                    else shared_prefix
+                )
+            )
             return result
 
         except PermissionError:
@@ -266,42 +275,44 @@ class UserScopedFileSystem(DatabaseFileSystem):
             else:
                 direct_files.add(remainder)
 
-        entries: list[FileInfo] = []
+        from grover.search.results import ListDirEvidence, ListDirResult
+
+        result_entries: dict[str, list] = {}
         base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
 
         for name in sorted(direct_files):
             file_stored = f"{stored_path}/{name}"
+            size_bytes: int | None = None
             try:
                 info = await super().get_info(file_stored, session=session)
+                if info is not None:
+                    size_bytes = info.size_bytes
             except Exception:
-                info = None
-            if info is not None:
-                stripped = self._strip_user_prefix(info.path, owner)
-                info.path = shared_prefix + stripped if stripped != "/" else shared_prefix
-                entries.append(info)
-            else:
-                entries.append(
-                    FileInfo(
-                        path=f"{base}/{name}",
-                        name=name,
-                        is_directory=False,
-                    )
+                pass
+            entry_path = f"{base}/{name}"
+            result_entries[entry_path] = [
+                ListDirEvidence(
+                    strategy="list_dir",
+                    path=entry_path,
+                    is_directory=False,
+                    size_bytes=size_bytes,
                 )
+            ]
 
         for name in sorted(child_dirs):
-            entries.append(
-                FileInfo(
-                    path=f"{base}/{name}",
-                    name=name,
+            entry_path = f"{base}/{name}"
+            result_entries[entry_path] = [
+                ListDirEvidence(
+                    strategy="list_dir",
+                    path=entry_path,
                     is_directory=True,
                 )
-            )
+            ]
 
-        return ListResult(
+        return ListDirResult(
             success=True,
-            message=f"Found {len(entries)} shared item(s)",
-            entries=entries,
-            path=shared_prefix + sub_path if sub_path != "/" else shared_prefix,
+            message=f"Found {len(result_entries)} shared item(s)",
+            _entries=result_entries,
         )
 
     # ------------------------------------------------------------------
@@ -463,7 +474,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
+    ) -> ListDirResult:
         uid = self._require_user_id(user_id)
         sess = self._require_session(session)
 
@@ -475,18 +486,19 @@ class UserScopedFileSystem(DatabaseFileSystem):
         stored = self._resolve_path(path, uid)
         result = await super().list_dir(stored, session=sess)
 
-        result.path = self._restore_path(result.path, uid) or path
-        result.entries = [self._restore_file_info(entry, uid) for entry in result.entries]
+        # Remap stored paths back to user-facing paths
+        result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
 
         # At root, add virtual @shared/ entry
         if path == "/":
-            result.entries.append(
-                FileInfo(
+            result._entries["/@shared"] = [
+                ListDirEvidence(
+                    strategy="list_dir",
                     path="/@shared",
-                    name="@shared",
                     is_directory=True,
+                    size_bytes=None,
                 )
-            )
+            ]
 
         return result
 
@@ -637,13 +649,15 @@ class UserScopedFileSystem(DatabaseFileSystem):
         result = await super().glob(pattern, stored, session=sess)
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
-            result.path = path
-            for e in result.entries:
-                stripped = self._strip_user_prefix(e.path, owner)
-                e.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+            result = result.remap_paths(
+                lambda p: (
+                    shared_prefix + (self._strip_user_prefix(p, owner) or "")
+                    if self._strip_user_prefix(p, owner) != "/"
+                    else shared_prefix
+                )
+            )
         else:
-            result.path = self._restore_path(result.path, uid) or path
-            result.entries = [self._restore_file_info(e, uid) for e in result.entries]
+            result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
         return result
 
     async def grep(
@@ -673,6 +687,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         # Resolve glob_filter via super().glob to avoid polymorphic dispatch
         # (super().grep calls self.glob() which would re-enter our override)
         resolved_glob_filter = glob_filter
+        candidate_paths: set[str] | None = None
         if glob_filter is not None:
             glob_result = await super().glob(glob_filter, stored, session=sess)
             if not glob_result.success:
@@ -680,7 +695,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
                     success=False,
                     message=glob_result.message,
                     pattern=pattern,
-                    path=path,
                 )
             # Pass candidate paths as a synthetic glob filter that matches
             # the resolved stored paths. Since super().grep with glob_filter
@@ -688,14 +702,13 @@ class UserScopedFileSystem(DatabaseFileSystem):
             # pre-filtering.
             resolved_glob_filter = None
 
-            # Get the list of candidate file paths from glob
-            candidate_paths = [e.path for e in glob_result.entries if not e.is_directory]
+            # Get the set of candidate file paths from glob
+            candidate_paths = set(glob_result.files())
             if not candidate_paths:
                 return GrepResult(
                     success=True,
                     message="No files match glob filter",
                     pattern=pattern,
-                    path=path,
                 )
 
         result = await super().grep(
@@ -714,22 +727,25 @@ class UserScopedFileSystem(DatabaseFileSystem):
             session=sess,
         )
 
-        # If we pre-resolved a glob_filter, filter matches to only those
+        # If we pre-resolved a glob_filter, filter entries to only those
         # files that matched the glob
-        if glob_filter is not None and not count_only:
-            result.matches = [m for m in result.matches if m.file_path in candidate_paths]
+        if candidate_paths is not None and not count_only:
+            import copy as _copy
+
+            result = _copy.copy(result)
+            result._entries = {k: v for k, v in result._entries.items() if k in candidate_paths}
 
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
-            result.path = path
-            for m in result.matches:
-                stripped = self._strip_user_prefix(m.file_path, owner)
-                m.file_path = shared_prefix + stripped if stripped != "/" else shared_prefix
+            result = result.remap_paths(
+                lambda p: (
+                    shared_prefix + (self._strip_user_prefix(p, owner) or "")
+                    if self._strip_user_prefix(p, owner) != "/"
+                    else shared_prefix
+                )
+            )
         else:
-            result.path = self._restore_path(result.path, uid) or path
-            for m in result.matches:
-                restored = self._restore_path(m.file_path, uid)
-                m.file_path = restored or m.file_path
+            result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
         return result
 
     async def tree(
@@ -753,13 +769,15 @@ class UserScopedFileSystem(DatabaseFileSystem):
         )
         if is_shared and owner is not None:
             shared_prefix = f"/@shared/{owner}"
-            result.path = path
-            for e in result.entries:
-                stripped = self._strip_user_prefix(e.path, owner)
-                e.path = shared_prefix + stripped if stripped != "/" else shared_prefix
+            result = result.remap_paths(
+                lambda p: (
+                    shared_prefix + (self._strip_user_prefix(p, owner) or "")
+                    if self._strip_user_prefix(p, owner) != "/"
+                    else shared_prefix
+                )
+            )
         else:
-            result.path = self._restore_path(result.path, uid) or path
-            result.entries = [self._restore_file_info(e, uid) for e in result.entries]
+            result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
         return result
 
     # ------------------------------------------------------------------

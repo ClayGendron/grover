@@ -18,20 +18,19 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
+
     from .types import (
         DeleteResult,
         EditResult,
         FileInfo,
         GetVersionContentResult,
-        GlobResult,
-        GrepResult,
         ListResult,
         ListVersionsResult,
         MkdirResult,
         MoveResult,
         ReadResult,
         RestoreResult,
-        TreeResult,
         WriteResult,
     )
 
@@ -76,7 +75,7 @@ class StorageBackend(Protocol):
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListResult: ...
+    ) -> ListDirResult: ...
 
     async def exists(
         self,

@@ -108,6 +108,8 @@ class GraphEvidence(Evidence):
 class GlobResult(FileSearchResult):
     """Result of a glob operation — file pattern matching."""
 
+    pattern: str = ""
+
     def directories(self) -> tuple[str, ...]:
         """Return paths that are directories."""
         return tuple(
@@ -135,6 +137,11 @@ class GlobResult(FileSearchResult):
 @dataclass
 class GrepResult(FileSearchResult):
     """Result of a grep operation — pattern matching within files."""
+
+    pattern: str = ""
+    files_searched: int = 0
+    files_matched: int = 0
+    truncated: bool = False
 
     def line_matches(self, path: str) -> tuple[LineMatch, ...]:
         """Return all line matches for *path*."""

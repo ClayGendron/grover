@@ -144,8 +144,8 @@ class TestGroverFilesystem:
     def test_list_dir(self, grover: Grover):
         grover.write("/project/a.txt", "a")
         grover.write("/project/b.txt", "b")
-        entries = grover.list_dir("/project")
-        names = {e["name"] for e in entries}
+        result = grover.list_dir("/project")
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "a.txt" in names
         assert "b.txt" in names
 

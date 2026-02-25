@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover.fs.query_types import GlobQueryResult, GrepQueryResult, SearchQueryResult
+    from grover.fs.query_types import SearchQueryResult
     from grover.fs.types import (
         DeleteResult,
         EditResult,
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         MoveResult,
         ReadResult,
         ShareResult,
-        TreeResult,
         WriteResult,
     )
     from grover.fs.vfs import VFS
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.ref import Ref
+    from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
 
 
 class Grover:
@@ -183,7 +183,7 @@ class Grover:
         """Delete the file at *path*."""
         return self._run(self._async.delete(path, permanent, user_id=user_id))
 
-    def list_dir(self, path: str = "/", *, user_id: str | None = None) -> list[dict[str, Any]]:
+    def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
         """List entries under *path*."""
         return self._run(self._async.list_dir(path, user_id=user_id))
 
@@ -205,7 +205,7 @@ class Grover:
     # Search / Query wrappers (sync)
     # ------------------------------------------------------------------
 
-    def glob(self, pattern: str, path: str = "/", *, user_id: str | None = None) -> GlobQueryResult:
+    def glob(self, pattern: str, path: str = "/", *, user_id: str | None = None) -> GlobResult:
         """Find files matching a glob *pattern* under *path*."""
         return self._run(self._async.glob(pattern, path, user_id=user_id))
 
@@ -225,7 +225,7 @@ class Grover:
         count_only: bool = False,
         files_only: bool = False,
         user_id: str | None = None,
-    ) -> GrepQueryResult:
+    ) -> GrepResult:
         """Search file contents for *pattern* under *path*."""
         return self._run(
             self._async.grep(

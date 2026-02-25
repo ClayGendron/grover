@@ -122,54 +122,6 @@ class ListVersionsResult(FileOperationResult):
 
 
 @dataclass
-class GlobResult:
-    """Result of a glob operation."""
-
-    success: bool
-    message: str
-    entries: list[FileInfo] = field(default_factory=list)
-    pattern: str = ""
-    path: str = "/"
-
-
-@dataclass
-class GrepMatch:
-    """A single grep match within a file."""
-
-    file_path: str
-    line_number: int  # 1-indexed
-    line_content: str
-    context_before: list[str] = field(default_factory=list)
-    context_after: list[str] = field(default_factory=list)
-
-
-@dataclass
-class GrepResult:
-    """Result of a grep operation."""
-
-    success: bool
-    message: str
-    matches: list[GrepMatch] = field(default_factory=list)
-    pattern: str = ""
-    path: str = "/"
-    files_searched: int = 0
-    files_matched: int = 0
-    truncated: bool = False
-
-
-@dataclass
-class TreeResult:
-    """Result of a tree operation."""
-
-    success: bool
-    message: str
-    entries: list[FileInfo] = field(default_factory=list)
-    path: str = "/"
-    total_files: int = 0
-    total_dirs: int = 0
-
-
-@dataclass
 class GetVersionContentResult(FileOperationResult):
     """Result of a get_version_content operation."""
 

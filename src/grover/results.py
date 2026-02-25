@@ -9,11 +9,13 @@ Every Grover method returns a typed subclass of one of these two bases:
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import replace as dc_replace
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from grover.ref import Ref
 
@@ -101,6 +103,42 @@ class FileSearchResult:
 
     def __contains__(self, path: object) -> bool:
         return path in self._entries
+
+    # -----------------------------------------------------------------
+    # Path transformations
+    # -----------------------------------------------------------------
+
+    def rebase(self, prefix: str) -> Self:
+        """Return a new result with all paths prefixed by *prefix*.
+
+        Preserves subclass type and any extra fields via shallow copy.
+        Evidence objects are reconstructed with updated paths.
+        """
+        result = copy.copy(self)
+        new_entries: dict[str, list[Evidence]] = {}
+        for path, evs in self._entries.items():
+            new_path = prefix + path if path != "/" else prefix
+            new_evs = [dc_replace(e, path=new_path) for e in evs]
+            new_entries[new_path] = new_evs
+        result._entries = new_entries
+        return result
+
+    def remap_paths(self, fn: Callable[[str], str]) -> Self:
+        """Return a new result with all paths transformed by *fn*.
+
+        Preserves subclass type and any extra fields via shallow copy.
+        """
+        result = copy.copy(self)
+        new_entries: dict[str, list[Evidence]] = {}
+        for path, evs in self._entries.items():
+            new_path = fn(path)
+            new_evs = [dc_replace(e, path=new_path) for e in evs]
+            if new_path in new_entries:
+                new_entries[new_path].extend(new_evs)
+            else:
+                new_entries[new_path] = new_evs
+        result._entries = new_entries
+        return result
 
     # -----------------------------------------------------------------
     # Factories

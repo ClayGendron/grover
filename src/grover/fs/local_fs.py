@@ -23,6 +23,17 @@ from sqlmodel import select
 
 from grover.models.chunks import FileChunk
 from grover.models.files import File, FileVersion
+from grover.search.results import (
+    GlobEvidence,
+    GlobResult,
+    GrepEvidence,
+    GrepResult,
+    ListDirEvidence,
+    ListDirResult,
+    TreeEvidence,
+    TreeResult,
+)
+from grover.search.results import LineMatch as SearchLineMatch
 
 from .chunks import ChunkService
 from .directories import DirectoryService
@@ -41,16 +52,12 @@ from .types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
-    GlobResult,
-    GrepMatch,
-    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    TreeResult,
     WriteResult,
 )
 from .utils import (
@@ -59,7 +66,6 @@ from .utils import (
     has_binary_extension,
     is_binary_file,
     normalize_path,
-    split_path,
     to_trash_path,
     validate_path,
 )
@@ -68,6 +74,7 @@ from .versioning import VersioningService
 if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
+    from grover.results import Evidence
 
     from .sharing import SharingService
 
@@ -541,7 +548,7 @@ class LocalFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
+    ) -> ListDirResult:
         """List directory, including files only on disk."""
         sess = self._require_session(session)
         path = normalize_path(path)
@@ -549,17 +556,15 @@ class LocalFileSystem:
         try:
             actual_path = await self._resolve_path(path)
         except PermissionError as e:
-            return ListResult(success=False, message=str(e))
+            return ListDirResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
-            return ListResult(success=False, message=f"Directory not found: {path}")
+            return ListDirResult(success=False, message=f"Directory not found: {path}")
 
         is_dir = await asyncio.to_thread(actual_path.is_dir)
         if not is_dir:
-            return ListResult(success=False, message=f"Not a directory: {path}")
-
-        entries: list[FileInfo] = []
+            return ListDirResult(success=False, message=f"Not a directory: {path}")
 
         def _scan_dir() -> list[tuple[str, bool, int | None]]:
             """Collect (name, is_dir, size) from disk in one thread."""
@@ -574,30 +579,27 @@ class LocalFileSystem:
 
         disk_items = await asyncio.to_thread(_scan_dir)
 
+        entries: dict[str, list[Evidence]] = {}
         for name, is_d, disk_size in disk_items:
             item_path = f"{path}/{name}" if path != "/" else f"/{name}"
             item_path = normalize_path(item_path)
 
             file = await self.metadata.get_file(sess, item_path)
+            size = file.size_bytes if file else disk_size
 
-            entries.append(
-                FileInfo(
+            entries[item_path] = [
+                ListDirEvidence(
+                    strategy="list_dir",
                     path=item_path,
-                    name=name,
                     is_directory=is_d,
-                    size_bytes=file.size_bytes if file else disk_size,
-                    mime_type=file.mime_type if file else None,
-                    version=file.current_version if file else 1,
-                    created_at=file.created_at if file else None,
-                    updated_at=file.updated_at if file else None,
+                    size_bytes=size,
                 )
-            )
+            ]
 
-        return ListResult(
+        return ListDirResult(
             success=True,
             message=f"Listed {len(entries)} items in {path}",
-            entries=entries,
-            path=path,
+            _entries=entries,
         )
 
     async def exists(
@@ -684,7 +686,6 @@ class LocalFileSystem:
                 success=False,
                 message="Empty glob pattern",
                 pattern=pattern,
-                path=path,
             )
 
         try:
@@ -694,7 +695,6 @@ class LocalFileSystem:
                 success=False,
                 message=str(e),
                 pattern=pattern,
-                path=path,
             )
 
         exists = await asyncio.to_thread(actual_path.exists)
@@ -703,7 +703,6 @@ class LocalFileSystem:
                 success=False,
                 message=f"Directory not found: {path}",
                 pattern=pattern,
-                path=path,
             )
 
         is_dir = await asyncio.to_thread(actual_path.is_dir)
@@ -712,7 +711,6 @@ class LocalFileSystem:
                 success=False,
                 message=f"Not a directory: {path}",
                 pattern=pattern,
-                path=path,
             )
 
         glob_regex = compile_glob(pattern, path)
@@ -761,28 +759,24 @@ class LocalFileSystem:
         else:
             file_map = {}
 
-        entries: list[FileInfo] = []
-        for p, vpath, is_d, size in matched:
+        entries: dict[str, list[Evidence]] = {}
+        for _p, vpath, is_d, size in matched:
             file = file_map.get(vpath)
-            entries.append(
-                FileInfo(
+            entries[vpath] = [
+                GlobEvidence(
+                    strategy="glob",
                     path=vpath,
-                    name=p.name,
                     is_directory=is_d,
                     size_bytes=file.size_bytes if file else size,
                     mime_type=file.mime_type if file else None,
-                    version=file.current_version if file else 1,
-                    created_at=file.created_at if file else None,
-                    updated_at=file.updated_at if file else None,
                 )
-            )
+            ]
 
         return GlobResult(
             success=True,
             message=f"Found {len(entries)} match(es)",
-            entries=entries,
+            _entries=entries,
             pattern=pattern,
-            path=path,
         )
 
     async def grep(
@@ -819,7 +813,6 @@ class LocalFileSystem:
                 success=False,
                 message=f"Invalid regex: {e}",
                 pattern=pattern,
-                path=path,
             )
 
         # Get candidate files
@@ -830,9 +823,8 @@ class LocalFileSystem:
                     success=False,
                     message=glob_result.message,
                     pattern=pattern,
-                    path=path,
                 )
-            candidate_vpaths = [e.path for e in glob_result.entries if not e.is_directory]
+            candidate_vpaths = list(glob_result.files())
         else:
             try:
                 actual_path = await self._resolve_path(path)
@@ -841,7 +833,6 @@ class LocalFileSystem:
                     success=False,
                     message=str(e),
                     pattern=pattern,
-                    path=path,
                 )
 
             # Check if path exists
@@ -851,7 +842,6 @@ class LocalFileSystem:
                     success=False,
                     message=f"Path not found: {path}",
                     pattern=pattern,
-                    path=path,
                 )
 
             # Check if path is a file (not a directory)
@@ -877,10 +867,11 @@ class LocalFileSystem:
 
                 candidate_vpaths = await asyncio.to_thread(_collect_files)
 
-        matches: list[GrepMatch] = []
+        result_entries: dict[str, list[Evidence]] = {}
         files_searched = 0
         files_matched = 0
         truncated = False
+        total_matches = 0
 
         for file_path in candidate_vpaths:
             if has_binary_extension(file_path):
@@ -904,7 +895,7 @@ class LocalFileSystem:
 
             files_searched += 1
             lines = content.split("\n")
-            file_matches: list[GrepMatch] = []
+            file_line_matches: list[SearchLineMatch] = []
 
             for i, line in enumerate(lines):
                 has_match = regex.search(line) is not None
@@ -912,17 +903,16 @@ class LocalFileSystem:
                     has_match = not has_match
 
                 if has_match:
-                    ctx_before = []
-                    ctx_after = []
+                    ctx_before: tuple[str, ...] = ()
+                    ctx_after: tuple[str, ...] = ()
                     if context_lines > 0:
                         start = max(0, i - context_lines)
-                        ctx_before = lines[start:i]
+                        ctx_before = tuple(lines[start:i])
                         end = min(len(lines), i + context_lines + 1)
-                        ctx_after = lines[i + 1 : end]
+                        ctx_after = tuple(lines[i + 1 : end])
 
-                    file_matches.append(
-                        GrepMatch(
-                            file_path=file_path,
+                    file_line_matches.append(
+                        SearchLineMatch(
                             line_number=i + 1,
                             line_content=line,
                             context_before=ctx_before,
@@ -930,29 +920,34 @@ class LocalFileSystem:
                         )
                     )
 
-                    if max_results_per_file > 0 and len(file_matches) >= max_results_per_file:
+                    if max_results_per_file > 0 and len(file_line_matches) >= max_results_per_file:
                         break
 
-            if file_matches:
+            if file_line_matches:
                 files_matched += 1
                 if files_only:
-                    matches.append(file_matches[0])
-                else:
-                    matches.extend(file_matches)
+                    # For files_only, keep just one match as evidence
+                    file_line_matches = [file_line_matches[0]]
 
-                if max_results > 0 and len(matches) >= max_results:
+                result_entries[file_path] = [
+                    GrepEvidence(
+                        strategy="grep",
+                        path=file_path,
+                        line_matches=tuple(file_line_matches),
+                    )
+                ]
+                total_matches += len(file_line_matches)
+
+                if max_results > 0 and total_matches >= max_results:
                     truncated = True
-                    matches = matches[:max_results]
                     break
 
         if count_only:
-            total = files_matched if files_only else len(matches)
+            total = files_matched if files_only else total_matches
             return GrepResult(
                 success=True,
                 message=f"Count: {total}",
-                matches=[],
                 pattern=pattern,
-                path=path,
                 files_searched=files_searched,
                 files_matched=files_matched,
                 truncated=truncated,
@@ -960,10 +955,9 @@ class LocalFileSystem:
 
         return GrepResult(
             success=True,
-            message=f"Found {len(matches)} match(es) in {files_matched} file(s)",
-            matches=matches,
+            message=f"Found {total_matches} match(es) in {files_matched} file(s)",
+            _entries=result_entries,
             pattern=pattern,
-            path=path,
             files_searched=files_searched,
             files_matched=files_matched,
             truncated=truncated,
@@ -977,20 +971,19 @@ class LocalFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> TreeResult:
-        sess = self._require_session(session)
+        self._require_session(session)
         path = normalize_path(path)
 
         try:
             actual_path = await self._resolve_path(path)
         except PermissionError as e:
-            return TreeResult(success=False, message=str(e), path=path)
+            return TreeResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
             return TreeResult(
                 success=False,
                 message=f"Directory not found: {path}",
-                path=path,
             )
 
         is_dir = await asyncio.to_thread(actual_path.is_dir)
@@ -998,12 +991,11 @@ class LocalFileSystem:
             return TreeResult(
                 success=False,
                 message=f"Not a directory: {path}",
-                path=path,
             )
 
-        def _walk() -> list[tuple[str, bool, int | None]]:
-            """Collect (virtual_path, is_dir, size) with depth limit."""
-            items = []
+        def _walk() -> list[tuple[str, bool, int]]:
+            """Collect (virtual_path, is_dir, depth) with depth limit."""
+            items: list[tuple[str, bool, int]] = []
             base_depth = len(actual_path.resolve().parts)
             for root, dirs, files in os.walk(actual_path):
                 dirs[:] = sorted(d for d in dirs if not d.startswith("."))
@@ -1014,24 +1006,21 @@ class LocalFileSystem:
                     dirs[:] = []
                     continue
 
-                # Add directories at this level
                 for d in dirs:
                     full = Path(root) / d
                     try:
                         vp = self._to_virtual_path(full)
-                        items.append((vp, True, None))
+                        items.append((vp, True, current_depth + 1))
                     except (ValueError, PermissionError):
                         continue
 
-                # Add files at this level
                 for name in sorted(files):
                     if name.startswith("."):
                         continue
                     full = Path(root) / name
                     try:
                         vp = self._to_virtual_path(full)
-                        sz = full.stat().st_size if full.is_file() else None
-                        items.append((vp, False, sz))
+                        items.append((vp, False, current_depth + 1))
                     except (ValueError, PermissionError, OSError):
                         continue
 
@@ -1039,50 +1028,22 @@ class LocalFileSystem:
 
         disk_items = await asyncio.to_thread(_walk)
 
-        # Batch metadata lookup
-        vpaths = [vp for vp, _, _ in disk_items]
-        model = self._file_model
-        if vpaths:
-            db_result = await sess.execute(
-                select(model).where(model.path.in_(vpaths))  # type: ignore[union-attr]
-            )
-            file_map = {f.path: f for f in db_result.scalars().all()}
-        else:
-            file_map = {}
-
-        entries: list[FileInfo] = []
-        total_files = 0
-        total_dirs = 0
-
-        for vpath, is_d, disk_size in disk_items:
-            file = file_map.get(vpath)
-            name = split_path(vpath)[1]
-            entries.append(
-                FileInfo(
+        entries: dict[str, list[Evidence]] = {}
+        for vpath, is_d, depth in sorted(disk_items, key=lambda x: x[0]):
+            entries[vpath] = [
+                TreeEvidence(
+                    strategy="tree",
                     path=vpath,
-                    name=name,
+                    depth=depth,
                     is_directory=is_d,
-                    size_bytes=file.size_bytes if file else disk_size,
-                    mime_type=file.mime_type if file else None,
-                    version=file.current_version if file else 1,
-                    created_at=file.created_at if file else None,
-                    updated_at=file.updated_at if file else None,
                 )
-            )
-            if is_d:
-                total_dirs += 1
-            else:
-                total_files += 1
-
-        entries.sort(key=lambda e: e.path)
+            ]
 
         return TreeResult(
             success=True,
-            message=f"{total_dirs} directories, {total_files} files",
-            entries=entries,
-            path=path,
-            total_files=total_files,
-            total_dirs=total_dirs,
+            message=f"{sum(1 for _, d, _ in disk_items if d)} directories, "
+            f"{sum(1 for _, d, _ in disk_items if not d)} files",
+            _entries=entries,
         )
 
     # ------------------------------------------------------------------

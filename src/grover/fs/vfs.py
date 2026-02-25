@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover.events import EventBus, EventType, FileEvent
+from grover.search.results import GlobResult, GrepResult, ListDirResult, TreeResult
 
 from .exceptions import CapabilityNotSupportedError, MountNotFoundError
 from .permissions import Permission
@@ -16,16 +17,12 @@ from .types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
-    GlobResult,
-    GrepMatch,
-    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    TreeResult,
     WriteResult,
 )
 from .utils import normalize_path
@@ -156,7 +153,7 @@ class VFS:
         result.file_path = self._prefix_path(result.file_path, mount.mount_path)
         return result
 
-    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListResult:
+    async def list_dir(self, path: str = "/", *, user_id: str | None = None) -> ListDirResult:
         path = normalize_path(path)
 
         if path == "/":
@@ -166,28 +163,24 @@ class VFS:
         async with self.session_for(mount) as sess:
             result = await mount.backend.list_dir(rel_path, session=sess, user_id=user_id)
 
-        result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [self._prefix_file_info(entry, mount) for entry in result.entries]
-        return result
+        return result.rebase(mount.mount_path)
 
-    def _list_root(self) -> ListResult:
-        entries: list[FileInfo] = []
+    def _list_root(self) -> ListDirResult:
+        from grover.search.results import ListDirEvidence
+
+        entries: dict[str, list] = {}
         for mount in self._registry.list_visible_mounts():
-            name = mount.mount_path.lstrip("/")
-            entries.append(
-                FileInfo(
+            entries[mount.mount_path] = [
+                ListDirEvidence(
+                    strategy="list_dir",
                     path=mount.mount_path,
-                    name=name,
                     is_directory=True,
-                    permission=mount.permission.value,
-                    mount_type=mount.mount_type,
                 )
-            )
-        return ListResult(
+            ]
+        return ListDirResult(
             success=True,
             message=f"Found {len(entries)} mount(s)",
-            entries=entries,
-            path="/",
+            _entries=entries,
         )
 
     async def exists(self, path: str, *, user_id: str | None = None) -> bool:
@@ -254,27 +247,20 @@ class VFS:
         path = normalize_path(path)
 
         if path == "/":
-            # Aggregate across all visible mounts (exclude hidden)
-            all_entries: list[FileInfo] = []
+            combined = GlobResult(success=True, message="", _entries={}, pattern=pattern)
             for mount in self._registry.list_visible_mounts():
                 async with self.session_for(mount) as sess:
                     result = await mount.backend.glob(pattern, "/", session=sess, user_id=user_id)
                 if result.success:
-                    all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
-            return GlobResult(
-                success=True,
-                message=f"Found {len(all_entries)} match(es)",
-                entries=all_entries,
-                pattern=pattern,
-                path=path,
-            )
+                    combined = combined | result.rebase(mount.mount_path)
+            combined.message = f"Found {len(combined)} match(es)"
+            combined.pattern = pattern
+            return combined
 
         mount, rel_path = self._registry.resolve(path)
         async with self.session_for(mount) as sess:
             result = await mount.backend.glob(pattern, rel_path, session=sess, user_id=user_id)
-        result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
-        return result
+        return result.rebase(mount.mount_path)
 
     async def grep(
         self,
@@ -296,16 +282,15 @@ class VFS:
         path = normalize_path(path)
 
         if path == "/":
-            all_matches: list[GrepMatch] = []
+            combined_entries: dict[str, list] = {}
+            total_matches = 0
             total_searched = 0
             total_matched = 0
             truncated = False
 
-            # Don't pass count_only to backends — we need actual matches
-            # to aggregate correctly. We apply count_only at VFS level.
-
+            # Don't pass count_only to backends — aggregate first, apply at VFS level.
             for mount in self._registry.list_visible_mounts():
-                remaining = max_results - len(all_matches) if max_results > 0 else max_results
+                remaining = max_results - total_matches if max_results > 0 else max_results
                 if max_results > 0 and remaining <= 0:
                     truncated = True
                     break
@@ -327,24 +312,23 @@ class VFS:
                         user_id=user_id,
                     )
                 if result.success:
-                    for m in result.matches:
-                        m.file_path = (
-                            self._prefix_path(m.file_path, mount.mount_path) or m.file_path
+                    rebased = result.rebase(mount.mount_path)
+                    for p, evs in rebased._entries.items():
+                        combined_entries.setdefault(p, []).extend(evs)
+                        total_matches += sum(
+                            len(e.line_matches) for e in evs if hasattr(e, "line_matches")
                         )
-                    all_matches.extend(result.matches)
                     total_searched += result.files_searched
                     total_matched += result.files_matched
                     if result.truncated:
                         truncated = True
 
             if count_only:
-                total = total_matched if files_only else len(all_matches)
+                total = total_matched if files_only else total_matches
                 return GrepResult(
                     success=True,
                     message=f"Count: {total}",
-                    matches=[],
                     pattern=pattern,
-                    path=path,
                     files_searched=total_searched,
                     files_matched=total_matched,
                     truncated=truncated,
@@ -352,10 +336,9 @@ class VFS:
 
             return GrepResult(
                 success=True,
-                message=f"Found {len(all_matches)} match(es) in {total_matched} file(s)",
-                matches=all_matches,
+                message=f"Found {total_matches} match(es) in {total_matched} file(s)",
+                _entries=combined_entries,
                 pattern=pattern,
-                path=path,
                 files_searched=total_searched,
                 files_matched=total_matched,
                 truncated=truncated,
@@ -379,10 +362,7 @@ class VFS:
                 files_only=files_only,
                 user_id=user_id,
             )
-        result.path = self._prefix_path(result.path, mount.mount_path) or path
-        for m in result.matches:
-            m.file_path = self._prefix_path(m.file_path, mount.mount_path) or m.file_path
-        return result
+        return result.rebase(mount.mount_path)
 
     async def tree(
         self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
@@ -390,23 +370,24 @@ class VFS:
         path = normalize_path(path)
 
         if path == "/":
-            all_entries: list[FileInfo] = []
-            total_files = 0
-            total_dirs = 0
+            from grover.search.results import TreeEvidence
 
             # Include mount roots themselves
+            root_entries: dict[str, list] = {}
             for mount in self._registry.list_visible_mounts():
-                name = mount.mount_path.lstrip("/")
-                all_entries.append(
-                    FileInfo(
+                root_entries[mount.mount_path] = [
+                    TreeEvidence(
+                        strategy="tree",
                         path=mount.mount_path,
-                        name=name,
+                        depth=0,
                         is_directory=True,
-                        permission=mount.permission.value,
-                        mount_type=mount.mount_type,
                     )
-                )
-                total_dirs += 1
+                ]
+            combined = TreeResult(
+                success=True,
+                message="",
+                _entries=root_entries,
+            )
 
             # Backends count depth from their own root, so pass max_depth
             # unchanged — the mount roots are added above at VFS level.
@@ -420,28 +401,17 @@ class VFS:
                             user_id=user_id,
                         )
                     if result.success:
-                        all_entries.extend(self._prefix_file_info(e, mount) for e in result.entries)
-                        total_files += result.total_files
-                        total_dirs += result.total_dirs
+                        combined = combined | result.rebase(mount.mount_path)
 
-            all_entries.sort(key=lambda e: e.path)
-            return TreeResult(
-                success=True,
-                message=f"{total_dirs} directories, {total_files} files",
-                entries=all_entries,
-                path="/",
-                total_files=total_files,
-                total_dirs=total_dirs,
-            )
+            combined.message = f"{combined.total_dirs} directories, {combined.total_files} files"
+            return combined
 
         mount, rel_path = self._registry.resolve(path)
         async with self.session_for(mount) as sess:
             result = await mount.backend.tree(
                 rel_path, max_depth=max_depth, session=sess, user_id=user_id
             )
-        result.path = self._prefix_path(result.path, mount.mount_path) or path
-        result.entries = [self._prefix_file_info(e, mount) for e in result.entries]
-        return result
+        return result.rebase(mount.mount_path)
 
     async def search(
         self,

@@ -171,10 +171,12 @@ class GroverStore(BaseStore):
         namespaces: set[tuple[str, ...]] = set()
         prefix_len = len(self.prefix) + 1  # +1 for trailing /
 
-        for entry in tree_result.entries:
-            if entry.is_directory:
+        from grover.search.results import TreeEvidence
+
+        for path, evs in tree_result._entries.items():
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in evs)
+            if is_dir:
                 continue
-            path = entry.path
             if not path.startswith(self.prefix + "/"):
                 continue
 
@@ -253,18 +255,21 @@ class GroverStore(BaseStore):
         if not tree_result.success:
             return []
 
+        from grover.search.results import TreeEvidence
+
         items: list[SearchItem] = []
-        for entry in tree_result.entries:
-            if entry.is_directory:
+        for entry_path, evs in tree_result._entries.items():
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in evs)
+            if is_dir:
                 continue
-            if not entry.path.endswith(".json"):
+            if not entry_path.endswith(".json"):
                 continue
 
-            ns, key = self._path_to_namespace_key(entry.path)
+            ns, key = self._path_to_namespace_key(entry_path)
             if ns is None:
                 continue
 
-            read_result = self.grover.read(entry.path)
+            read_result = self.grover.read(entry_path)
             if not read_result.success or read_result.content is None:
                 continue
 

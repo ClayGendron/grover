@@ -167,8 +167,8 @@ class TestGroverAsyncDirectAccess:
     async def test_list_dir(self, grover: GroverAsync):
         await grover.write("/project/a.txt", "a")
         await grover.write("/project/b.txt", "b")
-        entries = await grover.list_dir("/project")
-        names = {e["name"] for e in entries}
+        result = await grover.list_dir("/project")
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "a.txt" in names
         assert "b.txt" in names
 
@@ -234,8 +234,8 @@ class TestGroverAsyncMultiMount:
         assert (await g.read("/data/doc.txt")).content == "doc content"
 
         # List root should show both mounts (but not .grover)
-        entries = await g.list_dir("/")
-        names = {e["name"] for e in entries}
+        result = await g.list_dir("/")
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "app" in names
         assert "data" in names
         assert ".grover" not in names
@@ -536,8 +536,8 @@ class TestGroverAsyncMountOptions:
             "/visible",
             LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
         )
-        entries = await g.list_dir("/")
-        names = {e["name"] for e in entries}
+        result = await g.list_dir("/")
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "visible" in names
         assert "hidden" not in names
         await g.close()

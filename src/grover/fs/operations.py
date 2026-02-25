@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select
 
+from grover.search.results import ListDirEvidence, ListDirResult
+
 from .metadata import MetadataService, compute_content_hash
 from .types import (
     DeleteResult,
     EditResult,
-    ListResult,
     MoveResult,
     ReadResult,
     WriteResult,
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.files import FileBase
+    from grover.results import Evidence
 
     from .directories import DirectoryService
     from .sharing import SharingService
@@ -735,16 +737,17 @@ async def list_dir_db(
     *,
     metadata: MetadataService,
     file_model: type[FileBase],
-) -> ListResult:
+) -> ListDirResult:
     """List files and directories from database records."""
+
     path = normalize_path(path)
 
     if path != "/":
         dir_file = await metadata.get_file(session, path)
         if not dir_file:
-            return ListResult(success=False, message=f"Directory not found: {path}")
+            return ListDirResult(success=False, message=f"Directory not found: {path}")
         if not dir_file.is_directory:
-            return ListResult(success=False, message=f"Not a directory: {path}")
+            return ListDirResult(success=False, message=f"Not a directory: {path}")
 
     model = file_model
     if path == "/":
@@ -761,11 +764,21 @@ async def list_dir_db(
                 model.parent_path == path,
             )
         )
-    entries = [MetadataService.file_to_info(f) for f in result.scalars().all()]
 
-    return ListResult(
+    entries: dict[str, list[Evidence]] = {}
+    for f in result.scalars().all():
+        info = MetadataService.file_to_info(f)
+        entries[info.path] = [
+            ListDirEvidence(
+                strategy="list_dir",
+                path=info.path,
+                is_directory=info.is_directory,
+                size_bytes=info.size_bytes,
+            )
+        ]
+
+    return ListDirResult(
         success=True,
         message=f"Listed {len(entries)} items in {path}",
-        entries=entries,
-        path=path,
+        _entries=entries,
     )

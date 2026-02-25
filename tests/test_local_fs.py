@@ -119,7 +119,7 @@ class TestDiskSync:
 
         async with _session(factory) as session:
             result = await fs.list_dir("/", session=session)
-        names = [e.name for e in result.entries]
+        names = [p.rsplit("/", 1)[-1] for p in result.paths]
         assert "disk_only.py" in names
         await fs.close()
 
@@ -132,7 +132,7 @@ class TestDiskSync:
 
         async with _session(factory) as session:
             result = await fs.list_dir("/", session=session)
-        names = [e.name for e in result.entries]
+        names = [p.rsplit("/", 1)[-1] for p in result.paths]
         assert ".gitignore" not in names
         assert "visible.py" in names
         await fs.close()

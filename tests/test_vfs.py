@@ -224,7 +224,7 @@ class TestReadOperations:
     async def test_list_dir_root(self, two_mount_ufs):
         ufs, _ = two_mount_ufs
         result = await ufs.list_dir("/")
-        names = {e.name for e in result.entries}
+        names = {p.rsplit("/", 1)[-1] for p in result.paths}
         assert "local" in names
         assert "other" in names
 
@@ -232,7 +232,7 @@ class TestReadOperations:
         ufs, _ = rw_ufs
         await ufs.write("/local/a.txt", "a")
         result = await ufs.list_dir("/local")
-        paths = {e.path for e in result.entries}
+        paths = set(result.paths)
         assert any(p.startswith("/local/") for p in paths)
 
     async def test_exists_root(self, rw_ufs):

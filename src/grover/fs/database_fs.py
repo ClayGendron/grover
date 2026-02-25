@@ -11,6 +11,16 @@ from sqlmodel import select
 
 from grover.models.chunks import FileChunk
 from grover.models.files import File, FileVersion
+from grover.search.results import (
+    GlobEvidence,
+    GlobResult,
+    GrepEvidence,
+    GrepResult,
+    ListDirResult,
+    TreeEvidence,
+    TreeResult,
+)
+from grover.search.results import LineMatch as SearchLineMatch
 
 from .chunks import ChunkService
 from .directories import DirectoryService
@@ -31,16 +41,12 @@ from .types import (
     EditResult,
     FileInfo,
     GetVersionContentResult,
-    GlobResult,
-    GrepMatch,
-    GrepResult,
     ListResult,
     ListVersionsResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    TreeResult,
     WriteResult,
 )
 from .utils import (
@@ -56,6 +62,7 @@ if TYPE_CHECKING:
 
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
+    from grover.results import Evidence
 
     from .sharing import SharingService
 
@@ -292,7 +299,7 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession | None = None,
         user_id: str | None = None,
-    ) -> ListResult:
+    ) -> ListDirResult:
         sess = self._require_session(session)
         return await list_dir_db(
             path,
@@ -385,7 +392,6 @@ class DatabaseFileSystem:
                 success=False,
                 message="Empty glob pattern",
                 pattern=pattern,
-                path=path,
             )
 
         # Verify base directory exists (unless root)
@@ -396,14 +402,12 @@ class DatabaseFileSystem:
                     success=False,
                     message=f"Directory not found: {path}",
                     pattern=pattern,
-                    path=path,
                 )
             if not dir_file.is_directory:
                 return GlobResult(
                     success=False,
                     message=f"Not a directory: {path}",
                     pattern=pattern,
-                    path=path,
                 )
 
         model = self._file_model
@@ -437,18 +441,28 @@ class DatabaseFileSystem:
 
         # Post-filter with authoritative match (compile once for all candidates)
         glob_regex = compile_glob(pattern, path)
-        entries = [
-            MetadataService.file_to_info(f)
-            for f in candidates
-            if glob_regex is not None and glob_regex.match(f.path) is not None
+        matched = [
+            f for f in candidates if glob_regex is not None and glob_regex.match(f.path) is not None
         ]
+
+        entries: dict[str, list[Evidence]] = {}
+        for f in matched:
+            info = MetadataService.file_to_info(f)
+            entries[info.path] = [
+                GlobEvidence(
+                    strategy="glob",
+                    path=info.path,
+                    is_directory=info.is_directory,
+                    size_bytes=info.size_bytes,
+                    mime_type=info.mime_type,
+                )
+            ]
 
         return GlobResult(
             success=True,
             message=f"Found {len(entries)} match(es)",
-            entries=entries,
+            _entries=entries,
             pattern=pattern,
-            path=path,
         )
 
     async def grep(
@@ -485,7 +499,6 @@ class DatabaseFileSystem:
                 success=False,
                 message=f"Invalid regex: {e}",
                 pattern=pattern,
-                path=path,
             )
 
         # Get candidate files
@@ -496,12 +509,10 @@ class DatabaseFileSystem:
                     success=False,
                     message=glob_result.message,
                     pattern=pattern,
-                    path=path,
                 )
-            candidate_paths = [e.path for e in glob_result.entries if not e.is_directory]
+            candidate_paths = list(glob_result.files())
         else:
             model = self._file_model
-            # Check if path is a file (not a directory)
             if path != "/":
                 file = await self.metadata.get_file(sess, path)
                 if file and not file.is_directory:
@@ -520,7 +531,6 @@ class DatabaseFileSystem:
                         success=False,
                         message=f"Path not found: {path}",
                         pattern=pattern,
-                        path=path,
                     )
             else:
                 result = await sess.execute(
@@ -531,10 +541,11 @@ class DatabaseFileSystem:
                 )
                 candidate_paths = [row[0] for row in result.all()]
 
-        matches: list[GrepMatch] = []
+        result_entries: dict[str, list[Evidence]] = {}
         files_searched = 0
         files_matched = 0
         truncated = False
+        total_matches = 0
 
         for file_path in candidate_paths:
             if has_binary_extension(file_path):
@@ -546,7 +557,7 @@ class DatabaseFileSystem:
 
             files_searched += 1
             lines = content.split("\n")
-            file_matches: list[GrepMatch] = []
+            file_line_matches: list[SearchLineMatch] = []
 
             for i, line in enumerate(lines):
                 has_match = regex.search(line) is not None
@@ -554,17 +565,16 @@ class DatabaseFileSystem:
                     has_match = not has_match
 
                 if has_match:
-                    ctx_before = []
-                    ctx_after = []
+                    ctx_before: tuple[str, ...] = ()
+                    ctx_after: tuple[str, ...] = ()
                     if context_lines > 0:
                         start = max(0, i - context_lines)
-                        ctx_before = lines[start:i]
+                        ctx_before = tuple(lines[start:i])
                         end = min(len(lines), i + context_lines + 1)
-                        ctx_after = lines[i + 1 : end]
+                        ctx_after = tuple(lines[i + 1 : end])
 
-                    file_matches.append(
-                        GrepMatch(
-                            file_path=file_path,
+                    file_line_matches.append(
+                        SearchLineMatch(
                             line_number=i + 1,
                             line_content=line,
                             context_before=ctx_before,
@@ -572,30 +582,33 @@ class DatabaseFileSystem:
                         )
                     )
 
-                    if max_results_per_file > 0 and len(file_matches) >= max_results_per_file:
+                    if max_results_per_file > 0 and len(file_line_matches) >= max_results_per_file:
                         break
 
-            if file_matches:
+            if file_line_matches:
                 files_matched += 1
                 if files_only:
-                    # For files_only, keep just the first match per file
-                    matches.append(file_matches[0])
-                else:
-                    matches.extend(file_matches)
+                    file_line_matches = [file_line_matches[0]]
 
-                if max_results > 0 and len(matches) >= max_results:
+                result_entries[file_path] = [
+                    GrepEvidence(
+                        strategy="grep",
+                        path=file_path,
+                        line_matches=tuple(file_line_matches),
+                    )
+                ]
+                total_matches += len(file_line_matches)
+
+                if max_results > 0 and total_matches >= max_results:
                     truncated = True
-                    matches = matches[:max_results]
                     break
 
         if count_only:
-            total = files_matched if files_only else len(matches)
+            total = files_matched if files_only else total_matches
             return GrepResult(
                 success=True,
                 message=f"Count: {total}",
-                matches=[],
                 pattern=pattern,
-                path=path,
                 files_searched=files_searched,
                 files_matched=files_matched,
                 truncated=truncated,
@@ -603,10 +616,9 @@ class DatabaseFileSystem:
 
         return GrepResult(
             success=True,
-            message=f"Found {len(matches)} match(es) in {files_matched} file(s)",
-            matches=matches,
+            message=f"Found {total_matches} match(es) in {files_matched} file(s)",
+            _entries=result_entries,
             pattern=pattern,
-            path=path,
             files_searched=files_searched,
             files_matched=files_matched,
             truncated=truncated,
@@ -630,13 +642,11 @@ class DatabaseFileSystem:
                 return TreeResult(
                     success=False,
                     message=f"Directory not found: {path}",
-                    path=path,
                 )
             if not dir_file.is_directory:
                 return TreeResult(
                     success=False,
                     message=f"Not a directory: {path}",
-                    path=path,
                 )
 
         model = self._file_model
@@ -650,8 +660,6 @@ class DatabaseFileSystem:
             conditions.append(
                 model.path.like(path + "/%", escape="\\"),  # type: ignore[union-attr]
             )
-        # SQL-level depth filter using slash count:
-        # depth = LENGTH(path) - LENGTH(REPLACE(path, '/', ''))
         if max_depth is not None:
             max_slashes = base_depth + max_depth
             slash_count = func.length(model.path) - func.length(func.replace(model.path, "/", ""))
@@ -660,28 +668,30 @@ class DatabaseFileSystem:
         result = await sess.execute(select(model).where(*conditions))
         all_files = list(result.scalars().all())
 
-        entries = []
+        entries: dict[str, list[Evidence]] = {}
         total_files = 0
         total_dirs = 0
 
         for f in all_files:
             info = MetadataService.file_to_info(f)
-            entries.append(info)
+            depth = info.path.count("/") - base_depth
+            entries[info.path] = [
+                TreeEvidence(
+                    strategy="tree",
+                    path=info.path,
+                    depth=depth,
+                    is_directory=info.is_directory,
+                )
+            ]
             if f.is_directory:
                 total_dirs += 1
             else:
                 total_files += 1
 
-        # Sort by path for consistent output
-        entries.sort(key=lambda e: e.path)
-
         return TreeResult(
             success=True,
             message=f"{total_dirs} directories, {total_files} files",
-            entries=entries,
-            path=path,
-            total_files=total_files,
-            total_dirs=total_dirs,
+            _entries=dict(sorted(entries.items())),
         )
 
     # ------------------------------------------------------------------

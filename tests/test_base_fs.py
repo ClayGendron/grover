@@ -417,7 +417,7 @@ class TestDirectoryOps:
 
             result = await fs.list_dir("/", session=session)
             assert result.success is True
-            names = [e.name for e in result.entries]
+            names = [p.rsplit("/", 1)[-1] for p in result.paths]
             assert "hello.py" in names
             assert "src" in names
         await engine.dispose()
@@ -432,14 +432,14 @@ class TestDirectoryOps:
             await fs.write("/readme.md", "# readme\n", session=session)
 
             root_result = await fs.list_dir("/", session=session)
-            root_names = [e.name for e in root_result.entries]
+            root_names = [p.rsplit("/", 1)[-1] for p in root_result.paths]
             assert "src" in root_names
             assert "readme.md" in root_names
             assert "main.py" not in root_names
             assert "helper.py" not in root_names
 
             src_result = await fs.list_dir("/src", session=session)
-            src_names = [e.name for e in src_result.entries]
+            src_names = [p.rsplit("/", 1)[-1] for p in src_result.paths]
             assert "main.py" in src_names
             assert "lib" in src_names
             assert "helper.py" not in src_names
@@ -454,7 +454,7 @@ class TestDirectoryOps:
             await fs.delete("/a.py", session=session)
 
             result = await fs.list_dir("/", session=session)
-            names = [e.name for e in result.entries]
+            names = [p.rsplit("/", 1)[-1] for p in result.paths]
             assert "a.py" not in names
             assert "b.py" in names
         await engine.dispose()
