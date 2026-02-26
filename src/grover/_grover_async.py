@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from grover.events import EventBus, EventType, FileEvent
 from grover.facade.context import GroverContext
 from grover.facade.file_ops import FileOpsMixin
+from grover.facade.graph_ops import GraphOpsMixin
 from grover.facade.mounting import MountMixin
 from grover.facade.search_ops import SearchOpsMixin
 from grover.fs.exceptions import (
@@ -33,8 +34,6 @@ from grover.types import (
     DeleteResult,
     FileSearchCandidate,
     GetVersionContentResult,
-    GraphEvidence,
-    GraphResult,
     ListDirEvidence,
     RestoreResult,
     ShareResult,
@@ -46,13 +45,12 @@ from grover.types import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from grover.graph.protocols import GraphStore
     from grover.search.protocols import EmbeddingProvider, VectorStore
 
 logger = logging.getLogger(__name__)
 
 
-class GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin):
+class GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin, GraphOpsMixin):
     """Async facade wiring filesystem, graph, analyzers, event bus, and search.
 
     Mount-first API: create an instance, then add mounts.
@@ -93,14 +91,6 @@ class GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin):
         self._ctx.event_bus.register(EventType.FILE_RESTORED, self._on_file_restored)
         self._ctx.event_bus.register(EventType.CONNECTION_ADDED, self._on_connection_added)
         self._ctx.event_bus.register(EventType.CONNECTION_DELETED, self._on_connection_deleted)
-
-    def get_graph(self, path: str | None = None) -> GraphStore:
-        """Return the graph for the mount owning *path*, or the first available.
-
-        This replaces the old ``self.graph`` attribute which was removed
-        in favour of per-mount graphs.
-        """
-        return self._ctx.resolve_graph_any(path)
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -818,154 +808,6 @@ class GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin):
                 connection_type=connection_type,
                 session=sess,
             )
-
-    # ------------------------------------------------------------------
-    # Graph query wrappers (resolve mount → delegate to backend's graph)
-    # ------------------------------------------------------------------
-
-    def dependents(self, path: str) -> GraphResult:
-        """Return files that depend on *path*."""
-        refs = self._ctx.resolve_graph(path).dependents(path)
-        return GraphResult.from_refs(refs, strategy="dependents")
-
-    def dependencies(self, path: str) -> GraphResult:
-        """Return files that *path* depends on."""
-        refs = self._ctx.resolve_graph(path).dependencies(path)
-        return GraphResult.from_refs(refs, strategy="dependencies")
-
-    def impacts(self, path: str, max_depth: int = 3) -> GraphResult:
-        """Return files transitively impacted by changes to *path*."""
-        refs = self._ctx.resolve_graph(path).impacts(path, max_depth)
-        return GraphResult.from_refs(refs, strategy="impacts")
-
-    def path_between(self, source: str, target: str) -> GraphResult:
-        """Return the shortest path from *source* to *target*."""
-        refs = self._ctx.resolve_graph(source).path_between(source, target)
-        if refs is None:
-            return GraphResult(
-                success=True,
-                message="No path found",
-            )
-        return GraphResult.from_refs(refs, strategy="path_between")
-
-    def contains(self, path: str) -> GraphResult:
-        """Return files contained by *path*."""
-        refs = self._ctx.resolve_graph(path).contains(path)
-        return GraphResult.from_refs(refs, strategy="contains")
-
-    # ------------------------------------------------------------------
-    # Graph algorithm wrappers (capability-checked)
-    # ------------------------------------------------------------------
-
-    def pagerank(
-        self,
-        *,
-        personalization: dict[str, float] | None = None,
-        path: str | None = None,
-    ) -> GraphResult:
-        """Run PageRank on the knowledge graph.
-
-        *path* selects which mount's graph to use (defaults to first visible).
-        Raises :class:`~grover.fs.exceptions.CapabilityNotSupportedError` if
-        the graph backend does not support centrality algorithms.
-        """
-        from grover.graph.protocols import SupportsCentrality
-
-        graph = self._ctx.resolve_graph_any(path)
-        if not isinstance(graph, SupportsCentrality):
-            msg = "Graph backend does not support centrality algorithms"
-            raise CapabilityNotSupportedError(msg)
-        scores = graph.pagerank(personalization=personalization)
-        candidates = [
-            FileSearchCandidate(
-                path=node_path,
-                evidence=[
-                    GraphEvidence(
-                        strategy="pagerank",
-                        path=node_path,
-                        algorithm="pagerank",
-                    )
-                ],
-            )
-            for node_path in scores
-        ]
-        return GraphResult(
-            success=True,
-            message=f"PageRank computed for {len(candidates)} node(s)",
-            candidates=candidates,
-        )
-
-    def ancestors(self, path: str) -> GraphResult:
-        """All transitive predecessors of *path* in the knowledge graph."""
-        from grover.graph.protocols import SupportsTraversal
-
-        graph = self._ctx.resolve_graph(path)
-        if not isinstance(graph, SupportsTraversal):
-            msg = "Graph backend does not support traversal algorithms"
-            raise CapabilityNotSupportedError(msg)
-        node_set = graph.ancestors(path)
-        return GraphResult.from_paths(sorted(node_set), strategy="ancestors")
-
-    def descendants(self, path: str) -> GraphResult:
-        """All transitive successors of *path* in the knowledge graph."""
-        from grover.graph.protocols import SupportsTraversal
-
-        graph = self._ctx.resolve_graph(path)
-        if not isinstance(graph, SupportsTraversal):
-            msg = "Graph backend does not support traversal algorithms"
-            raise CapabilityNotSupportedError(msg)
-        node_set = graph.descendants(path)
-        return GraphResult.from_paths(sorted(node_set), strategy="descendants")
-
-    def meeting_subgraph(
-        self,
-        paths: list[str],
-        *,
-        max_size: int = 50,
-    ) -> GraphResult:
-        """Extract the subgraph connecting *paths* via shortest paths."""
-        from grover.graph.protocols import SupportsSubgraph
-
-        graph = self._ctx.resolve_graph_any(paths[0] if paths else None)
-        if not isinstance(graph, SupportsSubgraph):
-            msg = "Graph backend does not support subgraph extraction"
-            raise CapabilityNotSupportedError(msg)
-        sub = graph.meeting_subgraph(paths, max_size=max_size)
-        return GraphResult.from_paths(sorted(sub.nodes), strategy="meeting_subgraph")
-
-    def neighborhood(
-        self,
-        path: str,
-        *,
-        max_depth: int = 2,
-        direction: str = "both",
-        edge_types: list[str] | None = None,
-    ) -> GraphResult:
-        """Extract the neighborhood subgraph around *path*."""
-        from grover.graph.protocols import SupportsSubgraph
-
-        graph = self._ctx.resolve_graph(path)
-        if not isinstance(graph, SupportsSubgraph):
-            msg = "Graph backend does not support subgraph extraction"
-            raise CapabilityNotSupportedError(msg)
-        sub = graph.neighborhood(
-            path,
-            max_depth=max_depth,
-            direction=direction,
-            edge_types=edge_types,
-        )
-        return GraphResult.from_paths(sorted(sub.nodes), strategy="neighborhood")
-
-    def find_nodes(self, *, path: str | None = None, **attrs: object) -> GraphResult:
-        """Find graph nodes matching all attribute predicates."""
-        from grover.graph.protocols import SupportsFiltering
-
-        graph = self._ctx.resolve_graph_any(path)
-        if not isinstance(graph, SupportsFiltering):
-            msg = "Graph backend does not support filtering"
-            raise CapabilityNotSupportedError(msg)
-        node_list = graph.find_nodes(**attrs)
-        return GraphResult.from_paths(node_list, strategy="find_nodes")
 
     # ------------------------------------------------------------------
     # Index and persistence
