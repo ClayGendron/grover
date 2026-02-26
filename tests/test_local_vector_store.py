@@ -271,6 +271,10 @@ class TestLocalMethods:
     def test_index_name(self, store: LocalVectorStore):
         assert store.index_name == "local"
 
+    def test_dimension_property_returns_constructor_value(self):
+        store = LocalVectorStore(dimension=128)
+        assert store.dimension == 128
+
 
 # ==================================================================
 # Namespace rejection

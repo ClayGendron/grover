@@ -694,10 +694,12 @@ from grover.search.fulltext import FullTextStore, FullTextResult
 ### SearchEngine
 
 ```python
-SearchEngine(*, vector=None, embedding=None, lexical=None, hybrid=None)
+SearchEngine(*, vector=None, embedding=None, lexical=None, hybrid=None, model_name=None)
 ```
 
 Orchestrates embedding, vector storage, and full-text search. This is what `GroverAsync` uses internally. All components are optional — configure only what you need.
+
+**Construction-time validation:** If both `vector` and `embedding` are provided and the vector store exposes a `dimension` property, the engine verifies that the store's dimension matches `embedding.dimensions`. If `model_name` is provided with an `embedding`, the engine verifies they agree. Both checks raise `ValueError` on mismatch.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -705,6 +707,7 @@ Orchestrates embedding, vector storage, and full-text search. This is what `Grov
 | `embedding` | `EmbeddingProvider | None` | Embedding provider for vectorization |
 | `lexical` | `FullTextStore | None` | Full-text store for BM25 keyword search |
 | `hybrid` | `object | None` | Hybrid search provider (reserved) |
+| `model_name` | `str | None` | Declared model name — validated against embedding provider if both are set |
 
 | Method | Description |
 |--------|-------------|
@@ -816,6 +819,7 @@ Vector stores can implement additional capabilities, checked at runtime via `isi
 ```python
 from grover.search.stores import LocalVectorStore
 store = LocalVectorStore(dimension=384, metric="cosine")
+store.dimension  # 384
 ```
 
 **PineconeVectorStore** — Pinecone cloud vector database. Requires the `pinecone` extra.
@@ -908,8 +912,21 @@ SQLModel table classes for direct database access if needed.
 | `FileVersion` | `grover_file_versions` | Version snapshots and diffs |
 | `FileChunk` | `grover_file_chunks` | Code chunks (functions, classes) |
 | `FileConnection` | `grover_file_connections` | File-to-file connections/edges |
-| `Vector` | — | Runtime `list[float]` subclass with `Vector[N]` dimension enforcement |
-| `VectorType` | — | SQLAlchemy `TypeDecorator` — stores Vector as JSON text |
+| `Vector` | — | Runtime `list[float]` subclass with dimension and model name tracking (see below) |
+| `VectorType` | — | SQLAlchemy `TypeDecorator` — stores Vector as JSON text, validates dimension and model |
+
+#### Vector subscript forms
+
+```python
+Vector[1536]                          # dimension only
+Vector["text-embedding-3-large"]      # model name only
+Vector[1536, "text-embedding-3-large"] # both
+Vector.for_provider(my_provider)       # derive from EmbeddingProvider
+```
+
+Instances expose `.dimension` and `.model_name` read-only properties (both `int | None` and `str | None`).
+
+`VectorType` accepts optional `dimension` and `model_name` parameters. On bind, it validates that a `Vector` instance's model name matches the column's declared model name (plain `list[float]` values and `Vector` instances without a model name skip the check). `VectorType.from_provider(provider)` creates a `VectorType` with both dimension and model name from an `EmbeddingProvider`.
 
 ### Events
 

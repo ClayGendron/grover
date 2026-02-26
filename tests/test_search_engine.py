@@ -349,3 +349,97 @@ class TestProperties:
 
     def test_embedding_none(self, engine_no_provider: SearchEngine):
         assert engine_no_provider.embedding is None
+
+
+# ==================================================================
+# Dimension validation
+# ==================================================================
+
+
+class TestDimensionValidation:
+    def test_matching_dimensions_accepted(self):
+        store = LocalVectorStore(dimension=_FAKE_DIM)
+        engine = SearchEngine(vector=store, embedding=FakeProvider())
+        assert engine.vector is store
+
+    def test_mismatched_dimensions_rejected(self):
+        store = LocalVectorStore(dimension=64)
+        with pytest.raises(ValueError, match="Dimension mismatch"):
+            SearchEngine(vector=store, embedding=FakeProvider())
+
+    def test_store_without_dimension_skips_check(self):
+        class NoDimStore:
+            """Mock store without a dimension attribute."""
+
+            async def upsert(self, entries, *, namespace=None):
+                pass
+
+            async def search(
+                self,
+                vector,
+                *,
+                k=10,
+                namespace=None,
+                filter=None,  # noqa: A002
+                include_metadata=True,
+                score_threshold=None,
+            ):
+                return []
+
+            async def delete(self, ids, *, namespace=None):
+                pass
+
+            async def fetch(self, ids, *, namespace=None):
+                return []
+
+            async def connect(self):
+                pass
+
+            async def close(self):
+                pass
+
+            @property
+            def index_name(self):
+                return "no-dim"
+
+        engine = SearchEngine(vector=NoDimStore(), embedding=FakeProvider())
+        assert engine.vector is not None
+
+    def test_no_embedding_skips_check(self):
+        store = LocalVectorStore(dimension=64)
+        engine = SearchEngine(vector=store)
+        assert engine.embedding is None
+
+    def test_no_vector_skips_check(self):
+        engine = SearchEngine(embedding=FakeProvider())
+        assert engine.vector is None
+
+
+# ==================================================================
+# Model name validation
+# ==================================================================
+
+
+class TestModelNameValidation:
+    def test_matching_model_name_accepted(self):
+        store = LocalVectorStore(dimension=_FAKE_DIM)
+        engine = SearchEngine(vector=store, embedding=FakeProvider(), model_name="fake")
+        assert engine.model_name == "fake"
+
+    def test_mismatched_model_name_rejected(self):
+        store = LocalVectorStore(dimension=_FAKE_DIM)
+        with pytest.raises(ValueError, match="Model mismatch"):
+            SearchEngine(vector=store, embedding=FakeProvider(), model_name="wrong")
+
+    def test_model_name_without_embedding_stored(self):
+        engine = SearchEngine(model_name="x")
+        assert engine.model_name == "x"
+
+    def test_model_name_none_by_default(self):
+        engine = SearchEngine()
+        assert engine.model_name is None
+
+    def test_model_name_property(self):
+        store = LocalVectorStore(dimension=_FAKE_DIM)
+        engine = SearchEngine(vector=store, embedding=FakeProvider(), model_name="fake")
+        assert engine.model_name == "fake"

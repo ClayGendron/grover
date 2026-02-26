@@ -350,6 +350,8 @@ The search layer follows the same two-protocol pattern as the filesystem:
 
 **SearchEngine** orchestrates them: embed text via provider → store vectors via store → search by embedding queries. `GroverAsync` creates a `SearchEngine` internally and wires it to the `EventBus`.
 
+**Construction-time validation.** `SearchEngine` validates component compatibility at construction time rather than at query time. If a vector store exposes a `dimension` property (duck-typed via `getattr`), the engine checks it matches the embedding provider's `dimensions`. A declared `model_name` is cross-checked against the provider's `model_name`. This catches model swaps and dimension mismatches before any data is indexed.
+
 ### Capability protocols (search)
 
 Like filesystem backends, vector stores can advertise capabilities via runtime-checkable protocols:

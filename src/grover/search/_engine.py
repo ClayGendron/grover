@@ -43,11 +43,34 @@ class SearchEngine:
         embedding: EmbeddingProvider | None = None,
         lexical: FullTextStore | None = None,
         hybrid: object | None = None,
+        model_name: str | None = None,
     ) -> None:
+        # Dimension validation: embedding provider vs vector store
+        if embedding is not None and vector is not None:
+            store_dim = getattr(vector, "dimension", None)
+            if store_dim is not None and embedding.dimensions != store_dim:
+                msg = (
+                    f"Dimension mismatch: embedding provider "
+                    f"'{embedding.model_name}' produces "
+                    f"{embedding.dimensions}-dim vectors, but vector "
+                    f"store expects {store_dim}-dim"
+                )
+                raise ValueError(msg)
+
+        # Model name validation: declared name vs embedding provider
+        if model_name is not None and embedding is not None and embedding.model_name != model_name:
+            msg = (
+                f"Model mismatch: declared model_name "
+                f"'{model_name}' does not match embedding "
+                f"provider model '{embedding.model_name}'"
+            )
+            raise ValueError(msg)
+
         self._store: VectorStore | None = vector
         self._embedding_provider = embedding
         self._lexical = lexical
         self._hybrid = hybrid
+        self._model_name = model_name
 
     # ------------------------------------------------------------------
     # High-level operations (what GroverAsync calls)
@@ -259,6 +282,11 @@ class SearchEngine:
     def lexical(self) -> FullTextStore | None:
         """Return the lexical (full-text) store, if any."""
         return self._lexical
+
+    @property
+    def model_name(self) -> str | None:
+        """Return the declared model name, if any."""
+        return self._model_name
 
     def supported_protocols(self) -> set[type]:
         """Return mount-level dispatch protocols based on configured components.

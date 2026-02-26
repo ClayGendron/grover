@@ -207,6 +207,11 @@ class LocalVectorStore:
         """Return the index name."""
         return self._index_name
 
+    @property
+    def dimension(self) -> int:
+        """Return the vector dimension this store was created with."""
+        return self._dimension
+
     # ------------------------------------------------------------------
     # Local-specific methods
     # ------------------------------------------------------------------
