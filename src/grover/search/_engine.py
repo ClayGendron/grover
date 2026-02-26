@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from grover.ref import Ref
 from grover.search.types import SearchResult, VectorEntry
@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.search.extractors import EmbeddableChunk
+    from grover.search.fulltext.protocol import FullTextStore
     from grover.search.fulltext.types import FullTextResult
     from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.search.stores.local import LocalVectorStore
@@ -40,8 +41,8 @@ class SearchEngine:
         *,
         vector: VectorStore | None = None,
         embedding: EmbeddingProvider | None = None,
-        lexical: Any | None = None,
-        hybrid: Any | None = None,
+        lexical: FullTextStore | None = None,
+        hybrid: object | None = None,
     ) -> None:
         self._store: VectorStore | None = vector
         self._embedding_provider = embedding
@@ -153,6 +154,7 @@ class SearchEngine:
             raise RuntimeError(msg)
 
         vector = await self._embed(query)
+        assert self._store is not None
         vs_results = await self._store.search(vector, k=k)
 
         return [
@@ -254,7 +256,7 @@ class SearchEngine:
         return self._embedding_provider
 
     @property
-    def lexical(self) -> Any | None:
+    def lexical(self) -> FullTextStore | None:
         """Return the lexical (full-text) store, if any."""
         return self._lexical
 

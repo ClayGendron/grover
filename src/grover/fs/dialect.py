@@ -11,8 +11,11 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from grover.models.files import File
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy import Engine
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+    from sqlalchemy.sql.expression import ColumnElement
 
 
 def get_dialect(engine: Engine | AsyncEngine) -> str:
@@ -148,7 +151,7 @@ async def _upsert_mssql(
     return result.rowcount  # type: ignore[return-value]
 
 
-def now_expression(dialect: str) -> Any:
+def now_expression(dialect: str) -> ColumnElement[datetime]:
     """Return a dialect-appropriate 'now' expression for SQL.
 
     - SQLite: func.datetime('now')

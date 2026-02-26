@@ -3,8 +3,6 @@
 Provides ``FileConnectionBase`` (non-table base) and ``FileConnection``
 (concrete table).  Subclass ``FileConnectionBase`` with ``table=True`` and
 a custom ``__tablename__`` to use a different table name per backend.
-
-Replaces the previous ``GroverEdge`` model.
 """
 
 from __future__ import annotations

@@ -1,13 +1,21 @@
 """GroverRetriever — LangChain retriever backed by Grover semantic search."""
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING
 
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
 from grover._grover import Grover
+
+if TYPE_CHECKING:
+    from langchain_core.callbacks import (
+        AsyncCallbackManagerForRetrieverRun,
+        CallbackManagerForRetrieverRun,
+    )
+
+    from grover.types import VectorSearchResult
 
 
 class GroverRetriever(BaseRetriever):
@@ -48,7 +56,7 @@ class GroverRetriever(BaseRetriever):
         self,
         query: str,
         *,
-        run_manager: Any = None,
+        run_manager: "CallbackManagerForRetrieverRun | None" = None,
     ) -> list[Document]:
         """Search Grover's vector index and return matching documents.
 
@@ -69,13 +77,13 @@ class GroverRetriever(BaseRetriever):
         self,
         query: str,
         *,
-        run_manager: Any = None,
+        run_manager: "AsyncCallbackManagerForRetrieverRun | None" = None,
     ) -> list[Document]:
         """Async variant — delegates to sync via thread executor."""
-        return await asyncio.to_thread(self._get_relevant_documents, query, run_manager=run_manager)
+        return await asyncio.to_thread(self._get_relevant_documents, query, run_manager=None)
 
     @staticmethod
-    def _path_to_document(path: str, result: Any) -> Document:
+    def _path_to_document(path: str, result: "VectorSearchResult") -> Document:
         """Convert a path from VectorSearchResult to a LangChain Document."""
         metadata: dict[str, object] = {
             "path": path,

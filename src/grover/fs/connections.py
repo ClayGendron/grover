@@ -46,9 +46,9 @@ class ConnectionService:
 
         if existing is not None:
             # Update existing
-            existing.weight = weight  # type: ignore[assignment]
+            existing.weight = weight
             if metadata:
-                existing.metadata_json = json.dumps(metadata)  # type: ignore[assignment]
+                existing.metadata_json = json.dumps(metadata)
             await session.flush()
             return ConnectionResult(
                 path=path,

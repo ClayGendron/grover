@@ -64,8 +64,8 @@ class PineconeVectorStore:
         self._index_name = index_name
         self._api_key = api_key or os.environ.get("PINECONE_API_KEY", "")
         self._default_namespace = namespace
-        self._client: Any = None
-        self._index: Any = None
+        self._client: PineconeAsyncio | None = None
+        self._index: Any | None = None
 
     # ------------------------------------------------------------------
     # VectorStore protocol
@@ -390,7 +390,7 @@ class PineconeVectorStore:
             raise RuntimeError(msg)
         return self._index
 
-    def _require_client(self) -> Any:
+    def _require_client(self) -> PineconeAsyncio:
         """Return the client, raising if not connected."""
         if self._client is None:
             msg = "Not connected. Call connect() first."

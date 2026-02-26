@@ -11,7 +11,7 @@ logic lives here, not in VFS.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from grover.types.operations import (
     DeleteResult,
@@ -569,7 +569,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession | None = None,
         follow: bool = False,
-        sharing: Any = None,
+        sharing: SharingService | None = None,
         user_id: str | None = None,
     ) -> MoveResult:
         uid = self._require_user_id(user_id)
@@ -593,8 +593,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
         )
         src_orig = src if src_shared else None
         dest_orig = dest if dest_shared else None
-        result.old_path = self._restore_path(result.old_path, uid, src_orig)
-        result.new_path = self._restore_path(result.new_path, uid, dest_orig)
+        result.old_path = self._restore_path(result.old_path, uid, src_orig) or result.old_path
+        result.new_path = self._restore_path(result.new_path, uid, dest_orig) or result.new_path
         return result
 
     async def copy(

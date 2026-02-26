@@ -35,7 +35,7 @@ class RustworkxGraph:
     # Node operations
     # ------------------------------------------------------------------
 
-    def add_node(self, path: str, **attrs: Any) -> None:
+    def add_node(self, path: str, **attrs: object) -> None:
         """Add or update a node.  Merges *attrs* if the node already exists."""
         if path in self._path_to_idx:
             idx = self._path_to_idx[path]
@@ -79,7 +79,7 @@ class RustworkxGraph:
         *,
         weight: float = 1.0,
         edge_id: str | None = None,
-        **attrs: Any,
+        **attrs: object,
     ) -> None:
         """Add or upsert a directed edge.
 
@@ -652,7 +652,7 @@ class RustworkxGraph:
     # Filtering (SupportsFiltering)
     # ------------------------------------------------------------------
 
-    def find_nodes(self, **attrs: Any) -> list[str]:
+    def find_nodes(self, **attrs: object) -> list[str]:
         """Find nodes matching all *attrs* (AND logic).
 
         Callable values are used as predicates; non-callable values are
@@ -670,7 +670,7 @@ class RustworkxGraph:
                     match = False
                     break
                 if callable(value):
-                    if not value(data[key]):
+                    if not value(data[key]):  # type: ignore[operator]
                         match = False
                         break
                 elif data[key] != value:

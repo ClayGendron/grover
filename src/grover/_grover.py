@@ -4,24 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover._grover_async import GroverAsync
 from grover.fs.permissions import Permission
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+    from grover.fs.protocol import StorageBackend
     from grover.graph.protocols import GraphStore
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
+    from grover.mount import Mount
+    from grover.search.protocols import EmbeddingProvider, VectorStore
     from grover.types import (
         ConnectionResult,
         DeleteResult,
         EditResult,
         FileSearchResult,
+        GetVersionContentResult,
         GlobResult,
         GraphResult,
         GrepResult,
@@ -29,13 +34,17 @@ if TYPE_CHECKING:
         ListDirResult,
         MoveResult,
         ReadResult,
+        RestoreResult,
         ShareResult,
         ShareSearchResult,
         TrashResult,
         TreeResult,
         VectorSearchResult,
+        VersionResult,
         WriteResult,
     )
+
+_T = TypeVar("_T")
 
 
 class Grover:
@@ -57,8 +66,8 @@ class Grover:
         self,
         *,
         data_dir: str | None = None,
-        embedding_provider: Any = None,
-        vector_store: Any = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_store: VectorStore | None = None,
     ) -> None:
         self._closed = False
         self._lock = threading.RLock()
@@ -78,7 +87,7 @@ class Grover:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _run(self, coro: Any) -> Any:
+    def _run(self, coro: Coroutine[object, object, _T]) -> _T:
         """Submit *coro* to the private loop and block for the result."""
         with self._lock:
             future = asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -106,8 +115,8 @@ class Grover:
 
     def add_mount(
         self,
-        path_or_mount: Any = None,
-        filesystem: Any = None,
+        path_or_mount: str | Mount | None = None,
+        filesystem: StorageBackend | None = None,
         *,
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
@@ -260,22 +269,26 @@ class Grover:
     # Version / Trash / Reconciliation wrappers (sync)
     # ------------------------------------------------------------------
 
-    def list_versions(self, path: str, *, user_id: str | None = None) -> Any:
+    def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
         return self._run(self._async.list_versions(path, user_id=user_id))
 
-    def get_version_content(self, path: str, version: int, *, user_id: str | None = None) -> Any:
+    def get_version_content(
+        self, path: str, version: int, *, user_id: str | None = None
+    ) -> GetVersionContentResult:
         return self._run(self._async.get_version_content(path, version, user_id=user_id))
 
-    def restore_version(self, path: str, version: int, *, user_id: str | None = None) -> Any:
+    def restore_version(
+        self, path: str, version: int, *, user_id: str | None = None
+    ) -> RestoreResult:
         return self._run(self._async.restore_version(path, version, user_id=user_id))
 
     def list_trash(self, *, user_id: str | None = None) -> TrashResult:
         return self._run(self._async.list_trash(user_id=user_id))
 
-    def restore_from_trash(self, path: str, *, user_id: str | None = None) -> Any:
+    def restore_from_trash(self, path: str, *, user_id: str | None = None) -> RestoreResult:
         return self._run(self._async.restore_from_trash(path, user_id=user_id))
 
-    def empty_trash(self, *, user_id: str | None = None) -> Any:
+    def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
         return self._run(self._async.empty_trash(user_id=user_id))
 
     def reconcile(self, mount_path: str | None = None) -> dict[str, int]:
@@ -292,7 +305,7 @@ class Grover:
         permission: str = "read",
         *,
         user_id: str,
-        expires_at: Any = None,
+        expires_at: datetime | None = None,
     ) -> ShareResult:
         """Share a file or directory with another user."""
         return self._run(
@@ -361,7 +374,7 @@ class Grover:
         *,
         direction: str = "both",
         connection_type: str | None = None,
-    ) -> list[Any]:
+    ) -> list[object]:
         return self._run(
             self._async.list_connections(
                 path,
@@ -435,7 +448,7 @@ class Grover:
             edge_types=edge_types,
         )
 
-    def find_nodes(self, *, path: str | None = None, **attrs: Any) -> GraphResult:
+    def find_nodes(self, *, path: str | None = None, **attrs: object) -> GraphResult:
         """Find graph nodes matching all attribute predicates."""
         return self._async.find_nodes(path=path, **attrs)
 

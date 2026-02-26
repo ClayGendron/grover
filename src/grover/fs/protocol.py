@@ -16,8 +16,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.fs.sharing import SharingService
     from grover.types.operations import (
         ConnectionResult,
         DeleteResult,
@@ -28,12 +31,14 @@ if TYPE_CHECKING:
         MoveResult,
         ReadResult,
         RestoreResult,
+        ShareResult,
         WriteResult,
     )
     from grover.types.search import (
         GlobResult,
         GrepResult,
         ListDirResult,
+        ShareSearchResult,
         TrashResult,
         TreeResult,
         VersionResult,
@@ -151,7 +156,7 @@ class StorageBackend(Protocol):
         *,
         session: AsyncSession | None = None,
         follow: bool = False,
-        sharing: Any = None,
+        sharing: SharingService | None = None,
         user_id: str | None = None,
     ) -> MoveResult: ...
 
@@ -284,8 +289,8 @@ class SupportsReBAC(Protocol):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-        expires_at: Any | None = None,
-    ) -> Any: ...
+        expires_at: datetime | None = None,
+    ) -> ShareResult: ...
 
     async def unshare(
         self,
@@ -302,14 +307,14 @@ class SupportsReBAC(Protocol):
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> list[Any]: ...
+    ) -> ShareSearchResult: ...
 
     async def list_shared_with_me(
         self,
         *,
         user_id: str,
         session: AsyncSession | None = None,
-    ) -> list[Any]: ...
+    ) -> ShareSearchResult: ...
 
 
 @runtime_checkable
@@ -354,7 +359,7 @@ class SupportsConnections(Protocol):
         direction: str = "both",
         connection_type: str | None = None,
         session: AsyncSession | None = None,
-    ) -> list[Any]: ...
+    ) -> list[object]: ...
 
 
 @runtime_checkable
@@ -382,4 +387,4 @@ class SupportsFileChunks(Protocol):
         file_path: str,
         *,
         session: AsyncSession | None = None,
-    ) -> list[Any]: ...
+    ) -> list[object]: ...

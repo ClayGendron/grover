@@ -21,7 +21,7 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic_core import core_schema
 from sqlalchemy import Text
@@ -30,6 +30,7 @@ from sqlalchemy.types import TypeDecorator
 if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
+    from sqlalchemy.engine.interfaces import Dialect
 
 
 class Vector(list[float]):
@@ -42,7 +43,7 @@ class Vector(list[float]):
 
     _dimension: int | None = None
 
-    def __class_getitem__(cls, dimension: int) -> type[Vector]:
+    def __class_getitem__(cls, dimension: int) -> type[Vector]:  # type: ignore[override]
         """Create a dimension-specific Vector subclass."""
         return type(f"Vector[{dimension}]", (cls,), {"_dimension": dimension})
 
@@ -55,7 +56,7 @@ class Vector(list[float]):
     @classmethod
     def __get_pydantic_core_schema__(
         cls,
-        source_type: Any,
+        source_type: type,
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
         return core_schema.no_info_plain_validator_function(
@@ -67,13 +68,13 @@ class Vector(list[float]):
         )
 
     @classmethod
-    def _pydantic_validate(cls, value: Any) -> Vector | None:
+    def _pydantic_validate(cls, value: object) -> Vector | None:
         if value is None:
             return None
         if isinstance(value, Vector):
             return value
         if isinstance(value, list):
-            return cls(value)
+            return cls(value)  # type: ignore[arg-type]
         msg = f"Expected list or Vector, got {type(value)}"
         raise ValueError(msg)
 
@@ -91,7 +92,7 @@ class VectorType(TypeDecorator[Vector]):
         super().__init__()
         self.dimension = dimension
 
-    def process_bind_param(self, value: list[float] | None, dialect: Any) -> str | None:
+    def process_bind_param(self, value: list[float] | None, dialect: Dialect) -> str | None:
         if value is None:
             return None
         if self.dimension is not None and len(value) != self.dimension:
@@ -99,7 +100,7 @@ class VectorType(TypeDecorator[Vector]):
             raise ValueError(msg)
         return json.dumps(list(value))
 
-    def process_result_value(self, value: str | None, dialect: Any) -> Vector | None:
+    def process_result_value(self, value: str | None, dialect: Dialect) -> Vector | None:
         if value is None:
             return None
         data = json.loads(value)

@@ -694,7 +694,7 @@ from grover import (
     SearchEngine,
     EmbeddingProvider, VectorStore,
     VectorEntry, IndexConfig, IndexInfo,
-    FilterExpression, eq, gt, and_, or_,
+    FilterExpression, FilterValue, eq, gt, and_, or_,
 )
 from grover.search.types import SearchResult, VectorHit  # internal types used by SearchEngine
 from grover.search.fulltext import FullTextStore, FullTextResult
@@ -713,7 +713,7 @@ Orchestrates embedding, vector storage, and full-text search. This is what `Grov
 | `vector` | `VectorStore | None` | Vector store for semantic search |
 | `embedding` | `EmbeddingProvider | None` | Embedding provider for vectorization |
 | `lexical` | `FullTextStore | None` | Full-text store for BM25 keyword search |
-| `hybrid` | `Any | None` | Hybrid search provider (reserved) |
+| `hybrid` | `object | None` | Hybrid search provider (reserved) |
 
 | Method | Description |
 |--------|-------------|

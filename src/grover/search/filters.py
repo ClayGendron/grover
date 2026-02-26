@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+FilterValue = str | int | float | bool
+"""Scalar types valid as filter comparison values."""
+
 # ------------------------------------------------------------------
 # Enums
 # ------------------------------------------------------------------
@@ -49,7 +52,7 @@ class Comparison:
 
     field: str
     op: FilterOp
-    value: Any
+    value: FilterValue | list[FilterValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,42 +78,42 @@ FilterExpression = Comparison | LogicalGroup
 # ------------------------------------------------------------------
 
 
-def eq(field: str, value: Any) -> Comparison:
+def eq(field: str, value: FilterValue) -> Comparison:
     """``field == value``."""
     return Comparison(field=field, op=FilterOp.EQ, value=value)
 
 
-def ne(field: str, value: Any) -> Comparison:
+def ne(field: str, value: FilterValue) -> Comparison:
     """``field != value``."""
     return Comparison(field=field, op=FilterOp.NE, value=value)
 
 
-def gt(field: str, value: Any) -> Comparison:
+def gt(field: str, value: FilterValue) -> Comparison:
     """``field > value``."""
     return Comparison(field=field, op=FilterOp.GT, value=value)
 
 
-def gte(field: str, value: Any) -> Comparison:
+def gte(field: str, value: FilterValue) -> Comparison:
     """``field >= value``."""
     return Comparison(field=field, op=FilterOp.GTE, value=value)
 
 
-def lt(field: str, value: Any) -> Comparison:
+def lt(field: str, value: FilterValue) -> Comparison:
     """``field < value``."""
     return Comparison(field=field, op=FilterOp.LT, value=value)
 
 
-def lte(field: str, value: Any) -> Comparison:
+def lte(field: str, value: FilterValue) -> Comparison:
     """``field <= value``."""
     return Comparison(field=field, op=FilterOp.LTE, value=value)
 
 
-def in_(field: str, values: list[Any]) -> Comparison:
+def in_(field: str, values: list[FilterValue]) -> Comparison:
     """``field IN values``."""
     return Comparison(field=field, op=FilterOp.IN, value=values)
 
 
-def not_in(field: str, values: list[Any]) -> Comparison:
+def not_in(field: str, values: list[FilterValue]) -> Comparison:
     """``field NOT IN values``."""
     return Comparison(field=field, op=FilterOp.NOT_IN, value=values)
 
@@ -177,7 +180,7 @@ _DATABRICKS_OPS: dict[FilterOp, str] = {
 }
 
 
-def _databricks_quote(value: Any) -> str:
+def _databricks_quote(value: FilterValue) -> str:
     """Quote a value for use in a Databricks filter string."""
     if isinstance(value, str):
         # Escape single quotes within the string
@@ -201,9 +204,11 @@ def compile_databricks(expr: FilterExpression) -> str:
     """
     if isinstance(expr, Comparison):
         if expr.op == FilterOp.IN:
+            assert isinstance(expr.value, list)
             items = ", ".join(_databricks_quote(v) for v in expr.value)
             return f"{expr.field} IN ({items})"
         if expr.op == FilterOp.NOT_IN:
+            assert isinstance(expr.value, list)
             items = ", ".join(_databricks_quote(v) for v in expr.value)
             return f"{expr.field} NOT IN ({items})"
         if expr.op == FilterOp.EXISTS:
@@ -212,6 +217,7 @@ def compile_databricks(expr: FilterExpression) -> str:
             return f"{expr.field} IS NULL"
 
         op_str = _DATABRICKS_OPS[expr.op]
+        assert not isinstance(expr.value, list)
         return f"{expr.field} {op_str} {_databricks_quote(expr.value)}"
 
     # LogicalGroup
@@ -220,7 +226,7 @@ def compile_databricks(expr: FilterExpression) -> str:
     return f"({joiner.join(parts)})"
 
 
-def compile_dict(expr: FilterExpression) -> dict[str, Any]:
+def compile_dict(expr: FilterExpression) -> dict[str, FilterValue]:
     """Compile a ``FilterExpression`` to a simple dict for local stores.
 
     Only supports equality comparisons (``EQ``).  Raises ``ValueError`` for
@@ -239,6 +245,7 @@ def compile_dict(expr: FilterExpression) -> dict[str, Any]:
         if expr.op != FilterOp.EQ:
             msg = f"compile_dict only supports EQ comparisons, got {expr.op.value}"
             raise ValueError(msg)
+        assert not isinstance(expr.value, list)
         return {expr.field: expr.value}
 
     # LogicalGroup
@@ -246,7 +253,7 @@ def compile_dict(expr: FilterExpression) -> dict[str, Any]:
         msg = "compile_dict only supports AND logical groups"
         raise ValueError(msg)
 
-    merged: dict[str, Any] = {}
+    merged: dict[str, FilterValue] = {}
     for child in expr.expressions:
         merged.update(compile_dict(child))
     return merged

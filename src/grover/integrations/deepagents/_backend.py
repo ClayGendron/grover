@@ -20,6 +20,10 @@ from deepagents.backends.utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
     from grover._grover import Grover
 
 
@@ -72,8 +76,8 @@ class GroverBackend(BackendProtocol):
     @classmethod
     def from_database(
         cls,
-        engine: Any,
-        session_factory: Any = None,
+        engine: AsyncEngine,
+        session_factory: Callable[..., AsyncSession] | None = None,
         **mount_kwargs: Any,
     ) -> GroverBackend:
         """Create a GroverBackend with a DatabaseFileSystem mounted at ``/``."""

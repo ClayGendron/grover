@@ -12,6 +12,7 @@ from grover.search.types import (
     DeleteResult,
     IndexConfig,
     IndexInfo,
+    SparseVector,
     UpsertResult,
     VectorEntry,
     VectorHit,
@@ -72,8 +73,8 @@ class DatabricksVectorStore:
         self._token = token or os.environ.get("DATABRICKS_TOKEN", "")
         self._vector_column = embedding_vector_column
         self._pk_column = primary_key_column
-        self._client: Any = None
-        self._index: Any = None
+        self._client: VectorSearchClient | None = None
+        self._index: Any | None = None
 
     # ------------------------------------------------------------------
     # VectorStore protocol
@@ -272,7 +273,7 @@ class DatabricksVectorStore:
         self,
         *,
         dense_vector: list[float] | None = None,
-        sparse_vector: Any | None = None,
+        sparse_vector: SparseVector | None = None,
         query_text: str | None = None,
         k: int = 10,
         alpha: float = 0.5,
@@ -310,7 +311,7 @@ class DatabricksVectorStore:
             raise RuntimeError(msg)
         return self._index
 
-    def _require_client(self) -> Any:
+    def _require_client(self) -> VectorSearchClient:
         """Return the client, raising if not connected."""
         if self._client is None:
             msg = "Not connected. Call connect() first."

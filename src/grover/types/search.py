@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from dataclasses import replace as dc_replace
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -158,7 +158,7 @@ class FileSearchResult:
     # -----------------------------------------------------------------
 
     @classmethod
-    def from_paths(cls, paths: list[str], *, strategy: str = "unknown") -> FileSearchResult:
+    def from_paths(cls, paths: list[str], *, strategy: str = "unknown") -> Self:
         """Create a result from a list of paths with default evidence."""
         candidates = [
             FileSearchCandidate(path=p, evidence=[Evidence(strategy=strategy, path=p)])
@@ -167,7 +167,7 @@ class FileSearchResult:
         return cls(success=True, message=f"{len(paths)} paths", candidates=candidates)
 
     @classmethod
-    def from_refs(cls, refs: list[Ref], *, strategy: str = "unknown") -> FileSearchResult:
+    def from_refs(cls, refs: list[Ref], *, strategy: str = "unknown") -> Self:
         """Create a result from a list of ``Ref`` objects."""
         candidates = [
             FileSearchCandidate(
@@ -193,13 +193,13 @@ class FileSearchResult:
             merged[p] = evidence
         return merged
 
-    def _result_class(self, other: FileSearchResult) -> type[FileSearchResult]:
+    def _result_class(self, other: FileSearchResult) -> type[Self]:
         """Return the subclass to use for the result of a set operation."""
         if type(self) is type(other) and type(self) is not FileSearchResult:
             return type(self)
-        return FileSearchResult
+        return FileSearchResult  # type: ignore[return-value]
 
-    def __and__(self, other: Any) -> FileSearchResult:
+    def __and__(self, other: object) -> Self:
         """Intersection — paths in both, evidence merged."""
         if not isinstance(other, FileSearchResult):
             return NotImplemented
@@ -215,7 +215,7 @@ class FileSearchResult:
             candidates=self._dict_to_candidates(merged),
         )
 
-    def __or__(self, other: Any) -> FileSearchResult:
+    def __or__(self, other: object) -> Self:
         """Union — paths from either, evidence merged."""
         if not isinstance(other, FileSearchResult):
             return NotImplemented
@@ -231,7 +231,7 @@ class FileSearchResult:
             candidates=self._dict_to_candidates(merged),
         )
 
-    def __sub__(self, other: Any) -> FileSearchResult:
+    def __sub__(self, other: object) -> Self:
         """Difference — paths in LHS not in RHS."""
         if not isinstance(other, FileSearchResult):
             return NotImplemented
@@ -246,7 +246,7 @@ class FileSearchResult:
             candidates=self._dict_to_candidates(entries),
         )
 
-    def __rshift__(self, other: Any) -> FileSearchResult:
+    def __rshift__(self, other: object) -> Self:
         """Pipeline — passes LHS paths as candidates to RHS (intersection semantics)."""
         if not isinstance(other, FileSearchResult):
             return NotImplemented

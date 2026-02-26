@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from grover.fs.permissions import Permission
 from grover.fs.utils import normalize_path
@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from grover.fs.protocol import StorageBackend
+    from grover.graph.protocols import GraphStore
+    from grover.search._engine import SearchEngine
 
 
 class Mount:
@@ -32,10 +36,10 @@ class Mount:
     def __init__(
         self,
         path: str = "",
-        filesystem: Any | None = None,
+        filesystem: StorageBackend | None = None,
         *,
-        graph: Any | None = None,
-        search: Any | None = None,
+        graph: GraphStore | None = None,
+        search: SearchEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
         permission: Permission = Permission.READ_WRITE,
         label: str = "",
@@ -44,22 +48,22 @@ class Mount:
         read_only_paths: set[str] | None = None,
     ) -> None:
         self.path: str = normalize_path(path).rstrip("/")
-        self.filesystem: Any = filesystem
-        self.graph: Any | None = graph
-        self.search: Any | None = search
+        self.filesystem: StorageBackend | None = filesystem
+        self.graph: GraphStore | None = graph
+        self.search: SearchEngine | None = search
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
         self.permission: Permission = permission
         self.label: str = label or self.path.lstrip("/") or "root"
         self.mount_type: str = mount_type
         self.hidden: bool = hidden
         self.read_only_paths: set[str] = read_only_paths if read_only_paths is not None else set()
-        self._dispatch_map: dict[type, tuple[str, Any]] = self._build_dispatch_map()
+        self._dispatch_map: dict[type, tuple[str, object]] = self._build_dispatch_map()
 
     # ------------------------------------------------------------------
     # Protocol dispatch
     # ------------------------------------------------------------------
 
-    def dispatch(self, protocol: type) -> Any:
+    def dispatch(self, protocol: type) -> object:
         """Return the component implementing *protocol*.
 
         Raises
@@ -86,15 +90,15 @@ class Mount:
     # Internals
     # ------------------------------------------------------------------
 
-    def _build_dispatch_map(self) -> dict[type, tuple[str, Any]]:
+    def _build_dispatch_map(self) -> dict[type, tuple[str, object]]:
         """Build the protocol → component dispatch map.
 
         Checks each component against dispatch protocols.  Components that
         expose a ``supported_protocols()`` method (like ``SearchEngine``)
         use that.  Others are checked via ``isinstance()``.
         """
-        dmap: dict[type, tuple[str, Any]] = {}
-        components: list[tuple[str, Any]] = [
+        dmap: dict[type, tuple[str, object]] = {}
+        components: list[tuple[str, object]] = [
             ("filesystem", self.filesystem),
             ("graph", self.graph),
             ("search", self.search),
@@ -104,7 +108,7 @@ class Mount:
                 continue
             # Get protocols this component satisfies
             if hasattr(comp, "supported_protocols") and callable(comp.supported_protocols):
-                protos = comp.supported_protocols()
+                protos: list[type] = comp.supported_protocols()  # type: ignore[assignment]
             else:
                 protos = [p for p in DISPATCH_PROTOCOLS if isinstance(comp, p)]
             for proto in protos:

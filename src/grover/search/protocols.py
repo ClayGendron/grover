@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from grover.search.filters import FilterExpression
@@ -144,7 +144,7 @@ class SupportsMetadataFilter(Protocol):
     provider-agnostic ``FilterExpression`` into the store's native format.
     """
 
-    def compile_filter(self, expr: FilterExpression) -> Any:
+    def compile_filter(self, expr: FilterExpression) -> object:
         """Compile a ``FilterExpression`` to the store's native filter format."""
         ...
 

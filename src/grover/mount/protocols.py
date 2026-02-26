@@ -10,7 +10,7 @@ time and builds a dispatch map.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Filesystem dispatch protocols
@@ -21,28 +21,28 @@ from typing import Any, Protocol, runtime_checkable
 class SupportsGlob(Protocol):
     """Component can perform glob pattern matching."""
 
-    async def glob(self, pattern: str, path: str = "/", **kwargs: Any) -> Any: ...
+    async def glob(self, pattern: str, path: str = "/", **kwargs: object) -> object: ...
 
 
 @runtime_checkable
 class SupportsGrep(Protocol):
     """Component can perform content search via regex."""
 
-    async def grep(self, pattern: str, path: str = "/", **kwargs: Any) -> Any: ...
+    async def grep(self, pattern: str, path: str = "/", **kwargs: object) -> object: ...
 
 
 @runtime_checkable
 class SupportsTree(Protocol):
     """Component can produce a directory tree listing."""
 
-    async def tree(self, path: str = "/", **kwargs: Any) -> Any: ...
+    async def tree(self, path: str = "/", **kwargs: object) -> object: ...
 
 
 @runtime_checkable
 class SupportsListDir(Protocol):
     """Component can list directory contents."""
 
-    async def list_dir(self, path: str = "/", **kwargs: Any) -> Any: ...
+    async def list_dir(self, path: str = "/", **kwargs: object) -> object: ...
 
 
 # ---------------------------------------------------------------------------
@@ -54,21 +54,21 @@ class SupportsListDir(Protocol):
 class SupportsVectorSearch(Protocol):
     """Component can perform vector/semantic search."""
 
-    async def vector_search(self, query: str, **kwargs: Any) -> Any: ...
+    async def vector_search(self, query: str, **kwargs: object) -> object: ...
 
 
 @runtime_checkable
 class SupportsLexicalSearch(Protocol):
     """Component can perform lexical/keyword (BM25) search."""
 
-    async def lexical_search(self, query: str, **kwargs: Any) -> Any: ...
+    async def lexical_search(self, query: str, **kwargs: object) -> object: ...
 
 
 @runtime_checkable
 class SupportsHybridSearch(Protocol):
     """Component can perform hybrid (vector + lexical) search."""
 
-    async def hybrid_search(self, query: str, **kwargs: Any) -> Any: ...
+    async def hybrid_search(self, query: str, **kwargs: object) -> object: ...
 
 
 @runtime_checkable

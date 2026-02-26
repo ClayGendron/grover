@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 try:
     from langchain_core.embeddings import Embeddings as _LCEmbeddings
 
     _HAS_LANGCHAIN = True
 except ImportError:  # pragma: no cover
+    _LCEmbeddings = None  # type: ignore[assignment,misc]
     _HAS_LANGCHAIN = False
+
+if TYPE_CHECKING:
+    from langchain_core.embeddings import Embeddings
 
 
 class LangChainEmbedding:
@@ -29,7 +33,7 @@ class LangChainEmbedding:
 
     def __init__(
         self,
-        embeddings: Any,
+        embeddings: Embeddings,
         *,
         dimensions: int | None = None,
         model_name: str | None = None,
@@ -89,7 +93,7 @@ class LangChainEmbedding:
         return self._model_name
 
 
-def _discover_model_name(embeddings: Any) -> str:
+def _discover_model_name(embeddings: object) -> str:
     """Try to discover the model name from a LangChain Embeddings instance."""
     # Most LangChain providers use 'model' or 'model_name'
     for attr in ("model", "model_name"):
