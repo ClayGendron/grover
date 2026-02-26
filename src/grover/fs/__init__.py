@@ -8,6 +8,7 @@ from grover.fs.exceptions import (
     GroverError,
     MountNotFoundError,
     PathNotFoundError,
+    SchemaIncompatibleError,
     StorageError,
 )
 from grover.fs.local_fs import LocalFileSystem
@@ -66,6 +67,7 @@ __all__ = [
     "Permission",
     "ReadResult",
     "RestoreResult",
+    "SchemaIncompatibleError",
     "ShareSearchResult",
     "StorageBackend",
     "StorageError",

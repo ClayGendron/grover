@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from grover.events import EventBus, EventType, FileEvent
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.exceptions import CapabilityNotSupportedError, MountNotFoundError
+from grover.fs.exceptions import (
+    CapabilityNotSupportedError,
+    MountNotFoundError,
+    SchemaIncompatibleError,
+)
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.mounts import MountRegistry
 from grover.fs.permissions import Permission
@@ -478,6 +482,29 @@ class GroverAsync:
             await conn.run_sync(
                 lambda c: FileConnection.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
             )
+
+        # Fail-fast schema validation — detect stale schemas from older Grover versions.
+        # Only fires when tables already existed (checkfirst=True didn't create them)
+        # and are missing columns required by the current code.
+        from grover.migrations.backfill_alpha_refactor import check_schema_compatibility
+
+        schema_errors = await check_schema_compatibility(
+            engine,
+            file_chunks_table=getattr(fcm, "__tablename__", "grover_file_chunks"),
+            file_connections_table=getattr(
+                FileConnection, "__tablename__", "grover_file_connections"
+            ),
+            file_versions_table=getattr(fvm, "__tablename__", "grover_file_versions"),
+        )
+        if schema_errors:
+            msg = (
+                "Database schema is incompatible with this version of Grover. "
+                "Run the migration script to update:\n\n"
+                "    from grover.migrations import backfill_alpha_refactor\n"
+                "    await backfill_alpha_refactor(engine)\n\n"
+                "Issues found:\n" + "\n".join(f"  - {e}" for e in schema_errors)
+            )
+            raise SchemaIncompatibleError(msg)
 
         if backend is None:
             backend = DatabaseFileSystem(

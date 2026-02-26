@@ -1111,3 +1111,41 @@ results = store.search(("docs",), query="API reference")
 - `ListNamespacesOp` — list namespaces with match conditions and depth limiting
 
 Has async variant (`abatch`) via `asyncio.to_thread()`.
+
+---
+
+## Migrations
+
+```python
+from grover.migrations import backfill_alpha_refactor
+```
+
+### backfill_alpha_refactor
+
+Idempotent migration script for the alpha refactor schema changes. Safe to run multiple times.
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine
+from grover.migrations import backfill_alpha_refactor
+
+engine = create_async_engine("sqlite+aiosqlite:///grover.db")
+report = await backfill_alpha_refactor(engine)
+# {"file_versions_file_path": "added", "file_chunks_path": "renamed", ...}
+```
+
+**What it does:**
+
+| Step | Description |
+|------|-------------|
+| `file_versions_file_path` | Adds `file_path` column to `grover_file_versions`, backfills from joined `grover_files.path` |
+| `file_chunks_path` | Renames `chunk_path` → `path` on `grover_file_chunks` |
+| `file_chunks_vector` | Adds `vector` column (nullable JSON text) to `grover_file_chunks` |
+| `files_vector` | Adds `vector` column (nullable JSON text) to `grover_files` |
+| `file_connections_path` | Adds `path` column to `grover_file_connections`, computes from `source_path[type]target_path` |
+| `embeddings_dropped` | Drops `grover_embeddings` table |
+
+**Report values:** `"added"`, `"renamed"`, `"exists"`, `"table_missing"`, `"dropped"`, `"not_present"`.
+
+### Schema validation
+
+`add_mount()` automatically checks for schema compatibility when mounting an engine-based backend. If the database has an old schema, it raises `SchemaIncompatibleError` with instructions to run the migration.
