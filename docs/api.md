@@ -28,10 +28,10 @@ GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None)
 ### Mount / Unmount
 
 ```python
-g.mount(path, backend=None, *, engine=None, session_factory=None,
-        dialect="sqlite", file_model=None, file_version_model=None,
-        db_schema=None, mount_type=None, permission=Permission.READ_WRITE,
-        label="", hidden=False)
+g.add_mount(path, backend=None, *, engine=None, session_factory=None,
+            dialect="sqlite", file_model=None, file_version_model=None,
+            db_schema=None, mount_type=None, permission=Permission.READ_WRITE,
+            label="", hidden=False)
 g.unmount(path)
 ```
 
@@ -110,15 +110,15 @@ g.move("/project/old.py", "/project/new.py", follow=True)
 ### Search / Query
 
 ```python
-g.glob(pattern, path="/") -> GlobQueryResult
-g.grep(pattern, path="/", *, ...) -> GrepQueryResult
+g.glob(pattern, path="/") -> GlobResult
+g.grep(pattern, path="/", *, ...) -> GrepResult
 g.tree(path="/", *, max_depth=None) -> TreeResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobQueryResult` with `hits` (tuple of `GlobHit`). |
-| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepQueryResult` with `hits` (tuple of `GrepHit`, grouped by file). Each `GrepHit` contains `line_matches` (tuple of `LineMatch`). |
+| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `candidates` (list of `FileSearchCandidate`). |
+| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepResult` with `candidates` (list of `FileSearchCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. |
 | `tree(path, max_depth)` | List all entries recursively. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
 
 **grep options:**
@@ -273,14 +273,14 @@ g.find_nodes(*, path=None, **attrs) -> list[str]
 ### Search
 
 ```python
-g.search(query, k=10, *, path="/", user_id=None) -> SearchQueryResult
+g.search(query, k=10, *, path="/", glob=None, grep=None, user_id=None) -> FileSearchResult
 ```
 
-Semantic similarity search over indexed content. Returns a `SearchQueryResult` with document-first grouping: each `SearchHit` represents a file, with `chunk_matches` (tuple of `ChunkMatch`) showing which chunks within that file matched. Results are sorted by score (highest first) and truncated to `k` file-level hits.
+Composable search pipeline: optional glob/grep filters followed by vector search. Returns a `FileSearchResult` with `candidates: list[FileSearchCandidate]` — each candidate has a `path` and `evidence: list[Evidence]` explaining why it matched.
 
-Search is routed through VFS to per-mount search engines. When `path="/"`, results are aggregated across all mounts and sorted by score. When `path` targets a specific mount or subdirectory, search is scoped to that mount and filtered to the given path prefix.
+Search is routed through per-mount search engines. When `path="/"`, results are aggregated across all mounts. When `path` targets a specific mount or subdirectory, search is scoped to that mount and filtered to the given path prefix. Use `glob` and `grep` parameters to pre-filter before vector search.
 
-Returns `SearchQueryResult(success=False, ...)` if no embedding provider is available (no longer raises `RuntimeError`).
+Returns `FileSearchResult(success=False, ...)` if no embedding provider is available.
 
 ### Index and Persistence
 
@@ -335,7 +335,7 @@ class Ref:
 from grover.search.types import SearchResult
 ```
 
-Internal type used by `SearchEngine` and vector store backends. The public `Grover.search()` API returns `SearchQueryResult` (see [Result Types](#result-types) below), which groups these internal results into document-first `SearchHit` objects.
+Internal type used by `SearchEngine` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileSearchCandidate` objects with `VectorEvidence`.
 
 ```python
 @dataclass(frozen=True)
@@ -368,10 +368,8 @@ from grover import (
     TrashResult, VersionResult, ShareSearchResult,
     VectorSearchResult, LexicalSearchResult, HybridSearchResult,
     GraphResult, LineMatch,
-    # Query results (frozen, tuple-based)
-    GlobQueryResult, GlobHit,
-    GrepQueryResult, GrepHit,
-    SearchQueryResult, SearchHit, ChunkMatch,
+    # Filter operators
+    FilterValue, eq, ne, gt, gte, lt, lte, in_, not_in, and_, or_, exists,
 )
 ```
 
@@ -421,7 +419,7 @@ Each search result contains `candidates: list[FileSearchCandidate]`, where each 
 | `TrashResult` | `TrashEvidence` | `deleted_at`, `deleted_by` |
 | `VersionResult` | `VersionEvidence` | `version`, `content_hash`, `size_bytes`, `created_at`, `created_by` |
 | `ShareSearchResult` | `ShareEvidence` | `grantee_id`, `permission`, `granted_by`, `expires_at` |
-| `VectorSearchResult` | `VectorEvidence` | `score`, `content`, `chunk_path` |
+| `VectorSearchResult` | `VectorEvidence` | `snippet` |
 | `LexicalSearchResult` | `LexicalEvidence` | `score`, `snippet` |
 | `HybridSearchResult` | (mixed) | Vector + lexical evidence |
 | `GraphResult` | `GraphEvidence` | `edge_type`, `direction`, `weight` |
@@ -430,14 +428,7 @@ Each search result contains `candidates: list[FileSearchCandidate]`, where each 
 
 | Type | Key Fields |
 |------|------------|
-| `GlobQueryResult` | `hits` (tuple of `GlobHit`), `pattern`, `path` |
-| `GlobHit` | `path`, `is_directory`, `size_bytes`, `mime_type` |
-| `GrepQueryResult` | `hits` (tuple of `GrepHit`), `pattern`, `path`, `files_searched`, `files_matched`, `truncated` |
-| `GrepHit` | `path`, `line_matches` (tuple of `LineMatch`) |
-| `LineMatch` | `line_number`, `line_content`, `context_before`, `context_after` |
-| `SearchQueryResult` | `hits` (tuple of `SearchHit`), `query`, `path`, `files_matched`, `truncated` |
-| `SearchHit` | `path`, `score`, `chunk_matches` (tuple of `ChunkMatch`) |
-| `ChunkMatch` | `name`, `line_start`, `line_end`, `score`, `snippet` |
+| `LineMatch` | `line_number`, `line_content` |
 
 ---
 
@@ -905,7 +896,8 @@ class IndexInfo:
 ## Models
 
 ```python
-from grover.models import File, FileVersion, FileChunk, FileConnection, Embedding
+from grover.models import File, FileVersion, FileChunk, FileConnection
+from grover.models.vector import Vector, VectorType
 ```
 
 SQLModel table classes for direct database access if needed.
@@ -916,7 +908,8 @@ SQLModel table classes for direct database access if needed.
 | `FileVersion` | `grover_file_versions` | Version snapshots and diffs |
 | `FileChunk` | `grover_file_chunks` | Code chunks (functions, classes) |
 | `FileConnection` | `grover_file_connections` | File-to-file connections/edges |
-| `Embedding` | `grover_embeddings` | Embedding change detection metadata (deprecated — vectors moving to File/FileChunk) |
+| `Vector` | — | Runtime `list[float]` subclass with `Vector[N]` dimension enforcement |
+| `VectorType` | — | SQLAlchemy `TypeDecorator` — stores Vector as JSON text |
 
 ### Events
 

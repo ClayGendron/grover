@@ -53,7 +53,7 @@ g = Grover()
 
 # Mount a local project directory
 backend = LocalFileSystem(workspace_dir="/path/to/project")
-g.mount("/project", backend)
+g.add_mount("/project", backend)
 
 # Write files — every write is automatically versioned
 g.write("/project/hello.py", "def greet(name):\n    return f'Hello, {name}!'\n")
@@ -82,8 +82,8 @@ nodes = g.find_nodes(lang="python")                       # filter by attributes
 
 # Semantic search (requires the search extra)
 result = g.search("greeting function", k=5)
-for hit in result.hits:
-    print(hit.path, hit.score)
+for candidate in result.candidates:
+    print(candidate.path)
 
 # Persist and clean up
 g.save()
@@ -96,7 +96,7 @@ A full async API is also available:
 from grover import GroverAsync
 
 g = GroverAsync()
-await g.mount("/project", backend)
+await g.add_mount("/project", backend)
 await g.write("/project/hello.py", "...")
 await g.save()
 await g.close()
@@ -153,10 +153,10 @@ from grover.fs import LocalFileSystem, DatabaseFileSystem
 g = Grover()
 
 # Local code on disk
-g.mount("/code", LocalFileSystem(workspace_dir="./my-project"))
+g.add_mount("/code", LocalFileSystem(workspace_dir="./my-project"))
 
 # Shared docs in PostgreSQL
-g.mount("/docs", DatabaseFileSystem(dialect="postgresql"))
+g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
 ```
 
 ### User-scoped mounts
@@ -170,7 +170,7 @@ from grover.models.shares import FileShare
 
 g = GroverAsync()
 backend = UserScopedFileSystem(sharing=SharingService(FileShare))
-await g.mount("/ws", backend, engine=engine)
+await g.add_mount("/ws", backend, engine=engine)
 
 # Each user has their own namespace
 await g.write("/ws/notes.md", "hello", user_id="alice")
@@ -246,24 +246,23 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 | **Sharing** | `share`, `unshare`, `list_shares`, `list_shared_with_me` |
 | **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains`, `pagerank`, `ancestors`, `descendants`, `meeting_subgraph`, `neighborhood`, `find_nodes` |
 | **Search** | `search` |
-| **Lifecycle** | `mount`, `unmount`, `index`, `save`, `close` |
+| **Lifecycle** | `add_mount`, `unmount`, `index`, `save`, `close` |
 
 Key types:
 
 ```python
-from grover import Ref, file_ref, SearchQueryResult, SearchHit, ChunkMatch
+from grover import Ref, file_ref, FileSearchResult, FileSearchCandidate
 
 # Ref — immutable reference to a file or chunk
 Ref(path="/project/hello.py", version=2, line_start=1, line_end=5)
 
-# SearchQueryResult — document-first search results
+# FileSearchResult — search results with evidence-backed candidates
 result = g.search("greeting function", k=5)
-result.success       # bool
-result.hits          # tuple[SearchHit, ...]
-hit = result.hits[0]
-hit.path             # str — file path
-hit.score            # float — max chunk similarity (0–1)
-hit.chunk_matches    # tuple[ChunkMatch, ...] — matching chunks within the file
+result.success        # bool
+result.candidates     # list[FileSearchCandidate]
+candidate = result.candidates[0]
+candidate.path        # str — file path
+candidate.evidence    # list[Evidence] — why this path matched
 ```
 
 ## Error handling

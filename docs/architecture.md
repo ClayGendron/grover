@@ -181,8 +181,8 @@ VFS creates a session per operation via `_session_for(mount)`. The session is in
 All file operations go through mount paths. There is no global filesystem — you mount backends at virtual paths and interact through those paths:
 
 ```python
-g.mount("/code", LocalFileSystem(workspace_dir="."))
-g.mount("/docs", DatabaseFileSystem(dialect="postgresql"))
+g.add_mount("/code", LocalFileSystem(workspace_dir="."))
+g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
 
 g.read("/code/src/main.py")   # → routes to LocalFileSystem
 g.read("/docs/guide.md")      # → routes to DatabaseFileSystem
@@ -279,7 +279,7 @@ from grover.fs.sharing import SharingService
 from grover.models.shares import FileShare
 
 backend = UserScopedFileSystem(sharing=SharingService(FileShare))
-await g.mount("/ws", backend, engine=engine)
+await g.add_mount("/ws", backend, engine=engine)
 ```
 
 When `user_id` is provided:

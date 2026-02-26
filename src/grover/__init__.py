@@ -15,6 +15,7 @@ from grover.ref import Ref, file_ref
 from grover.search._engine import SearchEngine
 from grover.search.filters import (
     FilterExpression,
+    FilterValue,
     and_,
     eq,
     exists,
@@ -93,6 +94,7 @@ __all__ = [
     "FileSearchCandidate",
     "FileSearchResult",
     "FilterExpression",
+    "FilterValue",
     "GetVersionContentResult",
     "GlobEvidence",
     "GlobResult",

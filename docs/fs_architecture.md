@@ -123,7 +123,7 @@ graph TD
 
 **No base class.** Both `LocalFileSystem` and `DatabaseFileSystem` implement the `StorageBackend` protocol directly, composing shared services (`MetadataService`, `VersioningService`, `DirectoryService`, `TrashService`) and delegating to standalone orchestration functions in `operations.py`.
 
-**DB mounts** are created via `engine=` or `session_factory=` on `GroverAsync.mount()`. The engine form auto-creates a session factory, detects the SQL dialect, and ensures tables exist. This produces a stateless `DatabaseFileSystem` instance (immutable config only — dialect, file model, schema) paired with a `session_factory` stored on `MountConfig`. VFS creates sessions from the factory per-operation and passes them to DFS via `session=`.
+**DB mounts** are created via `engine=` or `session_factory=` on `GroverAsync.add_mount()`. The engine form auto-creates a session factory, detects the SQL dialect, and ensures tables exist. This produces a stateless `DatabaseFileSystem` instance (immutable config only — dialect, file model, schema) paired with a `session_factory` stored on `MountConfig`. VFS creates sessions from the factory per-operation and passes them to DFS via `session=`.
 
 ## Capability Protocols
 
