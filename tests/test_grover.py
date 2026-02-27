@@ -197,6 +197,7 @@ class TestGroverGraph:
     def test_dependents_after_write(self, grover: Grover):
         code = 'import os\n\ndef hello():\n    return "hi"\n'
         grover.write("/project/app.py", code)
+        grover.flush()
         # File should be in graph now
         assert grover.get_graph().has_node("/project/app.py")
         # Check dependents doesn't crash (may be empty if no other file depends on it)
@@ -207,6 +208,7 @@ class TestGroverGraph:
     def test_dependencies_after_write(self, grover: Grover):
         code = 'def greet():\n    return "hello"\n'
         grover.write("/project/greet.py", code)
+        grover.flush()
         # The file should have "contains" edges to its chunks
         result = grover.dependencies("/project/greet.py")
         assert isinstance(result, GraphResult)
@@ -217,6 +219,7 @@ class TestGroverGraph:
     def test_contains_returns_chunks(self, grover: Grover):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
+        grover.flush()
         result = grover.contains("/project/funcs.py")
         assert isinstance(result, GraphResult)
         assert len(result) >= 2
@@ -233,6 +236,7 @@ class TestGroverSearch:
     def test_vector_search_after_write(self, grover: Grover):
         code = 'def authenticate_user():\n    """Verify user credentials."""\n    pass\n'
         grover.write("/project/auth.py", code)
+        grover.flush()
         result = grover.vector_search("authenticate")
         assert isinstance(result, VectorSearchResult)
         assert result.success is True
@@ -311,6 +315,7 @@ class TestGroverIndex:
 class TestGroverEventHandlers:
     def test_write_updates_graph(self, grover: Grover):
         grover.write("/project/mod.py", "def work():\n    pass\n")
+        grover.flush()
         assert grover.get_graph().has_node("/project/mod.py")
 
     def test_write_updates_search(self, grover: Grover):
@@ -318,13 +323,16 @@ class TestGroverEventHandlers:
             "/project/search_me.py",
             'def searchable():\n    """A unique searchable function."""\n    pass\n',
         )
+        grover.flush()
         result = grover.vector_search("searchable")
         assert len(result) >= 1
 
     def test_delete_removes_from_graph(self, grover: Grover):
         grover.write("/project/gone.py", "def gone():\n    pass\n")
+        grover.flush()
         assert grover.get_graph().has_node("/project/gone.py")
         grover.delete("/project/gone.py")
+        grover.flush()
         assert not grover.get_graph().has_node("/project/gone.py")
 
     def test_delete_removes_from_search(self, grover: Grover):
@@ -332,6 +340,7 @@ class TestGroverEventHandlers:
             "/project/vanish.py",
             "def vanishing_function():\n    pass\n",
         )
+        grover.flush()
         # Verify it's in search (search engine is now per-mount on the Mount)
         mount = next(
             m for m in grover._async._ctx.registry.list_visible_mounts() if m.path == "/project"
@@ -340,6 +349,7 @@ class TestGroverEventHandlers:
         assert se is not None
         assert se.has("/project/vanish.py#vanishing_function")
         grover.delete("/project/vanish.py")
+        grover.flush()
         # Should be removed from search
         assert not se.has("/project/vanish.py#vanishing_function")
 
@@ -410,6 +420,7 @@ class TestGroverEdgeCases:
     def test_unsupported_file_type_embedded(self, grover: Grover):
         """Non-analyzable files should be embedded as whole files."""
         grover.write("/project/readme.txt", "This is a readme file")
+        grover.flush()
         assert grover.get_graph().has_node("/project/readme.txt")
         # Should be searchable as whole file
         result = grover.vector_search("readme")
@@ -424,6 +435,7 @@ class TestGroverEdgeCases:
         """Files with syntax errors should not crash the pipeline."""
         bad_code = "def broken(\n    # missing close paren and body"
         grover.write("/project/bad.py", bad_code)
+        grover.flush()
         # Should not raise
         assert grover.get_graph().has_node("/project/bad.py")
 

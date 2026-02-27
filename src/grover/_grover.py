@@ -7,6 +7,7 @@ import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from grover._grover_async import GroverAsync
+from grover.events import IndexingMode
 from grover.fs.permissions import Permission
 
 if TYPE_CHECKING:
@@ -68,6 +69,8 @@ class Grover:
         data_dir: str | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        indexing_mode: IndexingMode = IndexingMode.BACKGROUND,
+        debounce_delay: float = 0.1,
     ) -> None:
         self._closed = False
         self._lock = threading.RLock()
@@ -81,6 +84,8 @@ class Grover:
             data_dir=data_dir,
             embedding_provider=embedding_provider,
             vector_store=vector_store,
+            indexing_mode=indexing_mode,
+            debounce_delay=debounce_delay,
         )
 
     # ------------------------------------------------------------------
@@ -510,6 +515,10 @@ class Grover:
     # ------------------------------------------------------------------
     # Index and persistence
     # ------------------------------------------------------------------
+
+    def flush(self) -> None:
+        """Wait for all pending background indexing to complete."""
+        self._run(self._async.flush())
 
     def index(self, mount_path: str | None = None) -> dict[str, int]:
         """Walk the filesystem, analyze all files, build graph + search."""

@@ -274,12 +274,14 @@ class TestGroverAsyncGraph:
     @pytest.mark.asyncio
     async def test_write_updates_graph(self, grover: GroverAsync):
         await grover.write("/project/mod.py", "def work():\n    pass\n")
+        await grover.flush()
         assert grover.get_graph().has_node("/project/mod.py")
 
     @pytest.mark.asyncio
     async def test_contains_returns_graph_result(self, grover: GroverAsync):
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await grover.write("/project/funcs.py", code)
+        await grover.flush()
         result = grover.contains("/project/funcs.py")
         assert isinstance(result, GraphResult)
         assert len(result) >= 2
@@ -287,8 +289,10 @@ class TestGroverAsyncGraph:
     @pytest.mark.asyncio
     async def test_delete_removes_from_graph(self, grover: GroverAsync):
         await grover.write("/project/gone.py", "def gone():\n    pass\n")
+        await grover.flush()
         assert grover.get_graph().has_node("/project/gone.py")
         await grover.delete("/project/gone.py")
+        await grover.flush()
         assert not grover.get_graph().has_node("/project/gone.py")
 
 
@@ -302,6 +306,7 @@ class TestGroverAsyncSearch:
     async def test_vector_search_after_write(self, grover: GroverAsync):
         code = 'def authenticate_user():\n    """Verify user credentials."""\n    pass\n'
         await grover.write("/project/auth.py", code)
+        await grover.flush()
         result = await grover.vector_search("authenticate")
         assert isinstance(result, VectorSearchResult)
         assert result.success is True
@@ -425,6 +430,7 @@ class TestGroverAsyncGraphQueries:
             "/project/main.py",
             "from lib import helper\n\ndef run():\n    return helper()\n",
         )
+        await grover.flush()
         result = grover.dependents("/project/lib.py")
         # main.py imports lib.py, so main.py is a dependent
         # The graph stores "imports" edges from analyzer
@@ -438,6 +444,7 @@ class TestGroverAsyncGraphQueries:
             "/project/consumer.py",
             "from dep import util\n\ndef main():\n    util()\n",
         )
+        await grover.flush()
         result = grover.dependencies("/project/consumer.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
@@ -450,6 +457,7 @@ class TestGroverAsyncGraphQueries:
             "/project/a.py",
             "from b import get\n\ndef run():\n    return get()\n",
         )
+        await grover.flush()
         result = grover.impacts("/project/c.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
@@ -465,6 +473,7 @@ class TestGroverAsyncGraphQueries:
             "/project/end.py",
             "from mid import mid\n\ndef end():\n    return mid()\n",
         )
+        await grover.flush()
         result = grover.path_between("/project/end.py", "/project/start.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
@@ -477,6 +486,7 @@ class TestGroverAsyncGraphQueries:
     async def test_path_between_none(self, grover: GroverAsync):
         await grover.write("/project/island_a.py", "A = 1\n")
         await grover.write("/project/island_b.py", "B = 2\n")
+        await grover.flush()
         result = grover.path_between("/project/island_a.py", "/project/island_b.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
@@ -492,10 +502,12 @@ class TestGroverAsyncEventHandlers:
     @pytest.mark.asyncio
     async def test_move_updates_graph(self, grover: GroverAsync):
         await grover.write("/project/old.py", "def foo():\n    pass\n")
+        await grover.flush()
         assert grover.get_graph().has_node("/project/old.py")
 
         result = await grover.move("/project/old.py", "/project/new.py")
         assert result.success
+        await grover.flush()
         assert not grover.get_graph().has_node("/project/old.py")
         assert grover.get_graph().has_node("/project/new.py")
 
@@ -513,11 +525,14 @@ class TestGroverAsyncEventHandlers:
     @pytest.mark.asyncio
     async def test_restored_event_reanalyzes(self, grover: GroverAsync):
         await grover.write("/project/restore_me.py", "def restored():\n    pass\n")
+        await grover.flush()
         assert grover.get_graph().has_node("/project/restore_me.py")
         await grover.delete("/project/restore_me.py")
+        await grover.flush()
         assert not grover.get_graph().has_node("/project/restore_me.py")
         # Restore it (for LocalFileSystem this is restore_from_trash)
         result = await grover.restore_from_trash("/project/restore_me.py")
+        await grover.flush()
         if result.success:
             assert grover.get_graph().has_node("/project/restore_me.py")
 
@@ -593,6 +608,7 @@ class TestGroverAsyncMountOptions:
         g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
         await g.add_mount("/app", LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"))
         await g.write("/app/file.py", "def demo():\n    pass\n")
+        await g.flush()
         assert g.get_graph().has_node("/app/file.py")
 
         await g.unmount("/app")
@@ -612,6 +628,7 @@ class TestGroverAsyncUnsupportedFiles:
     async def test_unsupported_file_embeds_whole_file(self, grover: GroverAsync):
         # .txt has no Python analyzer, but the whole file should be indexed
         await grover.write("/project/notes.txt", "Important project notes here")
+        await grover.flush()
         assert grover.get_graph().has_node("/project/notes.txt")
         has_search = any(m.search is not None for m in grover._ctx.registry.list_visible_mounts())
         if has_search:

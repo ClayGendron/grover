@@ -7,6 +7,7 @@ __version__ = "0.0.3"
 
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
+from grover.events import IndexingMode
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.graph.protocols import GraphStore
 from grover.graph.types import SubgraphResult
@@ -108,6 +109,7 @@ __all__ = [
     "HybridSearchResult",
     "IndexConfig",
     "IndexInfo",
+    "IndexingMode",
     "LexicalSearchResult",
     "LineMatch",
     "ListDirResult",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from grover.events import EventBus, EventType
+from grover.events import EventBus, EventType, IndexingMode
 from grover.facade.connections import ConnectionMixin
 from grover.facade.context import GroverContext
 from grover.facade.file_ops import FileOpsMixin
@@ -55,14 +55,17 @@ class GroverAsync(
         data_dir: str | Path | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        indexing_mode: IndexingMode = IndexingMode.BACKGROUND,
+        debounce_delay: float = 0.1,
     ) -> None:
         self._ctx = GroverContext(
-            event_bus=EventBus(),
+            event_bus=EventBus(indexing_mode=indexing_mode, debounce_delay=debounce_delay),
             registry=MountRegistry(),
             analyzer_registry=AnalyzerRegistry(),
             embedding_provider=embedding_provider,
             explicit_vector_store=vector_store,
             explicit_data_dir=Path(data_dir) if data_dir else None,
+            indexing_mode=indexing_mode,
         )
 
         # Register event handlers

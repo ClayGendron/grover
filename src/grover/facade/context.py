@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from grover.events import IndexingMode
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
@@ -44,6 +45,7 @@ class GroverContext:
     explicit_data_dir: Path | None = None
     meta_fs: LocalFileSystem | None = None
     meta_data_dir: Path | None = None
+    indexing_mode: IndexingMode = IndexingMode.BACKGROUND
     closed: bool = False
 
     # ------------------------------------------------------------------
@@ -70,6 +72,10 @@ class GroverContext:
     async def emit(self, event: FileEvent) -> None:
         """Emit a file event via the event bus."""
         await self.event_bus.emit(event)
+
+    async def drain(self) -> None:
+        """Drain all pending background events."""
+        await self.event_bus.drain()
 
     def check_writable(self, virtual_path: str) -> str | None:
         """Return an error message if *virtual_path* is read-only, else ``None``.

@@ -392,6 +392,7 @@ class TestConnectionIntegrationDBFS:
     ) -> None:
         grover, collected, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
+        await grover.flush()
 
         conn_events = [e for e in collected if e.event_type is EventType.CONNECTION_ADDED]
         assert len(conn_events) == 1
@@ -407,6 +408,7 @@ class TestConnectionIntegrationDBFS:
     ) -> None:
         grover, _collected, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
+        await grover.flush()
 
         graph = grover.get_graph("/vfs")
         assert isinstance(graph, RustworkxGraph)
@@ -417,10 +419,12 @@ class TestConnectionIntegrationDBFS:
     ) -> None:
         grover, collected, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
+        await grover.flush()
         assert grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
         collected.clear()
         result = await grover.delete_connection("/vfs/a.py", "/vfs/b.py", connection_type="imports")
+        await grover.flush()
         assert result.success
 
         # Graph updated via event
@@ -435,9 +439,11 @@ class TestConnectionIntegrationDBFS:
     ) -> None:
         grover, _collected, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
+        await grover.flush()
         assert grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
         await grover.delete_connection("/vfs/a.py", "/vfs/b.py", connection_type="imports")
+        await grover.flush()
         assert not grover.get_graph("/vfs").has_edge("/vfs/a.py", "/vfs/b.py")
 
     async def test_list_connections_returns_records(
@@ -521,6 +527,7 @@ class TestConnectionIntegrationLocalFS:
         result = await grover.add_connection("/local/a.py", "/local/b.py", "imports")
         assert result.success
         assert result.path == "/local/a.py[imports]/local/b.py"
+        await grover.flush()
 
         # Graph updated
         graph = grover.get_graph("/local")
@@ -535,10 +542,12 @@ class TestConnectionIntegrationLocalFS:
     ) -> None:
         grover, _collected = setup
         await grover.add_connection("/local/a.py", "/local/b.py", "imports")
+        await grover.flush()
 
         result = await grover.delete_connection(
             "/local/a.py", "/local/b.py", connection_type="imports"
         )
+        await grover.flush()
         assert result.success
         assert not grover.get_graph("/local").has_edge("/local/a.py", "/local/b.py")
 
@@ -598,6 +607,7 @@ class TestAnalyzeIntegrateConnections:
         code = "import os\n\ndef hello():\n    pass\n"
         result = await grover.write("/vfs/main.py", code)
         assert result.success
+        await grover.flush()
 
         # Check that connection events were emitted for the import edge
         conn_events = [e for e in collected if e.event_type is EventType.CONNECTION_ADDED]
@@ -626,10 +636,12 @@ class TestAnalyzeIntegrateConnections:
 
         # Write with one import
         await grover.write("/vfs/mod.py", "import os\n\ndef f():\n    pass\n")
+        await grover.flush()
         collected.clear()
 
         # Rewrite with different import
         await grover.write("/vfs/mod.py", "import sys\n\ndef g():\n    pass\n")
+        await grover.flush()
 
         # DB should only have the new edge (old ones deleted)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -650,6 +662,7 @@ class TestAnalyzeIntegrateConnections:
 
         code = "import os\n\ndef hello():\n    pass\n\nclass Foo:\n    pass\n"
         await grover.write("/vfs/mod.py", code)
+        await grover.flush()
 
         # Graph should have 'contains' edges (in-memory)
         graph = grover.get_graph("/vfs")
@@ -764,6 +777,7 @@ class TestGraphProjection:
     ) -> None:
         grover, _engine = setup
         await grover.add_connection("/vfs/a.py", "/vfs/b.py", "imports")
+        await grover.flush()
 
         graph = grover.get_graph("/vfs")
         assert graph.has_node("/vfs/a.py")
@@ -778,11 +792,14 @@ class TestGraphProjection:
 
         # Write a file and add connections
         await grover.write("/vfs/a.txt", "content")
+        await grover.flush()
         await grover.add_connection("/vfs/a.txt", "/vfs/b.txt", "imports")
         await grover.add_connection("/vfs/c.txt", "/vfs/a.txt", "calls")
+        await grover.flush()
 
         # Delete the file
         await grover.delete("/vfs/a.txt", permanent=True)
+        await grover.flush()
 
         # Connection DB records should be cleaned up
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

@@ -154,6 +154,7 @@ class TestEventBusEmit:
         bus.register(EventType.FILE_WRITTEN, handler)
         ev = FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt")
         await bus.emit(ev)
+        await bus.drain()
         assert collected == [ev]
 
     async def test_multiple_handlers_called_in_order(self) -> None:
@@ -169,6 +170,7 @@ class TestEventBusEmit:
         bus.register(EventType.FILE_WRITTEN, first)
         bus.register(EventType.FILE_WRITTEN, second)
         await bus.emit(FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt"))
+        await bus.drain()
         assert order == [1, 2]
 
     async def test_type_filtering(self) -> None:
@@ -186,6 +188,7 @@ class TestEventBusEmit:
         bus.register(EventType.FILE_DELETED, on_delete)
 
         await bus.emit(FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt"))
+        await bus.drain()
         assert len(written) == 1
         assert len(deleted) == 0
 
@@ -204,6 +207,7 @@ class TestEventBusEmit:
         bus.register(EventType.FILE_WRITTEN, good_handler)
 
         await bus.emit(FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt"))
+        await bus.drain()
         assert len(collected) == 1
 
     async def test_error_logging(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -212,6 +216,7 @@ class TestEventBusEmit:
 
         with caplog.at_level(logging.WARNING, logger="grover.events"):
             await bus.emit(FileEvent(event_type=EventType.FILE_WRITTEN, path="/a.txt"))
+            await bus.drain()
 
         assert "failed" in caplog.text
         assert "file_written" in caplog.text
@@ -251,6 +256,7 @@ class TestEventBusIntegration:
         grover, collected = setup
         result = await grover.write("/local/hello.txt", "hello world")
         assert result.success
+        await grover.flush()
         written_events = [e for e in collected if e.event_type is EventType.FILE_WRITTEN]
         assert len(written_events) >= 1
         ev = written_events[-1]
@@ -262,10 +268,12 @@ class TestEventBusIntegration:
     ) -> None:
         grover, collected = setup
         await grover.write("/local/hello.txt", "hello world")
+        await grover.flush()
         collected.clear()
 
         result = await grover.edit("/local/hello.txt", "hello", "goodbye")
         assert result.success
+        await grover.flush()
         written_events = [e for e in collected if e.event_type is EventType.FILE_WRITTEN]
         assert len(written_events) >= 1
         ev = written_events[-1]
@@ -277,10 +285,12 @@ class TestEventBusIntegration:
     ) -> None:
         grover, collected = setup
         await grover.write("/local/hello.txt", "hello")
+        await grover.flush()
         collected.clear()
 
         result = await grover.delete("/local/hello.txt", permanent=True)
         assert result.success
+        await grover.flush()
         delete_events = [e for e in collected if e.event_type is EventType.FILE_DELETED]
         assert len(delete_events) >= 1
         ev = delete_events[-1]
@@ -289,10 +299,12 @@ class TestEventBusIntegration:
     async def test_move_emits_file_moved(self, setup: tuple[GroverAsync, list[FileEvent]]) -> None:
         grover, collected = setup
         await grover.write("/local/a.txt", "content")
+        await grover.flush()
         collected.clear()
 
         result = await grover.move("/local/a.txt", "/local/b.txt")
         assert result.success
+        await grover.flush()
         move_events = [e for e in collected if e.event_type is EventType.FILE_MOVED]
         assert len(move_events) >= 1
         ev = move_events[-1]
@@ -304,10 +316,12 @@ class TestEventBusIntegration:
     ) -> None:
         grover, collected = setup
         await grover.write("/local/a.txt", "content")
+        await grover.flush()
         collected.clear()
 
         result = await grover.copy("/local/a.txt", "/local/b.txt")
         assert result.success
+        await grover.flush()
         written_events = [e for e in collected if e.event_type is EventType.FILE_WRITTEN]
         assert len(written_events) >= 1
         ev = written_events[-1]
@@ -373,10 +387,12 @@ class TestEventBusRestoreIntegration:
 
         await grover.write("/vfs/hello.txt", "v1")
         await grover.write("/vfs/hello.txt", "v2")
+        await grover.flush()
         collected.clear()
 
         result = await grover.restore_version("/vfs/hello.txt", 1)
         assert result.success
+        await grover.flush()
         restore_events = [e for e in collected if e.event_type is EventType.FILE_RESTORED]
         assert len(restore_events) >= 1
         ev = restore_events[-1]
@@ -388,11 +404,14 @@ class TestEventBusRestoreIntegration:
         grover, collected = setup
 
         await grover.write("/vfs/hello.txt", "content")
+        await grover.flush()
         await grover.delete("/vfs/hello.txt")
+        await grover.flush()
         collected.clear()
 
         result = await grover.restore_from_trash("/vfs/hello.txt")
         assert result.success
+        await grover.flush()
         restore_events = [e for e in collected if e.event_type is EventType.FILE_RESTORED]
         assert len(restore_events) >= 1
         ev = restore_events[-1]

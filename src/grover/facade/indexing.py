@@ -346,7 +346,18 @@ class IndexMixin:
 
         return None
 
+    async def flush(self) -> None:
+        """Wait for all pending background indexing to complete.
+
+        In ``background`` mode this drains the debounce queue and waits
+        for all active analysis tasks to finish.  In ``manual`` mode this
+        is a no-op.  Call before querying if you need guaranteed consistency
+        after recent writes.
+        """
+        await self._ctx.drain()
+
     async def save(self) -> None:
+        await self._ctx.drain()
         await self._async_save()
 
     async def sync(self, *, path: str | None = None) -> None:
@@ -394,6 +405,7 @@ class IndexMixin:
             return
         self._ctx.closed = True
 
+        await self._ctx.drain()
         await self._async_save()
         # Close all backends directly
         for mount in self._ctx.registry.list_mounts():

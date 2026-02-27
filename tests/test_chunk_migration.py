@@ -101,6 +101,7 @@ class TestAnalyzeWritesChunkRows:
     async def test_analyze_writes_chunk_rows(self, grover: GroverAsync):
         """Writing a .py file should create chunk rows in the DB."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
+        await grover.flush()
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
@@ -137,6 +138,7 @@ class TestAnalyzeCreatesGraphState:
     async def test_analyze_creates_graph_nodes(self, grover: GroverAsync):
         """Chunk nodes should have parent_path attribute pointing to parent file."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
+        await grover.flush()
 
         graph = grover.get_graph("/project/funcs.py")
         assert graph.has_node("/project/funcs.py")
@@ -155,6 +157,7 @@ class TestAnalyzeCreatesGraphState:
     async def test_analyze_creates_contains_edges(self, grover: GroverAsync):
         """'contains' edges should connect parent file to chunk nodes."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
+        await grover.flush()
 
         graph = grover.get_graph("/project/funcs.py")
         contains = graph.contains("/project/funcs.py")
@@ -171,6 +174,7 @@ class TestReAnalyzeReplacesChunks:
     async def test_re_analyze_replaces_chunks(self, grover: GroverAsync):
         """Editing a file should replace old chunk rows with new ones."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
+        await grover.flush()
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
@@ -193,6 +197,7 @@ def gamma():
     return 3
 """
         await grover.write("/project/funcs.py", new_code)
+        await grover.flush()
 
         async with grover._ctx.session_for(mount) as sess:
             chunks_after = await backend.list_file_chunks("/project/funcs.py", session=sess)
@@ -212,6 +217,7 @@ class TestDeleteCleansChunks:
     async def test_delete_cleans_chunks(self, grover: GroverAsync):
         """Deleting a file should remove its chunk rows."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
+        await grover.flush()
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
@@ -224,6 +230,7 @@ class TestDeleteCleansChunks:
 
         # Delete the file
         await grover.delete("/project/funcs.py")
+        await grover.flush()
 
         async with grover._ctx.session_for(mount) as sess:
             chunks_after = await backend.list_file_chunks("/project/funcs.py", session=sess)
@@ -240,6 +247,7 @@ class TestMoveReIndexesChunks:
     async def test_move_re_indexes_chunks(self, grover: GroverAsync):
         """Moving a file should delete old chunks and create new ones at new path."""
         await grover.write("/project/old.py", PYTHON_CODE)
+        await grover.flush()
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
@@ -252,6 +260,7 @@ class TestMoveReIndexesChunks:
 
         # Move
         await grover.move("/project/old.py", "/project/new.py")
+        await grover.flush()
 
         # Old chunks should be gone
         async with grover._ctx.session_for(mount) as sess:
@@ -333,6 +342,7 @@ class TestVectorMetadata:
     async def test_vector_metadata_has_chunk_fields(self, grover: GroverAsync):
         """Vector entries should include chunk_name, line_start, line_end in metadata."""
         await grover.write("/project/funcs.py", PYTHON_CODE)
+        await grover.flush()
 
         mount = _get_mount(grover, "/project")
         search_engine = mount.search

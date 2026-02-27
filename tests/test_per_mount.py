@@ -157,6 +157,7 @@ class TestSearchRouting:
     async def test_vector_search_routes_through_vfs(self, grover: GroverAsync):
         """vector_search() should use VFS routing."""
         await grover.write("/project/auth.py", 'def authenticate():\n    """Auth."""\n    pass\n')
+        await grover.flush()
         result = await grover.vector_search("authenticate")
         assert result.success is True
         assert len(result) >= 1
@@ -182,6 +183,7 @@ class TestSearchRouting:
         await multi_grover.write(
             "/mount2/lib.py", 'def compute_more():\n    """Compute more."""\n    pass\n'
         )
+        await multi_grover.flush()
         result = await multi_grover.vector_search("compute", path="/")
         # Should have results from both mounts
         assert len(result) >= 2
@@ -204,6 +206,7 @@ class TestPerMountIndexing:
     async def test_write_indexes_correct_mount(self, multi_grover: GroverAsync):
         """Writing a file should populate the correct mount's graph."""
         await multi_grover.write("/mount1/code.py", "def foo():\n    pass\n")
+        await multi_grover.flush()
         m1 = next(
             m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
         )
@@ -217,11 +220,13 @@ class TestPerMountIndexing:
     async def test_delete_cleans_correct_mount(self, multi_grover: GroverAsync):
         """Deleting a file should clean up the correct mount's graph."""
         await multi_grover.write("/mount1/gone.py", "def gone():\n    pass\n")
+        await multi_grover.flush()
         m1 = next(
             m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1"
         )
         assert m1.graph.has_node("/mount1/gone.py")
         await multi_grover.delete("/mount1/gone.py")
+        await multi_grover.flush()
         assert not m1.graph.has_node("/mount1/gone.py")
 
 
@@ -235,6 +240,7 @@ class TestGraphOpsResolveMount:
     async def test_dependents_resolves_mount(self, multi_grover: GroverAsync):
         """dependents() uses the correct mount's graph."""
         await multi_grover.write("/mount1/lib.py", "def helper():\n    return 42\n")
+        await multi_grover.flush()
         result = multi_grover.dependents("/mount1/lib.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
@@ -243,6 +249,7 @@ class TestGraphOpsResolveMount:
     async def test_dependencies_resolves_mount(self, multi_grover: GroverAsync):
         """dependencies() uses the correct mount's graph."""
         await multi_grover.write("/mount2/consumer.py", "def main():\n    pass\n")
+        await multi_grover.flush()
         result = multi_grover.dependencies("/mount2/consumer.py")
         assert isinstance(result, GraphResult)
         assert result.success is True
@@ -252,6 +259,7 @@ class TestGraphOpsResolveMount:
         """contains() uses the correct mount's graph."""
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await multi_grover.write("/mount1/funcs.py", code)
+        await multi_grover.flush()
         result = multi_grover.contains("/mount1/funcs.py")
         assert isinstance(result, GraphResult)
         assert len(result) >= 2
@@ -329,6 +337,7 @@ class TestEngineMountGraphSearch:
 
             # Write and verify graph
             await g.write("/db/test.py", "def db_func():\n    pass\n")
+            await g.flush()
             assert g.get_graph("/db").has_node("/db/test.py")
         finally:
             await g.close()
