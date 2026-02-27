@@ -14,7 +14,7 @@ Grover gives AI agents a single toolkit for working with any knowledge base — 
 - **Knowledge graph** — relationship, impact, and containment queries powered by [rustworkx](https://github.com/Qiskit/rustworkx). Add edges manually or let built-in analyzers extract structure automatically (Python via AST; JS/TS/Go via tree-sitter).
 - **Semantic search** — pluggable vector stores (local [usearch](https://github.com/unum-cloud/usearch), [Pinecone](https://www.pinecone.io/), [Databricks](https://docs.databricks.com/en/generative-ai/vector-search.html)) with pluggable embedding providers (sentence-transformers, OpenAI, LangChain). Search by meaning, not just keywords.
 
-All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically.
+All three layers stay in sync — write a file and the graph rebuilds and embeddings re-index automatically in the background.
 
 The name comes from **grove** (a connected cluster of trees) + **rover** (an agent that explores). Grover treats your data as a grove of interconnected files and lets agents navigate it safely.
 
@@ -56,17 +56,16 @@ backend = LocalFileSystem(workspace_dir="/path/to/project")
 g.add_mount("/project", backend)
 
 # Write files — every write is automatically versioned
+# Indexing happens in the background (graph + search update asynchronously)
 g.write("/project/hello.py", "def greet(name):\n    return f'Hello, {name}!'\n")
 g.write("/project/main.py", "from hello import greet\nprint(greet('world'))\n")
 
-# Read, edit, delete
+# Read and edit
 content = g.read("/project/hello.py")
 g.edit("/project/hello.py", "Hello", "Hi")
-g.delete("/project/main.py")  # soft-delete — recoverable from trash
 
-# Index the project (analyze code, build graph + search index)
-stats = g.index()
-# {"files_scanned": 42, "chunks_created": 187, "edges_added": 95}
+# Wait for background indexing to complete before querying
+g.flush()
 
 # Knowledge graph queries
 g.dependencies("/project/main.py")   # what does main.py depend on?
@@ -85,6 +84,13 @@ result = g.search("greeting function", k=5)
 for candidate in result.candidates:
     print(candidate.path)
 
+# Or use index() for a full one-time scan (useful with manual mode)
+stats = g.index()
+# {"files_scanned": 42, "chunks_created": 187, "edges_added": 95, "files_skipped": 3}
+
+# Delete (soft-delete — recoverable from trash)
+g.delete("/project/main.py")
+
 # Persist and clean up
 g.save()
 g.close()
@@ -98,8 +104,26 @@ from grover import GroverAsync
 g = GroverAsync()
 await g.add_mount("/project", backend)
 await g.write("/project/hello.py", "...")
+await g.flush()   # wait for background indexing before querying
 await g.save()
 await g.close()
+```
+
+For batch imports where you want to write many files before indexing, use manual mode:
+
+```python
+from grover import Grover, IndexingMode
+
+g = Grover(indexing_mode=IndexingMode.MANUAL)
+g.add_mount("/project", backend)
+
+# Write many files — no background indexing
+for path, content in files:
+    g.write(path, content)
+
+# Index everything at once
+g.index()
+g.close()
 ```
 
 ## Architecture
@@ -135,7 +159,7 @@ graph TD
 
 **SearchEngine** orchestrates embedding and vector storage. It wires together an `EmbeddingProvider` (text → vectors) and a `VectorStore` (store/search vectors). The default setup uses `all-MiniLM-L6-v2` embeddings + local usearch HNSW. For production, swap in Pinecone or Databricks with OpenAI embeddings.
 
-**EventBus** keeps everything consistent — when a file is written or deleted, the graph and search engine update automatically.
+**EventBus** keeps everything consistent — when a file is written or deleted, the graph and search engine update automatically in the background. Events are debounced per-path so rapid writes to the same file are coalesced into a single analysis pass.
 
 ## Backends
 
@@ -246,7 +270,7 @@ The full API reference is in [`docs/api.md`](docs/api.md). Here's a summary:
 | **Sharing** | `share`, `unshare`, `list_shares`, `list_shared_with_me` |
 | **Graph** | `dependencies`, `dependents`, `impacts`, `path_between`, `contains`, `pagerank`, `ancestors`, `descendants`, `meeting_subgraph`, `neighborhood`, `find_nodes` |
 | **Search** | `search` |
-| **Lifecycle** | `add_mount`, `unmount`, `index`, `save`, `close` |
+| **Lifecycle** | `add_mount`, `unmount`, `index`, `flush`, `save`, `close` |
 
 Key types:
 

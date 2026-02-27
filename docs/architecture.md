@@ -185,12 +185,38 @@ The three layers stay in sync through an `EventBus`. When VFS completes a file o
 | `FILE_DELETED` | Remove file and children from graph, search index, and chunk DB rows |
 | `FILE_MOVED` | Remove old path (graph, search, chunks), re-analyze at new path |
 | `FILE_RESTORED` | Re-analyze restored file |
+| `CONNECTION_ADDED` | Add edge to in-memory graph |
+| `CONNECTION_DELETED` | Remove edge from in-memory graph |
 
 Events carry an optional `user_id` field so chunk records and other downstream operations are tagged with the correct owner in user-scoped environments.
 
 Event handlers resolve the mount from the event path, then use that mount's graph and search engine. Exceptions in handlers are logged but never propagated — a failed re-index should not cause a file write to fail.
 
-This design means the graph and search index are always *eventually* consistent with the filesystem. For v0.1, handlers run synchronously within the same operation. Background workers are a future optimization.
+### Event dispatch and indexing modes
+
+The `EventBus` supports two modes, controlled by the `IndexingMode` enum passed to the `Grover`/`GroverAsync` constructor:
+
+**`BACKGROUND` mode (default):** Events are dispatched to background `asyncio.Task` instances so that `write()`, `edit()`, and other mutating operations return immediately. File mutation events (`FILE_WRITTEN`, `FILE_RESTORED`) are **debounced per-path** — multiple rapid writes to the same file within the `debounce_delay` window (default 0.1s) are coalesced into a single analysis pass using the latest content. This significantly reduces redundant work during burst writes.
+
+`FILE_DELETED` and `FILE_MOVED` events fire immediately (no debounce) and cancel any pending debounced event for the affected path — there's no point analyzing a file that was just deleted or moved. `CONNECTION_ADDED` and `CONNECTION_DELETED` events also fire immediately (they are lightweight graph operations).
+
+**`MANUAL` mode:** All event dispatch is suppressed. `emit()` is a no-op. The caller is responsible for calling `index()` explicitly to populate the graph and search engine. This is useful for batch import scenarios where you write many files first, then index once at the end.
+
+### Nested emit handling
+
+The `_analyze_and_integrate` handler (triggered by `FILE_WRITTEN`) itself emits `CONNECTION_ADDED` events as it discovers import edges. To preserve ordering, a `_dispatching` flag tracks whether we're currently inside a handler. When `emit()` is called from within a running handler (nested emit), the event is dispatched **inline** rather than scheduled as a new background task. This ensures that by the time a `FILE_WRITTEN` handler completes, all its emitted connection events have also been processed.
+
+### flush() and drain lifecycle
+
+`flush()` (public API) calls `drain()` on the EventBus, which:
+
+1. Fires all pending debounce timers immediately (cancelling the timers and dispatching the events)
+2. Awaits all active background tasks
+3. Loops until settled — handlers may emit new events during drain, which are processed in subsequent iterations
+
+`close()` and `save()` automatically call `drain()` before persisting state, so pending events are always processed before shutdown.
+
+`index()` bypasses the event bus for file events — it calls `_analyze_and_integrate` directly rather than emitting `FILE_WRITTEN` events. However, `_analyze_and_integrate` still emits `CONNECTION_ADDED` events through the event bus as it discovers edges. `index()` completes all analysis inline regardless of indexing mode.
 
 ## Session management
 

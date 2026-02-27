@@ -15,8 +15,10 @@ from grover import Grover, GroverAsync
 ### Constructor
 
 ```python
-Grover(*, data_dir=None, embedding_provider=None, vector_store=None)
-GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None)
+Grover(*, data_dir=None, embedding_provider=None, vector_store=None,
+       indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
+GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None,
+            indexing_mode=IndexingMode.BACKGROUND, debounce_delay=0.1)
 ```
 
 | Parameter | Type | Description |
@@ -24,6 +26,8 @@ GroverAsync(*, data_dir=None, embedding_provider=None, vector_store=None)
 | `data_dir` | `str | None` | Directory for internal state (`.grover/`). Auto-detected from the first mounted backend if not set. `GroverAsync` also accepts `Path`. |
 | `embedding_provider` | `EmbeddingProvider | None` | Custom embedding provider for search. Falls back to `SentenceTransformerEmbedding` if the `search` extra is installed. Search is disabled if neither is available. |
 | `vector_store` | `VectorStore | None` | Custom vector store backend (e.g., `PineconeVectorStore`, `DatabricksVectorStore`). Defaults to `LocalVectorStore` if not set. |
+| `indexing_mode` | `IndexingMode` | Controls how file events are dispatched to indexing handlers. `BACKGROUND` (default): events are debounced per-path and processed in background tasks so `write()`/`edit()` return immediately. `MANUAL`: all event dispatch is suppressed; only an explicit call to `index()` populates the graph and search engine. |
+| `debounce_delay` | `float` | Seconds to wait before dispatching a debounced event (default `0.1`). Only applies in `BACKGROUND` mode. Multiple rapid writes to the same path within this window are coalesced into a single analysis pass. |
 
 ### Mount / Unmount
 
@@ -286,15 +290,17 @@ Returns `FileSearchResult(success=False, ...)` if no embedding provider is avail
 
 ```python
 g.index(mount_path=None) -> dict[str, int]
+g.flush()
 g.save()
 g.close()
 ```
 
 | Method | Description |
 |--------|-------------|
-| `index(mount_path)` | Walk the filesystem, analyze all files, build the knowledge graph and search index. Pass a `mount_path` to index a single mount, or `None` for all visible mounts. Returns stats: `{"files_scanned": N, "chunks_created": N, "edges_added": N}`. |
-| `save()` | Persist graph edges to the database and search index to disk. |
-| `close()` | Save state and shut down all subsystems. Idempotent. |
+| `index(mount_path)` | Walk the filesystem, analyze all files, build the knowledge graph and search index. Pass a `mount_path` to index a single mount, or `None` for all visible mounts. Returns stats: `{"files_scanned": N, "chunks_created": N, "edges_added": N, "files_skipped": N}`. Runs inline regardless of `indexing_mode`. |
+| `flush()` | Wait for all pending background indexing to complete. In `BACKGROUND` mode, drains the debounce queue and awaits all active analysis tasks. In `MANUAL` mode, this is a no-op. Call before querying if you need guaranteed consistency after recent writes. |
+| `save()` | Persist the search index to disk. Automatically drains pending events before saving. Graph edges are persisted through `ConnectionService` at write time, not during `save()`. |
+| `close()` | Save state and shut down all subsystems. Automatically drains pending events before saving. Idempotent. |
 
 ### Properties and Methods
 
@@ -328,6 +334,27 @@ class Ref:
 ```
 
 `file_ref(path, version=None)` is a convenience constructor that normalizes the path.
+
+### IndexingMode
+
+```python
+from grover import IndexingMode
+```
+
+Controls how file mutation events are dispatched to indexing handlers.
+
+| Value | Behavior |
+|-------|----------|
+| `IndexingMode.BACKGROUND` | Default. Events are debounced per-path and dispatched in background `asyncio.Task` instances. `write()` and `edit()` return immediately; indexing happens asynchronously. Call `flush()` before querying if you need guaranteed consistency. |
+| `IndexingMode.MANUAL` | All event dispatch is suppressed. Only an explicit call to `index()` populates the graph and search engine. Useful for batch import scenarios where you want to write many files first, then index once. |
+
+```python
+# Background mode (default) — writes are fast, index in the background
+g = Grover()
+
+# Manual mode — full control over when indexing happens
+g = Grover(indexing_mode=IndexingMode.MANUAL)
+```
 
 ### SearchResult (internal)
 
