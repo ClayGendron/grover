@@ -12,7 +12,7 @@ from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.graph.protocols import GraphStore
 from grover.graph.types import SubgraphResult
 from grover.mount import Mount, ProtocolConflictError, ProtocolNotAvailableError
-from grover.ref import Ref, file_ref
+from grover.ref import Ref
 from grover.search._engine import SearchEngine
 from grover.search.filters import (
     FilterExpression,
@@ -152,7 +152,6 @@ __all__ = [
     "and_",
     "eq",
     "exists",
-    "file_ref",
     "gt",
     "gte",
     "in_",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from grover.fs.paths import build_chunk_ref
+from grover.ref import Ref
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +64,7 @@ def build_chunk_path(parent_path: str, symbol_name: str) -> str:
     >>> build_chunk_path("/src/auth.py", "Client.connect")
     '/src/auth.py#Client.connect'
     """
-    return build_chunk_ref(parent_path, symbol_name)
+    return Ref.for_chunk(parent_path, symbol_name).path
 
 
 def extract_lines(content: str, line_start: int, line_end: int) -> str:

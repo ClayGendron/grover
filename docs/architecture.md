@@ -13,7 +13,7 @@ Grover's identity model is built on one rule: **every entity is a file or direct
 This means:
 
 - There is no separate `grover_nodes` table. The `grover_files` table *is* the node registry.
-- A `Ref` is just a path with optional version and line range metadata.
+- A `Ref` is a thin wrapper around a path string that can represent any entity: files (`/src/auth.py`), chunks (`/src/auth.py#login`), versions (`/src/auth.py@3`), or connections (`/src/auth.py[imports]/src/utils.py`). Properties lazily decompose the path.
 - Graph edges connect paths to paths. If you can see the file, you can see the node.
 
 This simplification keeps the three layers (filesystem, graph, search) naturally aligned. A file write creates a node, generates edges, and indexes embeddings — all keyed by the same path.

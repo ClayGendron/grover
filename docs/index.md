@@ -191,10 +191,13 @@ The full API reference is in the [API Reference](api.md). Here's a summary:
 Key types:
 
 ```python
-from grover import Ref, file_ref, FileSearchResult, FileSearchCandidate
+from grover import Ref, FileSearchResult, FileSearchCandidate
 
-# Ref — immutable reference to a file or chunk
-Ref(path="/project/hello.py", version=2, line_start=1, line_end=5)
+# Ref — immutable identity for any Grover entity
+Ref(path="/project/hello.py")                              # file
+Ref.for_chunk("/project/hello.py", "greet")                # chunk
+Ref.for_version("/project/hello.py", 3)                    # version
+Ref.for_connection("/a.py", "/b.py", "imports")            # connection
 
 # FileSearchResult — search results with evidence-backed candidates
 result = g.search("greeting function", k=5)

@@ -1,217 +1,289 @@
-"""Tests for path format utilities — chunk refs, version refs, parsing, round-trips."""
+"""Tests for path format utilities via Ref."""
 
 from __future__ import annotations
 
-from grover.fs.paths import (
-    build_chunk_ref,
-    build_version_ref,
-    is_chunk_ref,
-    is_version_ref,
-    parse_ref,
-    strip_ref,
-)
+from grover.ref import Ref
 
 # ==================================================================
-# build_chunk_ref
+# Ref.for_chunk (replaces build_chunk_ref)
 # ==================================================================
 
 
-class TestBuildChunkRef:
+class TestForChunk:
     def test_simple_symbol(self):
-        assert build_chunk_ref("/src/auth.py", "login") == "/src/auth.py#login"
+        assert Ref.for_chunk("/src/auth.py", "login").path == "/src/auth.py#login"
 
     def test_scoped_symbol(self):
-        assert build_chunk_ref("/src/auth.py", "Client.connect") == "/src/auth.py#Client.connect"
+        assert Ref.for_chunk("/src/auth.py", "Client.connect").path == "/src/auth.py#Client.connect"
 
     def test_root_file(self):
-        assert build_chunk_ref("/main.py", "run") == "/main.py#run"
+        assert Ref.for_chunk("/main.py", "run").path == "/main.py#run"
 
     def test_deeply_nested(self):
-        assert build_chunk_ref("/a/b/c/d.py", "foo") == "/a/b/c/d.py#foo"
+        assert Ref.for_chunk("/a/b/c/d.py", "foo").path == "/a/b/c/d.py#foo"
 
     def test_dunder_method(self):
-        assert build_chunk_ref("/src/cls.py", "MyClass.__init__") == "/src/cls.py#MyClass.__init__"
+        r = Ref.for_chunk("/src/cls.py", "MyClass.__init__")
+        assert r.path == "/src/cls.py#MyClass.__init__"
 
     def test_dotted_filename(self):
-        assert build_chunk_ref("/src/auth.test.py", "test_login") == "/src/auth.test.py#test_login"
-
-
-# ==================================================================
-# build_version_ref
-# ==================================================================
-
-
-class TestBuildVersionRef:
-    def test_simple(self):
-        assert build_version_ref("/src/auth.py", 3) == "/src/auth.py@3"
-
-    def test_version_zero(self):
-        assert build_version_ref("/src/auth.py", 0) == "/src/auth.py@0"
-
-    def test_large_version(self):
-        assert build_version_ref("/file.txt", 999) == "/file.txt@999"
-
-
-# ==================================================================
-# parse_ref
-# ==================================================================
-
-
-class TestParseRef:
-    def test_plain_path(self):
-        assert parse_ref("/src/auth.py") == ("/src/auth.py", None, None)
-
-    def test_chunk_ref(self):
-        assert parse_ref("/src/auth.py#login") == ("/src/auth.py", "login", None)
-
-    def test_scoped_chunk_ref(self):
-        assert parse_ref("/src/auth.py#Client.connect") == (
-            "/src/auth.py",
-            "Client.connect",
-            None,
+        assert (
+            Ref.for_chunk("/src/auth.test.py", "test_login").path == "/src/auth.test.py#test_login"
         )
 
-    def test_version_ref(self):
-        assert parse_ref("/src/auth.py@3") == ("/src/auth.py", None, 3)
+
+# ==================================================================
+# Ref.for_version (replaces build_version_ref)
+# ==================================================================
+
+
+class TestForVersion:
+    def test_simple(self):
+        assert Ref.for_version("/src/auth.py", 3).path == "/src/auth.py@3"
 
     def test_version_zero(self):
-        assert parse_ref("/src/auth.py@0") == ("/src/auth.py", None, 0)
+        assert Ref.for_version("/src/auth.py", 0).path == "/src/auth.py@0"
 
-    def test_no_suffix(self):
-        base, chunk, ver = parse_ref("/plain/path.txt")
-        assert base == "/plain/path.txt"
-        assert chunk is None
-        assert ver is None
+    def test_large_version(self):
+        assert Ref.for_version("/file.txt", 999).path == "/file.txt@999"
 
-    def test_hash_in_directory_name_with_chunk(self):
-        # A # in the middle of a path component with a final # chunk ref
-        result = parse_ref("/dir#name/file.py#symbol")
-        assert result == ("/dir#name/file.py", "symbol", None)
 
-    def test_hash_in_directory_only(self):
-        # A # only in directory — no chunk ref (suffix contains /)
-        result = parse_ref("/dir#v1/file.py")
-        assert result == ("/dir#v1/file.py", None, None)
+# ==================================================================
+# Ref.for_connection (new)
+# ==================================================================
 
-    def test_at_in_directory_name(self):
-        # A @ in the middle of a path: last @ wins
-        result = parse_ref("/dir@v2/file.py@3")
-        assert result == ("/dir@v2/file.py", None, 3)
 
-    def test_invalid_version_treated_as_plain(self):
-        # @abc is not a valid version number
-        assert parse_ref("/file.py@abc") == ("/file.py@abc", None, None)
+class TestForConnection:
+    def test_simple(self):
+        assert Ref.for_connection("/a.py", "/b.py", "imports").path == "/a.py[imports]/b.py"
 
-    def test_empty_chunk_id_treated_as_plain(self):
-        # Trailing # with nothing after it
-        assert parse_ref("/file.py#") == ("/file.py#", None, None)
+    def test_nested_paths(self):
+        assert (
+            Ref.for_connection("/src/a.py", "/lib/b.py", "calls").path
+            == "/src/a.py[calls]/lib/b.py"
+        )
+
+    def test_various_types(self):
+        for ct in ("contains", "imports", "calls"):
+            r = Ref.for_connection("/a.py", "/b.py", ct)
+            assert r.path == f"/a.py[{ct}]/b.py"
+
+
+# ==================================================================
+# Parsing — chunk (replaces TestParseRef chunk cases)
+# ==================================================================
+
+
+class TestParseChunk:
+    def test_chunk_ref(self):
+        r = Ref(path="/src/auth.py#login")
+        assert r.is_chunk is True
+        assert r.chunk == "login"
+        assert r.base_path == "/src/auth.py"
+
+    def test_scoped_chunk_ref(self):
+        r = Ref(path="/src/auth.py#Client.connect")
+        assert r.chunk == "Client.connect"
+
+    def test_plain_path(self):
+        r = Ref(path="/src/auth.py")
+        assert r.is_chunk is False
+        assert r.chunk is None
+
+    def test_hash_in_dir_and_suffix(self):
+        r = Ref(path="/dir#name/file.py#symbol")
+        assert r.is_chunk is True
+        assert r.chunk == "symbol"
+        assert r.base_path == "/dir#name/file.py"
+
+    def test_hash_in_dir_only(self):
+        r = Ref(path="/dir#v1/file.py")
+        assert r.is_chunk is False
+        assert r.chunk is None
+
+    def test_empty_chunk_treated_as_plain(self):
+        r = Ref(path="/file.py#")
+        assert r.is_chunk is False
+        assert r.chunk is None
+
+
+# ==================================================================
+# Parsing — version (replaces TestParseRef version cases)
+# ==================================================================
+
+
+class TestParseVersion:
+    def test_version_ref(self):
+        r = Ref(path="/src/auth.py@3")
+        assert r.is_version is True
+        assert r.version == 3
+        assert r.base_path == "/src/auth.py"
+
+    def test_version_zero(self):
+        assert Ref(path="/src/auth.py@0").version == 0
+
+    def test_invalid_version(self):
+        r = Ref(path="/file.py@abc")
+        assert r.is_version is False
+        assert r.version is None
+
+    def test_at_in_dir_and_suffix(self):
+        r = Ref(path="/dir@v2/file.py@3")
+        assert r.is_version is True
+        assert r.version == 3
+        assert r.base_path == "/dir@v2/file.py"
 
     def test_empty_string(self):
-        assert parse_ref("") == ("", None, None)
+        r = Ref(path="")
+        assert r.is_version is False
 
     def test_root_path(self):
-        assert parse_ref("/") == ("/", None, None)
+        r = Ref(path="/")
+        assert r.is_version is False
 
 
 # ==================================================================
-# Round-trip correctness
+# Parsing — connection (new)
 # ==================================================================
 
 
-class TestRoundTrip:
-    def test_chunk_round_trip(self):
-        """parse_ref(build_chunk_ref(p, c)) == (p, c, None)"""
-        path = "/src/auth.py"
-        symbol = "login"
-        ref = build_chunk_ref(path, symbol)
-        base, chunk_id, version = parse_ref(ref)
-        assert base == path
-        assert chunk_id == symbol
-        assert version is None
+class TestParseConnection:
+    def test_connection_ref(self):
+        r = Ref(path="/a.py[imports]/b.py")
+        assert r.is_connection is True
+        assert r.source == "/a.py"
+        assert r.target == "/b.py"
+        assert r.connection_type == "imports"
 
-    def test_version_round_trip(self):
-        """parse_ref(build_version_ref(p, v)) == (p, None, v)"""
-        path = "/src/auth.py"
-        ver = 5
-        ref = build_version_ref(path, ver)
-        base, chunk_id, version = parse_ref(ref)
-        assert base == path
-        assert chunk_id is None
-        assert version == ver
+    def test_plain_not_connection(self):
+        r = Ref(path="/a.py")
+        assert r.is_connection is False
 
-    def test_strip_chunk_round_trip(self):
-        ref = build_chunk_ref("/a/b.py", "func")
-        assert strip_ref(ref) == "/a/b.py"
-
-    def test_strip_version_round_trip(self):
-        ref = build_version_ref("/a/b.py", 7)
-        assert strip_ref(ref) == "/a/b.py"
+    def test_empty_type(self):
+        r = Ref(path="/a.py[]/b.py")
+        assert r.is_connection is False
 
 
 # ==================================================================
-# is_chunk_ref / is_version_ref
+# is_chunk (replaces TestIsChunkRef)
 # ==================================================================
 
 
 class TestIsChunkRef:
     def test_true(self):
-        assert is_chunk_ref("/a.py#foo") is True
+        assert Ref(path="/a.py#foo").is_chunk is True
 
     def test_false_plain(self):
-        assert is_chunk_ref("/a.py") is False
+        assert Ref(path="/a.py").is_chunk is False
 
     def test_false_version(self):
-        assert is_chunk_ref("/a.py@3") is False
+        assert Ref(path="/a.py@3").is_chunk is False
 
     def test_false_trailing_hash(self):
-        assert is_chunk_ref("/a.py#") is False
+        assert Ref(path="/a.py#").is_chunk is False
 
     def test_false_leading_hash(self):
-        # hash at position 0 → hash_idx not > 0
-        assert is_chunk_ref("#foo") is False
+        assert Ref(path="#foo").is_chunk is False
 
     def test_false_hash_in_directory(self):
-        # hash in directory name, suffix contains /
-        assert is_chunk_ref("/dir#v1/file.py") is False
+        assert Ref(path="/dir#v1/file.py").is_chunk is False
+
+
+# ==================================================================
+# is_version (replaces TestIsVersionRef)
+# ==================================================================
 
 
 class TestIsVersionRef:
     def test_true(self):
-        assert is_version_ref("/a.py@3") is True
+        assert Ref(path="/a.py@3").is_version is True
 
     def test_false_plain(self):
-        assert is_version_ref("/a.py") is False
+        assert Ref(path="/a.py").is_version is False
 
     def test_false_chunk(self):
-        assert is_version_ref("/a.py#foo") is False
+        assert Ref(path="/a.py#foo").is_version is False
 
     def test_false_non_numeric(self):
-        assert is_version_ref("/a.py@abc") is False
+        assert Ref(path="/a.py@abc").is_version is False
 
     def test_version_zero(self):
-        assert is_version_ref("/a.py@0") is True
+        assert Ref(path="/a.py@0").is_version is True
 
     def test_false_leading_at(self):
-        assert is_version_ref("@3") is False
+        assert Ref(path="@3").is_version is False
 
 
 # ==================================================================
-# strip_ref
+# is_connection (new)
 # ==================================================================
 
 
-class TestStripRef:
+class TestIsConnection:
+    def test_true(self):
+        assert Ref(path="/a.py[imports]/b.py").is_connection is True
+
+    def test_false_plain(self):
+        assert Ref(path="/a.py").is_connection is False
+
+    def test_false_empty_type(self):
+        assert Ref(path="/a.py[]/b.py").is_connection is False
+
+    def test_false_leading_bracket(self):
+        assert Ref(path="[type]/b.py").is_connection is False
+
+
+# ==================================================================
+# base_path (replaces TestStripRef)
+# ==================================================================
+
+
+class TestBasePath:
     def test_strip_chunk(self):
-        assert strip_ref("/src/auth.py#login") == "/src/auth.py"
+        assert Ref(path="/src/auth.py#login").base_path == "/src/auth.py"
 
     def test_strip_version(self):
-        assert strip_ref("/src/auth.py@3") == "/src/auth.py"
+        assert Ref(path="/src/auth.py@3").base_path == "/src/auth.py"
 
     def test_plain_unchanged(self):
-        assert strip_ref("/src/auth.py") == "/src/auth.py"
+        assert Ref(path="/src/auth.py").base_path == "/src/auth.py"
 
     def test_root(self):
-        assert strip_ref("/") == "/"
+        assert Ref(path="/").base_path == "/"
 
     def test_empty(self):
-        assert strip_ref("") == ""
+        assert Ref(path="").base_path == ""
+
+    def test_connection_returns_source(self):
+        assert Ref(path="/a.py[imports]/b.py").base_path == "/a.py"
+
+
+# ==================================================================
+# Round-trips
+# ==================================================================
+
+
+class TestRoundTrips:
+    def test_chunk_round_trip(self):
+        r = Ref.for_chunk("/src/auth.py", "login")
+        assert r.base_path == "/src/auth.py"
+        assert r.chunk == "login"
+
+    def test_version_round_trip(self):
+        r = Ref.for_version("/src/auth.py", 5)
+        assert r.base_path == "/src/auth.py"
+        assert r.version == 5
+
+    def test_strip_chunk_round_trip(self):
+        r = Ref.for_chunk("/a/b.py", "func")
+        assert r.base_path == "/a/b.py"
+
+    def test_strip_version_round_trip(self):
+        r = Ref.for_version("/a/b.py", 7)
+        assert r.base_path == "/a/b.py"
+
+    def test_connection_round_trip(self):
+        r = Ref.for_connection("/a.py", "/b.py", "imports")
+        assert r.source == "/a.py"
+        assert r.target == "/b.py"
+        assert r.connection_type == "imports"

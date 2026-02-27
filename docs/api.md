@@ -324,22 +324,45 @@ g.fs -> VFS                            # The virtual filesystem (for advanced us
 ### Ref
 
 ```python
-from grover import Ref, file_ref
+from grover import Ref
 ```
 
-Immutable (frozen) reference to a file or chunk.
+Immutable identity for any Grover entity. A thin wrapper around a single path string that supports four synthetic path formats:
+
+| Entity | Format | Example |
+|--------|--------|---------|
+| File | plain path | `/src/auth.py` |
+| Chunk | `file#symbol` | `/src/auth.py#login` |
+| Version | `file@N` | `/src/auth.py@3` |
+| Connection | `source[type]target` | `/src/auth.py[imports]/src/utils.py` |
+
+**Type checks** (mutually exclusive):
+
+| Property | Returns `True` when |
+|----------|-------------------|
+| `ref.is_file` | Plain file path (no suffix) |
+| `ref.is_chunk` | Path contains `#symbol` |
+| `ref.is_version` | Path contains `@N` |
+| `ref.is_connection` | Path contains `[type]` |
+
+**Decomposition properties:**
+
+| Property | File | Chunk | Version | Connection |
+|----------|------|-------|---------|------------|
+| `base_path` | path | file path | file path | source path |
+| `chunk` | `None` | symbol name | `None` | `None` |
+| `version` | `None` | `None` | version int | `None` |
+| `source` | `None` | `None` | `None` | source path |
+| `target` | `None` | `None` | `None` | target path |
+| `connection_type` | `None` | `None` | `None` | type string |
+
+**Factory classmethods:**
 
 ```python
-@dataclass(frozen=True)
-class Ref:
-    path: str                                    # Normalized virtual path
-    version: int | str | None = None             # Version identifier
-    line_start: int | None = None                # Chunk start line
-    line_end: int | None = None                  # Chunk end line
-    metadata: Mapping[str, Any] = field(...)     # Read-only, excluded from hash/equality
+Ref.for_chunk("/src/auth.py", "login")           # Ref('/src/auth.py#login')
+Ref.for_version("/src/auth.py", 3)               # Ref('/src/auth.py@3')
+Ref.for_connection("/a.py", "/b.py", "imports")   # Ref('/a.py[imports]/b.py')
 ```
-
-`file_ref(path, version=None)` is a convenience constructor that normalizes the path.
 
 ### IndexingMode
 
