@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,6 +14,7 @@ from collections.abc import Iterator  # noqa: E402
 from langchain_core.documents import Document  # noqa: E402
 
 from grover._grover import Grover  # noqa: E402
+from grover._grover_async import GroverAsync  # noqa: E402
 from grover.fs.local_fs import LocalFileSystem  # noqa: E402
 from grover.integrations.langchain._loader import GroverLoader  # noqa: E402
 
@@ -46,8 +48,22 @@ def loader(grover: Grover) -> GroverLoader:
     return GroverLoader(grover=grover, path="/project")
 
 
+@pytest.fixture
+async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
+    data = tmp_path / "grover_data_async"
+    g = GroverAsync(data_dir=str(data))
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    yield g  # type: ignore[misc]
+    await g.close()
+
+
+@pytest.fixture
+async def loader_async(grover_async: GroverAsync) -> GroverLoader:
+    return GroverLoader(grover=grover_async, path="/project")
+
+
 # ==================================================================
-# Tests
+# Sync tests (Grover)
 # ==================================================================
 
 
@@ -146,3 +162,111 @@ class TestLoaderLoadMethod:
         assert isinstance(result, list)
         assert len(result) > 0
         assert isinstance(result[0], Document)
+
+
+# ==================================================================
+# is_async flag
+# ==================================================================
+
+
+class TestIsAsyncFlag:
+    def test_is_async_false_with_grover(self, loader: GroverLoader):
+        assert loader._is_async is False
+
+    async def test_is_async_true_with_grover_async(self, loader_async: GroverLoader):
+        assert loader_async._is_async is True
+
+
+# ==================================================================
+# Async native tests (GroverAsync)
+# ==================================================================
+
+
+class TestLoaderAlazLoad:
+    async def test_alazy_load_yields_documents(
+        self, loader_async: GroverLoader, grover_async: GroverAsync
+    ):
+        await grover_async.write("/project/a.txt", "content a")
+        await grover_async.write("/project/b.py", "print('b')")
+
+        docs = [doc async for doc in loader_async.alazy_load()]
+        assert len(docs) == 2
+        paths = {doc.metadata["path"] for doc in docs}
+        assert "/project/a.txt" in paths
+        assert "/project/b.py" in paths
+
+    async def test_alazy_load_glob_filter(self, grover_async: GroverAsync):
+        await grover_async.write("/project/code.py", "python code")
+        await grover_async.write("/project/readme.txt", "text")
+
+        loader = GroverLoader(grover=grover_async, path="/project", glob_pattern="*.py")
+        docs = [doc async for doc in loader.alazy_load()]
+        assert len(docs) == 1
+        assert docs[0].metadata["path"] == "/project/code.py"
+
+    async def test_alazy_load_skips_binary(
+        self, loader_async: GroverLoader, grover_async: GroverAsync
+    ):
+        await grover_async.write("/project/code.py", "print('hi')")
+        await grover_async.write("/project/image.png", "fake binary")
+
+        docs = [doc async for doc in loader_async.alazy_load()]
+        paths = {doc.metadata["path"] for doc in docs}
+        assert "/project/code.py" in paths
+        assert "/project/image.png" not in paths
+
+
+# ==================================================================
+# TypeError when calling async with sync Grover
+# ==================================================================
+
+
+class TestLoaderAsyncTypeError:
+    async def test_alazy_load_raises_type_error(self, loader: GroverLoader):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            async for _doc in loader.alazy_load():
+                pass
+
+
+# ==================================================================
+# Sync wrapper tests (GroverAsync loader, sync methods via asyncio.run)
+# ==================================================================
+
+
+def _make_sync_loader(tmp_path: Path) -> tuple[GroverLoader, GroverAsync]:
+    """Create a GroverAsync-backed loader outside an event loop."""
+    data = tmp_path / "grover_data_sync_loader"
+    ws = tmp_path / "workspace_sync_loader"
+    ws.mkdir(exist_ok=True)
+
+    async def _setup() -> GroverAsync:
+        g = GroverAsync(data_dir=str(data))
+        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        return g
+
+    ga = asyncio.run(_setup())
+    return GroverLoader(grover=ga, path="/project"), ga
+
+
+class TestLoaderSyncWrapper:
+    def test_lazy_load_sync_wrapper(self, tmp_path: Path):
+        loader, ga = _make_sync_loader(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/file.txt", "content"))
+            docs = loader.load()
+            assert len(docs) == 1
+            assert docs[0].page_content == "content"
+        finally:
+            asyncio.run(ga.close())
+
+    def test_lazy_load_glob_sync_wrapper(self, tmp_path: Path):
+        _loader_base, ga = _make_sync_loader(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/code.py", "python"))
+            asyncio.run(ga.write("/project/readme.txt", "text"))
+            loader = GroverLoader(grover=ga, path="/project", glob_pattern="*.py")
+            docs = loader.load()
+            assert len(docs) == 1
+            assert docs[0].metadata["path"] == "/project/code.py"
+        finally:
+            asyncio.run(ga.close())

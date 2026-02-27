@@ -4,7 +4,9 @@ Provides ``GroverRetriever`` (LangChain retriever backed by semantic search),
 ``GroverLoader`` (document loader for RAG ingestion), and optionally
 ``GroverStore`` (LangGraph persistent memory store).
 
-Usage::
+All classes accept ``Grover`` (sync) or ``GroverAsync`` (native async).
+
+Sync usage::
 
     from grover import Grover
     from grover.integrations.langchain import GroverRetriever, GroverLoader
@@ -17,6 +19,21 @@ Usage::
 
     loader = GroverLoader(grover=g, path="/project")
     docs = loader.load()
+
+Async usage::
+
+    from grover import GroverAsync
+    from grover.integrations.langchain import GroverRetriever, GroverLoader
+
+    ga = GroverAsync(embedding_provider=provider)
+    await ga.add_mount("/project", backend)
+
+    retriever = GroverRetriever(grover=ga, k=5)
+    docs = await retriever.ainvoke("search query")
+
+    loader = GroverLoader(grover=ga, path="/project")
+    async for doc in loader.alazy_load():
+        process(doc)
 """
 
 try:

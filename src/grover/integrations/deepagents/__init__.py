@@ -4,7 +4,9 @@ Provides ``GroverBackend`` (``BackendProtocol`` implementation) and
 ``GroverMiddleware`` (version/search/graph/trash tools) so any LangGraph
 deep agent can use Grover as its storage backend.
 
-Usage::
+Both classes accept ``Grover`` (sync) or ``GroverAsync`` (native async).
+
+Sync usage::
 
     from grover import Grover
     from grover.fs.local_fs import LocalFileSystem
@@ -15,6 +17,21 @@ Usage::
 
     backend = GroverBackend(g)
     middleware = GroverMiddleware(g)
+
+Async usage::
+
+    from grover import GroverAsync
+    from grover.fs.local_fs import LocalFileSystem
+    from grover.integrations.deepagents import GroverBackend, GroverMiddleware
+
+    ga = GroverAsync()
+    await ga.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/test"))
+
+    backend = GroverBackend(ga)
+    middleware = GroverMiddleware(ga)
+
+    # Async methods call GroverAsync natively
+    content = await backend.aread("/project/file.txt")
 """
 
 try:

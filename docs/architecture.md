@@ -414,6 +414,24 @@ Metadata filters are expressed as a provider-agnostic AST (`Comparison` and `Log
 
 The provider is passed to `Grover(embedding_provider=...)` at construction time.
 
+## Integration async patterns
+
+All five integration classes (`GroverBackend`, `GroverMiddleware`, `GroverRetriever`, `GroverLoader`, `GroverStore`) accept either `Grover` (sync) or `GroverAsync` (native async). The constructor detects which was passed via `isinstance(grover, GroverAsync)` and sets an `_is_async` flag.
+
+**When `GroverAsync` is passed:**
+- Async methods (`aread`, `abatch`, `_aget_relevant_documents`, `alazy_load`) call `GroverAsync` natively with `await`.
+- Sync methods (`read`, `batch`, `_get_relevant_documents`, `lazy_load`) wrap async via `asyncio.run()` for convenience. This raises `RuntimeError` if called from within an existing event loop — use async methods instead.
+
+**When `Grover` is passed:**
+- Sync methods work directly (unchanged from before).
+- Async methods raise `TypeError` directing the user to pass `GroverAsync` or use sync methods.
+
+**Graph operations** (`dependencies`, `dependents`, `impacts`) are sync on both `Grover` and `GroverAsync` because they operate on an in-memory `rustworkx` graph. `GroverMiddleware` does NOT pass `coroutine` to `StructuredTool.from_function` for graph tools — they are always sync.
+
+**Formatting helpers** are extracted as module-level functions shared between sync and async code paths. This prevents logic drift and ensures identical output format regardless of which path is used.
+
+**GroverRetriever** is a Pydantic model — it uses `Union[Grover, GroverAsync]` (not `X | Y` with `from __future__ import annotations`) because Pydantic needs the runtime `Union` for validation. The `_is_async` flag is a `@property` rather than an instance variable since Pydantic models manage their own `__init__`.
+
 ## Adding a new vector store
 
 1. Create `src/grover/search/stores/your_store.py`.

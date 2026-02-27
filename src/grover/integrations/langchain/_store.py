@@ -1,9 +1,11 @@
 """GroverStore — LangGraph persistent store backed by Grover filesystem."""
 
+from __future__ import annotations
+
 import asyncio
 import json
-from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
 from langgraph.store.base import (
     BaseStore,
@@ -18,11 +20,22 @@ from langgraph.store.base import (
     SearchOp,
 )
 
-from grover._grover import Grover
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from grover._grover import Grover
+    from grover._grover_async import GroverAsync
 
 
 class GroverStore(BaseStore):
     """LangGraph persistent store backed by Grover's versioned filesystem.
+
+    Accepts either a sync :class:`~grover.Grover` or async
+    :class:`~grover.GroverAsync` instance:
+
+    - **Grover:** ``batch()`` works directly; ``abatch()`` raises ``TypeError``.
+    - **GroverAsync:** ``abatch()`` calls native async API; ``batch()`` wraps
+      via ``asyncio.run()``.
 
     Namespace tuples map to directory paths under a configurable prefix.
     Values are stored as JSON files.
@@ -46,18 +59,24 @@ class GroverStore(BaseStore):
 
     def __init__(
         self,
-        grover: Grover,
+        grover: Grover | GroverAsync,
         *,
         prefix: str = "/store",
     ) -> None:
+        from grover._grover_async import GroverAsync
+
         self.grover = grover
         self.prefix = prefix.rstrip("/")
+        self._is_async = isinstance(grover, GroverAsync)
 
     # ------------------------------------------------------------------
     # Abstract methods (required by BaseStore)
     # ------------------------------------------------------------------
 
     def batch(self, ops: Iterable[Op]) -> list[Result]:
+        if self._is_async:
+            return asyncio.run(self.abatch(list(ops)))
+
         results: list[Result] = []
         for op in ops:
             if isinstance(op, GetOp):
@@ -73,15 +92,34 @@ class GroverStore(BaseStore):
         return results
 
     async def abatch(self, ops: Iterable[Op]) -> list[Result]:
-        return await asyncio.to_thread(self.batch, list(ops))
+        if not self._is_async:
+            raise TypeError(
+                "Async methods require GroverAsync. "
+                "Pass a GroverAsync instance or use sync methods instead."
+            )
+
+        results: list[Result] = []
+        for op in list(ops):
+            if isinstance(op, GetOp):
+                results.append(await self._ahandle_get(op))
+            elif isinstance(op, PutOp):
+                results.append(await self._ahandle_put(op))
+            elif isinstance(op, SearchOp):
+                results.append(await self._ahandle_search(op))
+            elif isinstance(op, ListNamespacesOp):
+                results.append(await self._ahandle_list_namespaces(op))
+            else:
+                results.append(None)
+        return results
 
     # ------------------------------------------------------------------
-    # Operation handlers
+    # Sync operation handlers
     # ------------------------------------------------------------------
 
     def _handle_get(self, op: GetOp) -> Item | None:
+        g = cast("Grover", self.grover)
         path = self._key_to_path(op.namespace, op.key)
-        read_result = self.grover.read(path)
+        read_result = g.read(path)
         if not read_result.success or read_result.content is None:
             return None
 
@@ -100,25 +138,27 @@ class GroverStore(BaseStore):
         )
 
     def _handle_put(self, op: PutOp) -> None:
+        g = cast("Grover", self.grover)
         path = self._key_to_path(op.namespace, op.key)
 
         if op.value is None:
             # Delete
-            self.grover.delete(path, permanent=True)
+            g.delete(path, permanent=True)
         else:
             content = json.dumps(op.value, default=str)
-            self.grover.write(path, content, overwrite=True)
+            g.write(path, content, overwrite=True)
 
         return None
 
     def _handle_search(self, op: SearchOp) -> list[SearchItem]:
+        g = cast("Grover", self.grover)
         ns_dir = self._namespace_to_dir(op.namespace_prefix)
         now = datetime.now(tz=UTC)
 
         # Try semantic search if query is provided
         if op.query:
             try:
-                result = self.grover.vector_search(op.query, k=op.limit + op.offset)
+                result = g.vector_search(op.query, k=op.limit + op.offset)
             except Exception:
                 result = None
 
@@ -135,7 +175,7 @@ class GroverStore(BaseStore):
                     continue
 
                 # Read file content to get the stored value
-                read_result = self.grover.read(path)
+                read_result = g.read(path)
                 if not read_result.success or read_result.content is None:
                     continue
 
@@ -161,46 +201,105 @@ class GroverStore(BaseStore):
         return self._list_items_in_namespace(op.namespace_prefix, limit=op.limit, offset=op.offset)
 
     def _handle_list_namespaces(self, op: ListNamespacesOp) -> list[tuple[str, ...]]:
-        tree_result = self.grover.tree(self.prefix)
+        g = cast("Grover", self.grover)
+        tree_result = g.tree(self.prefix)
         if not tree_result.success:
             return []
 
-        # Collect unique namespace tuples from all file paths
-        namespaces: set[tuple[str, ...]] = set()
-        prefix_len = len(self.prefix) + 1  # +1 for trailing /
+        namespaces = self._extract_namespaces(tree_result)
+        return self._format_namespaces(namespaces, op)
 
-        from grover.types import TreeEvidence
+    # ------------------------------------------------------------------
+    # Async operation handlers
+    # ------------------------------------------------------------------
 
-        for c in tree_result.candidates:
-            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
-            if is_dir:
-                continue
-            if not c.path.startswith(self.prefix + "/"):
-                continue
+    async def _ahandle_get(self, op: GetOp) -> Item | None:
+        g = cast("GroverAsync", self.grover)
+        path = self._key_to_path(op.namespace, op.key)
+        read_result = await g.read(path)
+        if not read_result.success or read_result.content is None:
+            return None
 
-            # Extract relative path and strip the key filename
-            relative = c.path[prefix_len:]
-            parts = relative.split("/")
-            if len(parts) < 2:
-                continue
+        try:
+            value = json.loads(read_result.content)
+        except (json.JSONDecodeError, TypeError):
+            return None
 
-            # namespace = all parts except the last (which is the key file)
-            ns_parts = tuple(parts[:-1])
-            namespaces.add(ns_parts)
+        now = datetime.now(tz=UTC)
+        return Item(
+            value=value,
+            key=op.key,
+            namespace=op.namespace,
+            created_at=now,
+            updated_at=now,
+        )
 
-        # Apply match conditions
-        filtered = list(namespaces)
-        if op.match_conditions:
-            filtered = self._apply_match_conditions(filtered, op.match_conditions)
+    async def _ahandle_put(self, op: PutOp) -> None:
+        g = cast("GroverAsync", self.grover)
+        path = self._key_to_path(op.namespace, op.key)
 
-        # Apply max_depth (truncate and deduplicate per LangGraph spec)
-        if op.max_depth is not None:
-            filtered = sorted({ns[: op.max_depth] for ns in filtered})
+        if op.value is None:
+            await g.delete(path, permanent=True)
         else:
-            filtered.sort()
+            content = json.dumps(op.value, default=str)
+            await g.write(path, content, overwrite=True)
 
-        # Apply offset and limit
-        return filtered[op.offset : op.offset + op.limit]
+        return None
+
+    async def _ahandle_search(self, op: SearchOp) -> list[SearchItem]:
+        g = cast("GroverAsync", self.grover)
+        ns_dir = self._namespace_to_dir(op.namespace_prefix)
+        now = datetime.now(tz=UTC)
+
+        if op.query:
+            try:
+                result = await g.vector_search(op.query, k=op.limit + op.offset)
+            except Exception:
+                result = None
+
+            paths = result.paths if result is not None and result.success else ()
+
+            items: list[SearchItem] = []
+            for path in paths:
+                if not path.startswith(ns_dir + "/"):
+                    continue
+                ns, key = self._path_to_namespace_key(path)
+                if ns is None:
+                    continue
+
+                read_result = await g.read(path)
+                if not read_result.success or read_result.content is None:
+                    continue
+
+                try:
+                    value = json.loads(read_result.content)
+                except (json.JSONDecodeError, TypeError):
+                    value = {"content": read_result.content}
+
+                items.append(
+                    SearchItem(
+                        namespace=ns,
+                        key=key,
+                        value=value,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+
+            return items[op.offset : op.offset + op.limit]
+
+        return await self._alist_items_in_namespace(
+            op.namespace_prefix, limit=op.limit, offset=op.offset
+        )
+
+    async def _ahandle_list_namespaces(self, op: ListNamespacesOp) -> list[tuple[str, ...]]:
+        g = cast("GroverAsync", self.grover)
+        tree_result = await g.tree(self.prefix)
+        if not tree_result.success:
+            return []
+
+        namespaces = self._extract_namespaces(tree_result)
+        return self._format_namespaces(namespaces, op)
 
     # ------------------------------------------------------------------
     # Namespace / path mapping
@@ -238,6 +337,47 @@ class GroverStore(BaseStore):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _extract_namespaces(self, tree_result: object) -> set[tuple[str, ...]]:
+        """Extract unique namespace tuples from a tree result."""
+        from grover.types import TreeEvidence
+
+        namespaces: set[tuple[str, ...]] = set()
+        prefix_len = len(self.prefix) + 1  # +1 for trailing /
+
+        for c in tree_result.candidates:  # type: ignore[union-attr]
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
+            if is_dir:
+                continue
+            if not c.path.startswith(self.prefix + "/"):
+                continue
+
+            relative = c.path[prefix_len:]
+            parts = relative.split("/")
+            if len(parts) < 2:
+                continue
+
+            ns_parts = tuple(parts[:-1])
+            namespaces.add(ns_parts)
+
+        return namespaces
+
+    @staticmethod
+    def _format_namespaces(
+        namespaces: set[tuple[str, ...]],
+        op: ListNamespacesOp,
+    ) -> list[tuple[str, ...]]:
+        """Apply match conditions, max_depth, offset, and limit to namespaces."""
+        filtered = list(namespaces)
+        if op.match_conditions:
+            filtered = GroverStore._apply_match_conditions(filtered, op.match_conditions)
+
+        if op.max_depth is not None:
+            filtered = sorted({ns[: op.max_depth] for ns in filtered})
+        else:
+            filtered.sort()
+
+        return filtered[op.offset : op.offset + op.limit]
+
     def _list_items_in_namespace(
         self,
         namespace: tuple[str, ...],
@@ -246,10 +386,11 @@ class GroverStore(BaseStore):
         offset: int = 0,
     ) -> list[SearchItem]:
         """List all items in a namespace (used as fallback for search)."""
+        g = cast("Grover", self.grover)
         ns_dir = self._namespace_to_dir(namespace)
         now = datetime.now(tz=UTC)
 
-        tree_result = self.grover.tree(ns_dir)
+        tree_result = g.tree(ns_dir)
         if not tree_result.success:
             return []
 
@@ -267,7 +408,58 @@ class GroverStore(BaseStore):
             if ns is None:
                 continue
 
-            read_result = self.grover.read(c.path)
+            read_result = g.read(c.path)
+            if not read_result.success or read_result.content is None:
+                continue
+
+            try:
+                value = json.loads(read_result.content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            items.append(
+                SearchItem(
+                    namespace=ns,
+                    key=key,
+                    value=value,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+        return items[offset : offset + limit]
+
+    async def _alist_items_in_namespace(
+        self,
+        namespace: tuple[str, ...],
+        *,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[SearchItem]:
+        """Async variant of _list_items_in_namespace."""
+        g = cast("GroverAsync", self.grover)
+        ns_dir = self._namespace_to_dir(namespace)
+        now = datetime.now(tz=UTC)
+
+        tree_result = await g.tree(ns_dir)
+        if not tree_result.success:
+            return []
+
+        from grover.types import TreeEvidence
+
+        items: list[SearchItem] = []
+        for c in tree_result.candidates:
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in c.evidence)
+            if is_dir:
+                continue
+            if not c.path.endswith(".json"):
+                continue
+
+            ns, key = self._path_to_namespace_key(c.path)
+            if ns is None:
+                continue
+
+            read_result = await g.read(c.path)
             if not read_result.success or read_result.content is None:
                 continue
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 from typing import TYPE_CHECKING
@@ -13,6 +14,7 @@ lc = pytest.importorskip("langchain_core")
 from langchain_core.documents import Document  # noqa: E402
 
 from grover._grover import Grover  # noqa: E402
+from grover._grover_async import GroverAsync  # noqa: E402
 from grover.fs.local_fs import LocalFileSystem  # noqa: E402
 from grover.integrations.langchain._retriever import GroverRetriever  # noqa: E402
 
@@ -86,8 +88,22 @@ def retriever(grover_with_search: Grover) -> GroverRetriever:
     return GroverRetriever(grover=grover_with_search, k=10)
 
 
+@pytest.fixture
+async def grover_async_with_search(workspace: Path, tmp_path: Path) -> GroverAsync:
+    data = tmp_path / "grover_data_async"
+    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    yield g  # type: ignore[misc]
+    await g.close()
+
+
+@pytest.fixture
+async def retriever_async(grover_async_with_search: GroverAsync) -> GroverRetriever:
+    return GroverRetriever(grover=grover_async_with_search, k=10)
+
+
 # ==================================================================
-# Tests
+# Sync tests (Grover)
 # ==================================================================
 
 
@@ -173,6 +189,96 @@ class TestRetrieverNoSearchIndex:
         docs = retriever.invoke("content")
         assert isinstance(docs, list)
         assert len(docs) == 0
+
+
+# ==================================================================
+# is_async flag
+# ==================================================================
+
+
+class TestIsAsyncFlag:
+    def test_is_async_false_with_grover(self, retriever: GroverRetriever):
+        assert retriever._is_async is False
+
+    async def test_is_async_true_with_grover_async(self, retriever_async: GroverRetriever):
+        assert retriever_async._is_async is True
+
+
+# ==================================================================
+# Async native tests (GroverAsync)
+# ==================================================================
+
+
+class TestRetrieverAsync:
+    async def test_aget_relevant_documents(
+        self, retriever_async: GroverRetriever, grover_async_with_search: GroverAsync
+    ):
+        await grover_async_with_search.write(
+            "/project/auth.py", "def authenticate(user, password): pass"
+        )
+        await grover_async_with_search.index()
+
+        docs = await retriever_async._aget_relevant_documents(
+            "authenticate",
+            run_manager=None,
+        )
+        assert isinstance(docs, list)
+        assert len(docs) > 0
+        for doc in docs:
+            assert isinstance(doc, Document)
+
+    async def test_ainvoke(
+        self, retriever_async: GroverRetriever, grover_async_with_search: GroverAsync
+    ):
+        await grover_async_with_search.write("/project/main.py", "print('hello world')")
+        await grover_async_with_search.index()
+
+        docs = await retriever_async.ainvoke("hello")
+        assert isinstance(docs, list)
+
+
+# ==================================================================
+# TypeError when calling async with sync Grover
+# ==================================================================
+
+
+class TestRetrieverAsyncTypeError:
+    async def test_aget_raises_type_error(self, retriever: GroverRetriever):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await retriever._aget_relevant_documents("query", run_manager=None)
+
+
+# ==================================================================
+# Sync wrapper tests (GroverAsync retriever, sync methods via asyncio.run)
+# ==================================================================
+
+
+def _make_sync_retriever(tmp_path: Path) -> tuple[GroverRetriever, GroverAsync]:
+    """Create a GroverAsync-backed retriever outside an event loop."""
+    data = tmp_path / "grover_data_sync_ret"
+    ws = tmp_path / "workspace_sync_ret"
+    ws.mkdir(exist_ok=True)
+
+    async def _setup() -> GroverAsync:
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        return g
+
+    ga = asyncio.run(_setup())
+    return GroverRetriever(grover=ga, k=10), ga
+
+
+class TestRetrieverSyncWrapper:
+    def test_get_relevant_documents_sync_wrapper(self, tmp_path: Path):
+        retriever, ga = _make_sync_retriever(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/auth.py", "def authenticate(): pass"))
+            asyncio.run(ga.index())
+            docs = retriever._get_relevant_documents("authenticate", run_manager=None)
+            assert isinstance(docs, list)
+            assert len(docs) > 0
+        finally:
+            asyncio.run(ga.close())
 
 
 # ------------------------------------------------------------------

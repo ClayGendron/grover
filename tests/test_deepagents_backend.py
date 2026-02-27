@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ import pytest
 da = pytest.importorskip("deepagents")
 
 from grover._grover import Grover  # noqa: E402
+from grover._grover_async import GroverAsync  # noqa: E402
 from grover.fs.local_fs import LocalFileSystem  # noqa: E402
 from grover.integrations.deepagents._backend import GroverBackend  # noqa: E402
 
@@ -73,6 +75,20 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
 @pytest.fixture
 def backend(grover: Grover) -> GroverBackend:
     return GroverBackend(grover)
+
+
+@pytest.fixture
+async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
+    data = tmp_path / "grover_data_async"
+    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    yield g  # type: ignore[misc]
+    await g.close()
+
+
+@pytest.fixture
+async def backend_async(grover_async: GroverAsync) -> GroverBackend:
+    return GroverBackend(grover_async)
 
 
 # ==================================================================
@@ -358,3 +374,233 @@ class TestFactories:
             assert "hello" in content
         finally:
             backend.grover.close()
+
+
+# ==================================================================
+# is_async flag
+# ==================================================================
+
+
+class TestIsAsyncFlag:
+    def test_is_async_false_with_grover(self, backend: GroverBackend):
+        assert backend._is_async is False
+
+    async def test_is_async_true_with_grover_async(self, backend_async: GroverBackend):
+        assert backend_async._is_async is True
+
+
+# ==================================================================
+# Async native methods (GroverAsync)
+# ==================================================================
+
+
+class TestAsyncNative:
+    async def test_als_info(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        await grover_async.write("/project/a.txt", "a")
+        infos = await backend_async.als_info("/project")
+        assert isinstance(infos, list)
+        paths = {fi["path"] for fi in infos}
+        assert "/project/a.txt" in paths
+
+    async def test_aread(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        await grover_async.write("/project/hello.txt", "line one\nline two")
+        result = await backend_async.aread("/project/hello.txt")
+        assert isinstance(result, str)
+        assert "line one" in result
+        assert "line two" in result
+
+    async def test_awrite(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        result = await backend_async.awrite("/project/new.txt", "async hello")
+        assert result.error is None
+        assert result.path == "/project/new.txt"
+
+    async def test_aedit(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        await grover_async.write("/project/doc.txt", "hello world")
+        result = await backend_async.aedit("/project/doc.txt", "hello", "goodbye")
+        assert result.error is None
+        read = await grover_async.read("/project/doc.txt")
+        assert read.content == "goodbye world"
+
+    async def test_agrep_raw(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        await grover_async.write("/project/code.py", "def hello():\n    return 42\n")
+        result = await backend_async.agrep_raw("hello", "/project")
+        assert isinstance(result, list)
+        assert len(result) >= 1
+
+    async def test_aglob_info(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        await grover_async.write("/project/main.py", "code")
+        await grover_async.write("/project/readme.txt", "text")
+        result = await backend_async.aglob_info("*.py", "/project")
+        assert isinstance(result, list)
+        paths = {fi["path"] for fi in result}
+        assert "/project/main.py" in paths
+        assert "/project/readme.txt" not in paths
+
+    async def test_aupload_files(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        responses = await backend_async.aupload_files([("/project/up.txt", b"async content")])
+        assert len(responses) == 1
+        assert responses[0].error is None
+
+    async def test_adownload_files(self, backend_async: GroverBackend, grover_async: GroverAsync):
+        await grover_async.write("/project/dl.txt", "download me")
+        responses = await backend_async.adownload_files(["/project/dl.txt"])
+        assert len(responses) == 1
+        assert responses[0].error is None
+        assert responses[0].content == b"download me"
+
+
+# ==================================================================
+# TypeError when calling async methods with sync Grover
+# ==================================================================
+
+
+class TestAsyncTypeError:
+    async def test_als_info_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.als_info("/project")
+
+    async def test_aread_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.aread("/project/file.txt")
+
+    async def test_awrite_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.awrite("/project/file.txt", "content")
+
+    async def test_aedit_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.aedit("/project/file.txt", "old", "new")
+
+    async def test_agrep_raw_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.agrep_raw("pattern", "/project")
+
+    async def test_aglob_info_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.aglob_info("*.py", "/project")
+
+    async def test_aupload_files_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.aupload_files([("/project/file.txt", b"content")])
+
+    async def test_adownload_files_raises_type_error(self, backend: GroverBackend):
+        with pytest.raises(TypeError, match="Async methods require GroverAsync"):
+            await backend.adownload_files(["/project/file.txt"])
+
+
+# ==================================================================
+# Sync wrapper tests (GroverAsync backend, sync methods via asyncio.run)
+# ==================================================================
+
+
+def _make_sync_backend(tmp_path: Path) -> tuple[GroverBackend, GroverAsync]:
+    """Create a GroverAsync-backed GroverBackend outside an event loop."""
+    data = tmp_path / "grover_data_sync_wrapper"
+    ws = tmp_path / "workspace_sync_wrapper"
+    ws.mkdir(exist_ok=True)
+
+    async def _setup() -> GroverAsync:
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        return g
+
+    ga = asyncio.run(_setup())
+    return GroverBackend(ga), ga
+
+
+class TestSyncWrapper:
+    def test_ls_info_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/a.txt", "a"))
+            infos = backend.ls_info("/project")
+            assert isinstance(infos, list)
+            paths = {fi["path"] for fi in infos}
+            assert "/project/a.txt" in paths
+        finally:
+            asyncio.run(ga.close())
+
+    def test_read_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/hello.txt", "hello world"))
+            result = backend.read("/project/hello.txt")
+            assert "hello world" in result
+        finally:
+            asyncio.run(ga.close())
+
+    def test_write_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            result = backend.write("/project/new.txt", "sync via async")
+            assert result.error is None
+        finally:
+            asyncio.run(ga.close())
+
+    def test_edit_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/doc.txt", "hello world"))
+            result = backend.edit("/project/doc.txt", "hello", "goodbye")
+            assert result.error is None
+        finally:
+            asyncio.run(ga.close())
+
+    def test_grep_raw_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/code.py", "def hello():\n    pass\n"))
+            result = backend.grep_raw("hello", "/project")
+            assert isinstance(result, list)
+            assert len(result) >= 1
+        finally:
+            asyncio.run(ga.close())
+
+    def test_glob_info_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/main.py", "code"))
+            result = backend.glob_info("*.py", "/project")
+            assert isinstance(result, list)
+            paths = {fi["path"] for fi in result}
+            assert "/project/main.py" in paths
+        finally:
+            asyncio.run(ga.close())
+
+    def test_upload_files_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            responses = backend.upload_files([("/project/up.txt", b"content")])
+            assert len(responses) == 1
+            assert responses[0].error is None
+        finally:
+            asyncio.run(ga.close())
+
+    def test_download_files_sync_wrapper(self, tmp_path: Path):
+        backend, ga = _make_sync_backend(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/dl.txt", "download"))
+            responses = backend.download_files(["/project/dl.txt"])
+            assert len(responses) == 1
+            assert responses[0].content == b"download"
+        finally:
+            asyncio.run(ga.close())
+
+
+# ==================================================================
+# Async factory tests
+# ==================================================================
+
+
+class TestAsyncFactories:
+    async def test_from_local_async_factory(self, tmp_path: Path):
+        ws = tmp_path / "factory_async_ws"
+        ws.mkdir()
+        backend = await GroverBackend.from_local_async(str(ws))
+        try:
+            result = await backend.awrite("/test.txt", "async hello")
+            assert result.error is None
+            content = await backend.aread("/test.txt")
+            assert "async hello" in content
+        finally:
+            await backend.grover.close()

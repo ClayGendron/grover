@@ -1000,15 +1000,22 @@ Requires the `deepagents` extra: `pip install grover[deepagents]`
 
 ### GroverBackend
 
-Implements the deepagents `BackendProtocol`, mapping all file operations to Grover's sync API.
+Implements the deepagents `BackendProtocol`. Accepts either `Grover` (sync) or `GroverAsync` (native async).
 
 ```python
-# From an existing Grover instance
+# From an existing Grover instance (sync)
 backend = GroverBackend(grover)
+
+# From a GroverAsync instance (native async)
+backend = GroverBackend(grover_async)
 
 # Convenience factories
 backend = GroverBackend.from_local("/path/to/workspace")
 backend = GroverBackend.from_database(engine)
+
+# Async factories (return GroverAsync-backed backend)
+backend = await GroverBackend.from_local_async("/path/to/workspace")
+backend = await GroverBackend.from_database_async(engine)
 ```
 
 | Method | Description |
@@ -1022,7 +1029,9 @@ backend = GroverBackend.from_database(engine)
 | `upload_files(files)` | Batch file upload (list of `(path, bytes)` tuples) |
 | `download_files(paths)` | Batch file download (returns bytes) |
 
-All methods have async variants (`als_info`, `aread`, etc.) via `asyncio.to_thread()`.
+All methods have async variants (`als_info`, `aread`, etc.):
+- **With `GroverAsync`:** async methods call native async API directly; sync methods wrap via `asyncio.run()`.
+- **With `Grover`:** sync methods work directly; async methods raise `TypeError`.
 
 **Key semantics:**
 - `write()` uses create-only semantics (`overwrite=False`) — returns error if file exists
@@ -1031,12 +1040,15 @@ All methods have async variants (`als_info`, `aread`, etc.) via `asyncio.to_thre
 
 ### GroverMiddleware
 
-A deepagents `AgentMiddleware` that adds Grover-specific tools beyond standard file ops.
+A deepagents `AgentMiddleware` that adds Grover-specific tools beyond standard file ops. Accepts either `Grover` or `GroverAsync`.
 
 ```python
 middleware = GroverMiddleware(grover)
+middleware = GroverMiddleware(grover_async)  # tools get native async coroutines
 middleware = GroverMiddleware(grover, enable_search=False, enable_graph=False)
 ```
+
+When `GroverAsync` is passed, non-graph tools include both sync and async (coroutine) implementations for native async execution. Graph tools remain sync-only (in-memory rustworkx).
 
 | Tool | Description |
 |------|-------------|
@@ -1065,35 +1077,48 @@ Requires the `langchain` extra: `pip install grover[langchain]`
 
 ### GroverRetriever
 
-LangChain `BaseRetriever` backed by Grover's semantic search. Works in any LangChain chain or RAG pipeline.
+LangChain `BaseRetriever` backed by Grover's semantic search. Works in any LangChain chain or RAG pipeline. Accepts either `Grover` or `GroverAsync`.
 
 ```python
+# Sync
 retriever = GroverRetriever(grover=g, k=10)
 docs = retriever.invoke("search query")
+
+# Async (native)
+retriever = GroverRetriever(grover=ga, k=10)
+docs = await retriever.ainvoke("search query")
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `grover` | `Grover` | required | Grover instance with search index |
+| `grover` | `Grover \| GroverAsync` | required | Grover instance with search index |
 | `k` | `int` | `10` | Maximum number of results |
 
 Returns `list[Document]` with:
 - `page_content` — concatenated chunk snippets (or file path if no snippets)
 - `metadata["path"]` — file path
-- `metadata["score"]` — max chunk similarity score (0–1)
 - `metadata["chunks"]` — number of chunk matches (if any)
 - `id` — file path
 
-Has async variant via `asyncio.to_thread()`. Returns empty list when search index is not available.
+**Async behavior:**
+- **With `GroverAsync`:** `_aget_relevant_documents` calls native async API; `_get_relevant_documents` wraps via `asyncio.run()`.
+- **With `Grover`:** `_get_relevant_documents` works directly; `_aget_relevant_documents` raises `TypeError`.
+
+Returns empty list when search index is not available.
 
 ### GroverLoader
 
-LangChain `BaseLoader` that streams Grover files as Documents. Generator-based (`lazy_load()`) for memory efficiency.
+LangChain `BaseLoader` that streams Grover files as Documents. Generator-based (`lazy_load()`) for memory efficiency. Accepts either `Grover` or `GroverAsync`.
 
 ```python
-# Load all text files recursively
+# Sync: load all text files recursively
 loader = GroverLoader(grover=g, path="/project")
 docs = loader.load()
+
+# Async: stream documents with native async
+loader = GroverLoader(grover=ga, path="/project")
+async for doc in loader.alazy_load():
+    process(doc)
 
 # Load only Python files
 loader = GroverLoader(grover=g, path="/project", glob_pattern="*.py")
@@ -1104,9 +1129,9 @@ loader = GroverLoader(grover=g, path="/project", recursive=False)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `grover` | `Grover` | required | Grover instance |
+| `grover` | `Grover \| GroverAsync` | required | Grover instance |
 | `path` | `str` | `"/"` | Root path to load from |
-| `glob_pattern` | `str | None` | `None` | Filter files by glob pattern (e.g., `"*.py"`) |
+| `glob_pattern` | `str \| None` | `None` | Filter files by glob pattern (e.g., `"*.py"`) |
 | `recursive` | `bool` | `True` | Walk subdirectories recursively |
 
 Returns `list[Document]` (via `load()`) or `Iterator[Document]` (via `lazy_load()`) with:
@@ -1117,6 +1142,10 @@ Returns `list[Document]` (via `load()`) or `Iterator[Document]` (via `lazy_load(
 - `id` — file path
 
 Binary files are automatically skipped.
+
+**Async behavior:**
+- **With `GroverAsync`:** `alazy_load()` is a native async generator; `lazy_load()` collects from `alazy_load()` via `asyncio.run()`.
+- **With `Grover`:** `lazy_load()` works directly; `alazy_load()` raises `TypeError`.
 
 ---
 
@@ -1130,7 +1159,7 @@ Requires the `langgraph` extra: `pip install grover[langgraph]`
 
 ### GroverStore
 
-LangGraph `BaseStore` implementation for persistent agent memory. Namespace tuples map to directory paths, values are stored as JSON files.
+LangGraph `BaseStore` implementation for persistent agent memory. Namespace tuples map to directory paths, values are stored as JSON files. Accepts either `Grover` or `GroverAsync`.
 
 ```python
 store = GroverStore(grover=g, prefix="/data/store")
@@ -1152,7 +1181,7 @@ results = store.search(("docs",), query="API reference")
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `grover` | `Grover` | required | Grover instance |
+| `grover` | `Grover \| GroverAsync` | required | Grover instance |
 | `prefix` | `str` | `"/store"` | Path prefix for all stored items |
 
 **Namespace-to-path mapping:** Namespace `("users", "alice", "notes")` with key `"idea-1"` maps to `{prefix}/users/alice/notes/idea-1.json`.
@@ -1163,7 +1192,9 @@ results = store.search(("docs",), query="API reference")
 - `SearchOp` — semantic search within a namespace (falls back to listing if no search index)
 - `ListNamespacesOp` — list namespaces with match conditions and depth limiting
 
-Has async variant (`abatch`) via `asyncio.to_thread()`.
+**Async behavior:**
+- **With `GroverAsync`:** `abatch()` calls native async handlers; `batch()` wraps via `asyncio.run()`.
+- **With `Grover`:** `batch()` works directly; `abatch()` raises `TypeError`.
 
 ---
 

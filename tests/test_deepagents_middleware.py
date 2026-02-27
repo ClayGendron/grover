@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ import pytest
 da = pytest.importorskip("deepagents")
 
 from grover._grover import Grover  # noqa: E402
+from grover._grover_async import GroverAsync  # noqa: E402
 from grover.fs.local_fs import LocalFileSystem  # noqa: E402
 from grover.integrations.deepagents._middleware import GroverMiddleware  # noqa: E402
 
@@ -73,6 +75,20 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
 @pytest.fixture
 def middleware(grover: Grover) -> GroverMiddleware:
     return GroverMiddleware(grover)
+
+
+@pytest.fixture
+async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
+    data = tmp_path / "grover_data_async"
+    g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+    await g.add_mount("/project", LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    yield g  # type: ignore[misc]
+    await g.close()
+
+
+@pytest.fixture
+async def middleware_async(grover_async: GroverAsync) -> GroverMiddleware:
+    return GroverMiddleware(grover_async)
 
 
 # ==================================================================
@@ -363,3 +379,100 @@ class TestErrorHandling:
             else:
                 result = tool.invoke({"path": "/project/nope.txt"})
             assert isinstance(result, str), f"Tool {tool.name} returned {type(result)}"
+
+
+# ==================================================================
+# Async tool tests (GroverAsync)
+# ==================================================================
+
+
+class TestAsyncTools:
+    async def test_tools_have_coroutine_when_async(self, middleware_async: GroverMiddleware):
+        """Non-graph tools should have coroutine when GroverAsync is used."""
+        graph_tools = {"dependencies", "dependents", "impacts"}
+        for tool in middleware_async.tools:
+            if tool.name in graph_tools:
+                # Graph tools are sync on both Grover and GroverAsync
+                assert tool.coroutine is None, f"Tool {tool.name} should not have coroutine"
+            else:
+                assert tool.coroutine is not None, f"Tool {tool.name} should have coroutine"
+
+    async def test_tools_no_coroutine_when_sync(self, middleware: GroverMiddleware):
+        """No tools should have coroutine when Grover is used."""
+        for tool in middleware.tools:
+            assert tool.coroutine is None, f"Tool {tool.name} should not have coroutine"
+
+    async def test_list_versions_ainvoke(
+        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
+    ):
+        await grover_async.write("/project/doc.txt", "v1")
+        await grover_async.write("/project/doc.txt", "v2")
+        tool = next(t for t in middleware_async.tools if t.name == "list_versions")
+        result = await tool.ainvoke({"path": "/project/doc.txt"})
+        assert "Version history" in result
+
+    async def test_delete_file_ainvoke(
+        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
+    ):
+        await grover_async.write("/project/temp.txt", "content")
+        tool = next(t for t in middleware_async.tools if t.name == "delete_file")
+        result = await tool.ainvoke({"path": "/project/temp.txt"})
+        assert "Deleted" in result
+
+    async def test_list_trash_ainvoke(
+        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
+    ):
+        tool = next(t for t in middleware_async.tools if t.name == "list_trash")
+        result = await tool.ainvoke({})
+        assert "empty" in result.lower()
+
+    async def test_graph_tools_invoke_with_async(
+        self, middleware_async: GroverMiddleware, grover_async: GroverAsync
+    ):
+        """Graph tools should work via sync invoke even with GroverAsync."""
+        await grover_async.write("/project/standalone.py", "x = 42\n")
+        await grover_async.index("/project")
+        tool = next(t for t in middleware_async.tools if t.name == "dependencies")
+        result = tool.invoke({"path": "/project/standalone.py"})
+        assert "No dependencies" in result
+
+
+# ==================================================================
+# Sync wrapper tests (GroverAsync middleware, sync invoke via asyncio.run)
+# ==================================================================
+
+
+def _make_sync_middleware(tmp_path: Path) -> tuple[GroverMiddleware, GroverAsync]:
+    """Create a GroverAsync-backed middleware outside an event loop."""
+    data = tmp_path / "grover_data_sync_mw"
+    ws = tmp_path / "workspace_sync_mw"
+    ws.mkdir(exist_ok=True)
+
+    async def _setup() -> GroverAsync:
+        g = GroverAsync(data_dir=str(data), embedding_provider=FakeProvider())
+        await g.add_mount("/project", LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        return g
+
+    ga = asyncio.run(_setup())
+    return GroverMiddleware(ga), ga
+
+
+class TestSyncWrapperMiddleware:
+    def test_list_versions_sync_wrapper(self, tmp_path: Path):
+        mw, ga = _make_sync_middleware(tmp_path)
+        try:
+            asyncio.run(ga.write("/project/doc.txt", "content"))
+            tool = next(t for t in mw.tools if t.name == "list_versions")
+            result = tool.invoke({"path": "/project/doc.txt"})
+            assert "Version history" in result
+        finally:
+            asyncio.run(ga.close())
+
+    def test_list_trash_sync_wrapper(self, tmp_path: Path):
+        mw, ga = _make_sync_middleware(tmp_path)
+        try:
+            tool = next(t for t in mw.tools if t.name == "list_trash")
+            result = tool.invoke({})
+            assert "empty" in result.lower()
+        finally:
+            asyncio.run(ga.close())
