@@ -311,7 +311,7 @@ When `_analyze_and_integrate()` processes a file:
 3. Graph nodes and "contains" edges are created for each chunk (using synthetic `path` identifiers). These graph nodes have `parent_path`, `line_start`, `line_end`, and `name` attributes.
 4. Chunks are embedded and indexed in the per-mount search engine with enriched metadata (`chunk_name`, `line_start`, `line_end`).
 
-On file delete or move, `_delete_chunks_for_path()` removes the chunk DB rows. The hardened `remove_file_subgraph()` cleans up graph nodes by unioning two child-finding methods: `parent_path` attribute scan and `"contains"` edge traversal.
+On file delete or move, the handler opens a single DB session to remove search entries, chunk DB rows (via `delete_file_chunks()`), and connection records (via `delete_connections_for_path()`). The hardened `remove_file_subgraph()` cleans up graph nodes by unioning two child-finding methods: `parent_path` attribute scan and `"contains"` edge traversal.
 
 ### FileEvent and user_id
 

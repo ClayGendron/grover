@@ -289,6 +289,8 @@ On mount init, `from_sql()` loads file nodes from `grover_files` and edges from 
 
 **Structural "contains" edges** (file-to-chunk membership) are NOT persisted — they are in-memory only and rebuilt every time a file is analyzed. This keeps the DB clean and avoids conflicts between structural and dependency edges.
 
+**Single-session batching in `_analyze_and_integrate`**: All DB operations within the analysis pipeline (search entry removal, chunk replacement, connection deletion/creation, search indexing) are wrapped in a single `session_for` block. This provides atomicity — if any operation fails, the entire transaction rolls back with no partial state. `CONNECTION_ADDED` events are collected in a deferred list and emitted only after the session commits, ensuring DB records are visible when event handlers query them. The same single-session pattern is used in `_on_file_deleted` and `_on_file_moved` for their cleanup operations.
+
 ## Analyzer architecture
 
 Analyzers implement a simple protocol: given a file path and its content, return a list of `ChunkFile` records and `EdgeData` records.

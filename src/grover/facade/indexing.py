@@ -47,45 +47,54 @@ class IndexMixin:
             return
         if "/.grover/" in event.path:
             return
+        # In-memory graph cleanup
         try:
             graph = self._ctx.resolve_graph(event.path)
             if graph.has_node(event.path):
                 graph.remove_file_subgraph(event.path)
         except RuntimeError:
             pass  # Mount may not have a graph
+        # DB cleanup: search, chunks, connections in a single session
         try:
-            search_engine = self._ctx.resolve_search_engine(event.path)
+            mount, _rel = self._ctx.registry.resolve(event.path)
+        except MountNotFoundError:
+            return
+        async with self._ctx.session_for(mount) as sess:
+            search_engine = mount.search
             if search_engine is not None:
-                mount, _rel = self._ctx.registry.resolve(event.path)
-                async with self._ctx.session_for(mount) as sess:
-                    await search_engine.remove_file(event.path, session=sess)
-        except RuntimeError:
-            pass
-        # Clean up chunk DB rows and connection DB rows
-        await self._delete_chunks_for_path(event.path)
-        await self._delete_connections_for_path(event.path)
+                await search_engine.remove_file(event.path, session=sess)
+            if isinstance(mount.filesystem, SupportsFileChunks):
+                await mount.filesystem.delete_file_chunks(event.path, session=sess)
+            conn_svc = getattr(mount.filesystem, "connections", None)
+            if conn_svc is not None:
+                await conn_svc.delete_connections_for_path(sess, event.path)
 
     async def _on_file_moved(self, event: FileEvent) -> None:
         if self._ctx.meta_fs is None:
             return
         if event.old_path and "/.grover/" not in event.old_path:
+            # In-memory graph cleanup for old path
             try:
                 graph = self._ctx.resolve_graph(event.old_path)
                 if graph.has_node(event.old_path):
                     graph.remove_file_subgraph(event.old_path)
             except RuntimeError:
                 pass
+            # DB cleanup for old path in a single session
             try:
-                search_engine = self._ctx.resolve_search_engine(event.old_path)
-                if search_engine is not None:
-                    mount, _rel = self._ctx.registry.resolve(event.old_path)
-                    async with self._ctx.session_for(mount) as sess:
-                        await search_engine.remove_file(event.old_path, session=sess)
-            except RuntimeError:
+                mount, _rel = self._ctx.registry.resolve(event.old_path)
+            except MountNotFoundError:
                 pass
-            # Clean up chunk and connection DB rows for old path
-            await self._delete_chunks_for_path(event.old_path)
-            await self._delete_connections_for_path(event.old_path)
+            else:
+                async with self._ctx.session_for(mount) as sess:
+                    search_engine = mount.search
+                    if search_engine is not None:
+                        await search_engine.remove_file(event.old_path, session=sess)
+                    if isinstance(mount.filesystem, SupportsFileChunks):
+                        await mount.filesystem.delete_file_chunks(event.old_path, session=sess)
+                    conn_svc = getattr(mount.filesystem, "connections", None)
+                    if conn_svc is not None:
+                        await conn_svc.delete_connections_for_path(sess, event.old_path)
 
         if "/.grover/" in event.path:
             return
@@ -124,27 +133,6 @@ class IndexMixin:
         if graph.has_edge(event.source_path, event.target_path):
             graph.remove_edge(event.source_path, event.target_path)
 
-    async def _delete_chunks_for_path(self, path: str) -> None:
-        """Delete chunk DB rows for *path* if the backend supports it."""
-        try:
-            mount, _rel = self._ctx.registry.resolve(path)
-        except MountNotFoundError:
-            return
-        if isinstance(mount.filesystem, SupportsFileChunks):
-            async with self._ctx.session_for(mount) as sess:
-                await mount.filesystem.delete_file_chunks(path, session=sess)
-
-    async def _delete_connections_for_path(self, path: str) -> None:
-        """Delete connection DB rows for *path* if the backend supports it."""
-        try:
-            mount, _rel = self._ctx.registry.resolve(path)
-        except MountNotFoundError:
-            return
-        conn_svc = getattr(mount.filesystem, "connections", None)
-        if conn_svc is not None:
-            async with self._ctx.session_for(mount) as sess:
-                await conn_svc.delete_connections_for_path(sess, path)
-
     # ------------------------------------------------------------------
     # Core pipeline
     # ------------------------------------------------------------------
@@ -167,70 +155,74 @@ class IndexMixin:
 
         search_engine = mount.search
 
+        # In-memory graph cleanup + re-add
         if graph.has_node(path):
             graph.remove_file_subgraph(path)
-        if search_engine is not None:
-            async with self._ctx.session_for(mount) as sess:
-                await search_engine.remove_file(path, session=sess)
-
         graph.add_node(path)
 
         analysis = self._ctx.analyzer_registry.analyze_file(path, content)
 
-        if analysis is not None:
-            chunks, edges = analysis
+        # Collect CONNECTION_ADDED events to emit after DB commit
+        deferred_events: list[FileEvent] = []
 
-            # Write chunk DB rows instead of VFS files
-            if isinstance(mount.filesystem, SupportsFileChunks) and chunks:
-                chunk_dicts = [
-                    {
-                        "path": chunk.path,
-                        "name": chunk.name,
-                        "description": "",
-                        "line_start": chunk.line_start,
-                        "line_end": chunk.line_end,
-                        "content": chunk.content,
-                        "content_hash": hashlib.sha256(chunk.content.encode()).hexdigest(),
-                    }
-                    for chunk in chunks
-                ]
-                async with self._ctx.session_for(mount) as sess:
+        # Single session for all DB operations (search, chunks, connections)
+        async with self._ctx.session_for(mount) as sess:
+            # Remove old search entries
+            if search_engine is not None:
+                await search_engine.remove_file(path, session=sess)
+
+            if analysis is not None:
+                chunks, edges = analysis
+
+                # Write chunk DB rows
+                if isinstance(mount.filesystem, SupportsFileChunks) and chunks:
+                    chunk_dicts = [
+                        {
+                            "path": chunk.path,
+                            "name": chunk.name,
+                            "description": "",
+                            "line_start": chunk.line_start,
+                            "line_end": chunk.line_end,
+                            "content": chunk.content,
+                            "content_hash": hashlib.sha256(chunk.content.encode()).hexdigest(),
+                        }
+                        for chunk in chunks
+                    ]
                     await mount.filesystem.replace_file_chunks(
                         path, chunk_dicts, session=sess, user_id=user_id
                     )
 
-            for chunk in chunks:
-                graph.add_node(
-                    chunk.path,
-                    parent_path=path,
-                    line_start=chunk.line_start,
-                    line_end=chunk.line_end,
-                    name=chunk.name,
-                )
-                graph.add_edge(path, chunk.path, edge_type="contains")
-                stats["chunks_created"] += 1
-
-            # Persist dependency edges through FS (graph updated via event).
-            # "contains" edges are structural (chunk membership) and remain
-            # in-memory only — they are already added to the graph above.
-            # Skip connection writes for read-only mounts (defensive).
-            dep_edges = [e for e in edges if e.edge_type != "contains"]
-            is_writable = mount.permission != Permission.READ_ONLY
-            if isinstance(mount.filesystem, SupportsConnections) and dep_edges and is_writable:
-                # Delete stale outgoing connections for this source before
-                # re-adding.  Only outgoing (source_path == path) so we
-                # preserve edges from OTHER files that point to this one.
-                conn_svc = getattr(mount.filesystem, "connections", None)
-                if conn_svc is not None:
-                    async with self._ctx.session_for(mount) as sess:
-                        await conn_svc.delete_outgoing_connections(sess, path)
-                for edge in dep_edges:
-                    _w: float = (
-                        float(edge.metadata.get("weight", 1.0))  # type: ignore[arg-type]
-                        if edge.metadata
-                        else 1.0
+                # In-memory graph: chunk nodes + "contains" edges
+                for chunk in chunks:
+                    graph.add_node(
+                        chunk.path,
+                        parent_path=path,
+                        line_start=chunk.line_start,
+                        line_end=chunk.line_end,
+                        name=chunk.name,
                     )
-                    async with self._ctx.session_for(mount) as sess:
+                    graph.add_edge(path, chunk.path, edge_type="contains")
+                    stats["chunks_created"] += 1
+
+                # Persist dependency edges through FS (graph updated via
+                # deferred events after commit).  "contains" edges are
+                # structural and remain in-memory only.
+                # Skip connection writes for read-only mounts (defensive).
+                dep_edges = [e for e in edges if e.edge_type != "contains"]
+                is_writable = mount.permission != Permission.READ_ONLY
+                if isinstance(mount.filesystem, SupportsConnections) and dep_edges and is_writable:
+                    # Delete stale outgoing connections before re-adding.
+                    # Only outgoing (source_path == path) so we preserve
+                    # edges from OTHER files that point to this one.
+                    conn_svc = getattr(mount.filesystem, "connections", None)
+                    if conn_svc is not None:
+                        await conn_svc.delete_outgoing_connections(sess, path)
+                    for edge in dep_edges:
+                        _w: float = (
+                            float(edge.metadata.get("weight", 1.0))  # type: ignore[arg-type]
+                            if edge.metadata
+                            else 1.0
+                        )
                         await mount.filesystem.add_connection(
                             edge.source,
                             edge.target,
@@ -239,36 +231,39 @@ class IndexMixin:
                             metadata=dict(edge.metadata) if edge.metadata else None,
                             session=sess,
                         )
-                    # Emit event AFTER session commits (post-commit ordering)
-                    await self._ctx.emit(
-                        FileEvent(
-                            event_type=EventType.CONNECTION_ADDED,
-                            path=f"{edge.source}[{edge.edge_type}]{edge.target}",
-                            source_path=edge.source,
-                            target_path=edge.target,
-                            connection_type=edge.edge_type,
-                            weight=_w,
+                        deferred_events.append(
+                            FileEvent(
+                                event_type=EventType.CONNECTION_ADDED,
+                                path=f"{edge.source}[{edge.edge_type}]{edge.target}",
+                                source_path=edge.source,
+                                target_path=edge.target,
+                                connection_type=edge.edge_type,
+                                weight=_w,
+                            )
                         )
-                    )
-                    stats["edges_added"] += 1
-            elif dep_edges:
-                # Fallback: no SupportsConnections, add directly to graph
-                for edge in dep_edges:
-                    meta: dict[str, Any] = dict(edge.metadata)
-                    graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
-                    stats["edges_added"] += 1
+                        stats["edges_added"] += 1
+                elif dep_edges:
+                    # Fallback: no SupportsConnections, add directly to graph
+                    for edge in dep_edges:
+                        meta: dict[str, Any] = dict(edge.metadata)
+                        graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
+                        stats["edges_added"] += 1
 
-            if search_engine is not None:
-                embeddable = extract_from_chunks(chunks)
-                if embeddable:
-                    async with self._ctx.session_for(mount) as sess:
+                # Index chunks for search
+                if search_engine is not None:
+                    embeddable = extract_from_chunks(chunks)
+                    if embeddable:
                         await search_engine.add_batch(embeddable, session=sess)
-        else:
-            if search_engine is not None:
-                embeddable = extract_from_file(path, content)
-                if embeddable:
-                    async with self._ctx.session_for(mount) as sess:
+            else:
+                # No analysis — index whole file for search
+                if search_engine is not None:
+                    embeddable = extract_from_file(path, content)
+                    if embeddable:
                         await search_engine.add_batch(embeddable, session=sess)
+
+        # Emit CONNECTION_ADDED events after commit (post-commit ordering)
+        for event in deferred_events:
+            await self._ctx.emit(event)
 
         return stats
 
