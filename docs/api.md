@@ -987,29 +987,20 @@ Instances expose `.dimension` and `.model_name` read-only properties (both `int 
 
 `VectorType` accepts optional `dimension` and `model_name` parameters. On bind, it validates that a `Vector` instance's model name matches the column's declared model name (plain `list[float]` values and `Vector` instances without a model name skip the check). `VectorType.from_provider(provider)` creates a `VectorType` with both dimension and model name from an `EmbeddingProvider`.
 
-### Events
+### Background Indexing
 
 ```python
-from grover.events import EventBus, EventType, FileEvent
+from grover.worker import BackgroundWorker, IndexingMode
 ```
 
-| Event | Emitted When |
-|-------|-------------|
-| `FILE_WRITTEN` | A file is created or updated |
-| `FILE_DELETED` | A file is deleted |
-| `FILE_MOVED` | A file is moved or renamed |
-| `FILE_RESTORED` | A file is restored from trash |
-| `CONNECTION_ADDED` | A connection is created or updated |
-| `CONNECTION_DELETED` | A connection is deleted |
+The `BackgroundWorker` handles debounced background task scheduling for indexing. It is created internally by `GroverAsync` and is not typically used directly. The `IndexingMode` enum controls behavior:
 
-`FileEvent` carries optional connection fields for `CONNECTION_ADDED` / `CONNECTION_DELETED` events:
+| Mode | Behavior |
+|------|----------|
+| `IndexingMode.BACKGROUND` | File mutations schedule analysis tasks with per-path debouncing (default) |
+| `IndexingMode.MANUAL` | All scheduling is suppressed; call `index()` explicitly |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `source_path` | `str | None` | Source file of the connection |
-| `target_path` | `str | None` | Target file of the connection |
-| `connection_type` | `str | None` | Edge type string |
-| `weight` | `float` | Edge weight (default 1.0) |
+Facade methods call processing functions directly via the worker instead of emitting events. `flush()` drains all pending work. `close()` and `save()` auto-drain before persisting state.
 
 ---
 

@@ -40,9 +40,9 @@ Grover's write ordering (content to storage first, then commit metadata) matches
 
 Grover's shared services (MetadataService, VersioningService, TrashService, DirectoryService) composed into backends mirror the stackable filesystem approach from Wrapfs/eCryptfs. Instead of a class hierarchy, backends compose the services they need. This is the same principle — layered functionality — expressed through composition rather than filesystem stacking.
 
-### EventBus (Application-Level Change Notification)
+### BackgroundWorker (Application-Level Change Notification)
 
-OS-level file watchers (inotify, FSEvents, ReadDirectoryChangesW) are all unreliable — they drop events under load, can't watch recursively (inotify), and have platform-specific quirks. Grover sidesteps this entirely by emitting events from the VFS layer itself. Since all mutations go through the VFS, the EventBus is a complete and reliable change stream. This is the right choice for an application-level filesystem.
+OS-level file watchers (inotify, FSEvents, ReadDirectoryChangesW) are all unreliable — they drop events under load, can't watch recursively (inotify), and have platform-specific quirks. Grover sidesteps this entirely by scheduling processing functions from the facade layer itself. Since all mutations go through the facade, the `BackgroundWorker` captures a complete and reliable change stream. This is the right choice for an application-level filesystem.
 
 ### Forward Diffs with Periodic Snapshots (Fossil-Adjacent)
 
@@ -111,7 +111,7 @@ This would live in the VFS layer (policy enforcement), not in backends.
 
 **Layer: VFS / MountRegistry**
 
-Linux 5.2+ introduced the "create then attach" mount API: `fsopen()` → `fsmount()` → `move_mount()`. This separates configuration from visibility. Grover could support runtime mount/unmount with lifecycle events (MOUNT_ADDED, MOUNT_REMOVED on the EventBus). This would let the graph and search layers react to new mounts without restarting.
+Linux 5.2+ introduced the "create then attach" mount API: `fsopen()` → `fsmount()` → `move_mount()`. This separates configuration from visibility. Grover could support runtime mount/unmount with lifecycle callbacks (MOUNT_ADDED, MOUNT_REMOVED via the BackgroundWorker). This would let the graph and search layers react to new mounts without restarting.
 
 ### Backend Health / Degraded Mode
 
@@ -127,9 +127,9 @@ Git, Venti, and Restic all use content-addressable storage for deduplication. If
 
 ### Persistent Event Log
 
-**Layer: EventBus (cross-cutting)**
+**Layer: BackgroundWorker (cross-cutting)**
 
-Currently events are fire-and-forget in memory. If Grover crashes mid-update, the graph and search index may be inconsistent with the filesystem. A persistent event log (append to SQLite) would enable replay on startup — similar to ZFS's ZIL (intent log) or a write-ahead log.
+Currently background work is fire-and-forget in memory. If Grover crashes mid-update, the graph and search index may be inconsistent with the filesystem. A persistent task log (append to SQLite) would enable replay on startup — similar to ZFS's ZIL (intent log) or a write-ahead log.
 
 ### Graph Versioning / Temporal Queries
 
@@ -149,14 +149,14 @@ The research on DeltaV baselines (snapshot a collection of version-controlled re
 | Cross-mount as copy+delete | Implemented | VFS | -- |
 | Content-before-commit | Implemented | operations.py | -- |
 | Composition over inheritance | Implemented | Backends | -- |
-| Application-level events | Implemented | EventBus | -- |
+| Application-level change tracking | Implemented | BackgroundWorker | -- |
 | Forward diffs + snapshots | Implemented | Versioning | -- |
 | **Reverse deltas** | Not yet | Versioning | High |
 | **Optimistic concurrency** | Not yet | VFS | Medium |
 | **Runtime mount lifecycle** | Not yet | VFS/Registry | Medium |
 | **Backend health/degraded mode** | Not yet | VFS | Low |
 | **Content-addressable dedup** | Not yet (hash exists) | Versioning | Low |
-| **Persistent event log** | Not yet | EventBus | Low |
+| **Persistent task log** | Not yet | BackgroundWorker | Low |
 | **Graph versioning** | Not yet | Graph | Low |
 
 Grover's architecture is well-aligned with established filesystem design. The core patterns (VFS dispatch, mount resolution, capability protocols, session ownership, write ordering, composition) are all correct and match what the Linux VFS, PyFilesystem2, and other mature systems do. The "not yet" items are all evolutionary — none require architectural changes, and most are localized to specific layers.

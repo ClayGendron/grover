@@ -11,7 +11,7 @@ graph TD
         UFS_perm["_check_writable()"]
         UFS_route["resolve path → mount + rel_path"]
         UFS_session["_session_for(mount)"]
-        UFS_emit["_emit(FileEvent)"]
+        UFS_schedule["worker.schedule()"]
         UFS_cap["_get_capability(backend, protocol)"]
     end
 
@@ -68,7 +68,7 @@ graph TD
         Dialect["dialect.py (upsert_file)"]
         Utils["utils.py (normalize_path, validate_path, ...)"]
         Types["types.py (ReadResult, WriteResult, ...)"]
-        EB["EventBus"]
+        BW["BackgroundWorker"]
     end
 
     Caller --> UFS
@@ -86,7 +86,7 @@ graph TD
 
     UFS_session -->|"SQL mounts"| MC_sf
 
-    UFS --> UFS_emit --> EB
+    UFS --> UFS_schedule --> BW
 
     LFS -.implements.-> Proto
     LFS -.implements.-> CapVer
@@ -162,7 +162,7 @@ sequenceDiagram
     participant UFS as VFS
     participant MR as MountRegistry
     participant P as Permission
-    participant EB as EventBus
+    participant BW as BackgroundWorker
     participant LFS as LocalFileSystem
     participant Ops as operations.py
     participant DB as SQLite
@@ -203,8 +203,8 @@ sequenceDiagram
 
     Note over UFS: _session_for exits: session.commit()
 
-    UFS->>EB: emit(FILE_WRITTEN, path, content)
-    Note over EB: handlers update graph + search
+    UFS->>BW: schedule(_process_write, path, content)
+    Note over BW: updates graph + search
 
     UFS-->>C: WriteResult(success=True)
 ```
@@ -217,7 +217,7 @@ sequenceDiagram
     participant UFS as VFS
     participant MR as MountRegistry
     participant P as Permission
-    participant EB as EventBus
+    participant BW as BackgroundWorker
     participant DFS as DatabaseFileSystem
     participant Ops as operations.py
     participant DB as External DB
@@ -255,8 +255,8 @@ sequenceDiagram
 
     Note over UFS: _session_for exits: session.commit()
 
-    UFS->>EB: emit(FILE_WRITTEN, path, content)
-    Note over EB: handlers update graph + search
+    UFS->>BW: schedule(_process_write, path, content)
+    Note over BW: updates graph + search
 
     UFS-->>C: WriteResult(success=True)
 ```

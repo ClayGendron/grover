@@ -313,9 +313,9 @@ When `_analyze_and_integrate()` processes a file:
 
 On file delete or move, the handler opens a single DB session to remove search entries, chunk DB rows (via `delete_file_chunks()`), and connection records (via `delete_connections_for_path()`). The hardened `remove_file_subgraph()` cleans up graph nodes by unioning two child-finding methods: `parent_path` attribute scan and `"contains"` edge traversal.
 
-### FileEvent and user_id
+### user_id propagation
 
-`FileEvent` carries an optional `user_id` field (default `None`). All VFS emit points pass `user_id` through from the originating operation. Event handlers forward `user_id` to `_analyze_and_integrate()`, which passes it to `backend.replace_file_chunks()` so chunk records are tagged with the correct owner in user-scoped environments.
+All facade mutation methods accept an optional `user_id` parameter (default `None`). Processing methods forward `user_id` to `_analyze_and_integrate()`, which passes it to `backend.replace_file_chunks()` so chunk records are tagged with the correct owner in user-scoped environments.
 
 ---
 

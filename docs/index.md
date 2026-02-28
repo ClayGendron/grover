@@ -109,7 +109,7 @@ graph TD
     A --> B["VFS — Virtual Filesystem"]
     A --> C["Graph — Knowledge Graph"]
     A --> D["SearchEngine"]
-    A --> E["EventBus"]
+    A --> E["BackgroundWorker"]
 
     B --> F["LocalFileSystem<br/><i>disk + SQLite</i>"]
     B --> G["DatabaseFileSystem<br/><i>PostgreSQL · MSSQL · SQLite</i>"]
@@ -120,10 +120,10 @@ graph TD
     D --> J["VectorStore<br/><i>Local · Pinecone · Databricks</i>"]
     D --> K["EmbeddingProvider<br/><i>sentence-transformers · OpenAI · LangChain</i>"]
 
-    E -.->|FILE_WRITTEN| C
-    E -.->|FILE_WRITTEN| D
-    E -.->|FILE_DELETED| C
-    E -.->|FILE_DELETED| D
+    E -.->|write/edit| C
+    E -.->|write/edit| D
+    E -.->|delete| C
+    E -.->|delete| D
 ```
 
 **VFS** routes operations to the right backend based on mount paths. Multiple backends can be mounted simultaneously.
@@ -132,7 +132,7 @@ graph TD
 
 **SearchEngine** orchestrates embedding and vector storage. It wires together an `EmbeddingProvider` (text → vectors) and a `VectorStore` (store/search vectors). The default setup uses `all-MiniLM-L6-v2` embeddings + local usearch HNSW. For production, swap in Pinecone or Databricks with OpenAI embeddings.
 
-**EventBus** keeps everything consistent — when a file is written or deleted, the graph and search index update automatically.
+**BackgroundWorker** keeps everything consistent — when a file is written or deleted, the graph and search index update automatically.
 
 ---
 

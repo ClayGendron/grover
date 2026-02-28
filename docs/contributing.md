@@ -107,7 +107,7 @@ src/grover/
 ├── _grover.py            # Sync wrapper (Grover)
 ├── _grover_async.py      # Async core (GroverAsync)
 ├── ref.py                # Ref frozen dataclass
-├── events.py             # EventBus and event types
+├── worker.py             # BackgroundWorker, IndexingMode
 ├── fs/                   # Filesystem layer
 │   ├── vfs.py            # Mount router
 │   ├── local_fs.py       # Disk + SQLite backend

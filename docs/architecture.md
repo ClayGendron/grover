@@ -175,48 +175,45 @@ FTS stays in sync with content changes: `add()`, `add_batch()`, `remove()`, and 
 
 Hidden mounts (like `/.grover`) do not receive graph or search engine injection.
 
-## Event-driven consistency
+## Background indexing and consistency
 
-The three layers stay in sync through an `EventBus`. When VFS completes a file operation, it emits an event:
+The three layers stay in sync through a `BackgroundWorker`. When a facade method completes a file operation, it schedules a processing function via the worker:
 
-| Event | Triggers |
-|-------|----------|
-| `FILE_WRITTEN` | Re-analyze file, write chunk DB rows, update graph edges, re-index embeddings |
-| `FILE_DELETED` | Remove file and children from graph, search index, and chunk DB rows |
-| `FILE_MOVED` | Remove old path (graph, search, chunks), re-analyze at new path |
-| `FILE_RESTORED` | Re-analyze restored file |
-| `CONNECTION_ADDED` | Add edge to in-memory graph |
-| `CONNECTION_DELETED` | Remove edge from in-memory graph |
+| Operation | Processing method | What it does |
+|-----------|------------------|--------------|
+| `write()`, `edit()`, `copy()`, `restore_*()` | `_process_write(path, content, user_id)` | Re-analyze file, write chunk DB rows, update graph edges, re-index embeddings |
+| `delete()` | `_process_delete(path, user_id)` | Remove file and children from graph, search index, and chunk DB rows |
+| `move()` | `_process_move(old, new, user_id)` | `_process_delete(old)` + `_process_write(new)` |
+| `add_connection()` | `_process_connection_added(src, tgt, type, weight)` | Add edge to in-memory graph |
+| `delete_connection()` | `_process_connection_deleted(src, tgt)` | Remove edge from in-memory graph |
 
-Events carry an optional `user_id` field so chunk records and other downstream operations are tagged with the correct owner in user-scoped environments.
+Processing methods accept direct parameters (not event objects). They resolve the mount from the path, then use that mount's graph and search engine. Exceptions are logged but never propagated — a failed re-index should not cause a file write to fail.
 
-Event handlers resolve the mount from the event path, then use that mount's graph and search engine. Exceptions in handlers are logged but never propagated — a failed re-index should not cause a file write to fail.
+### Indexing modes
 
-### Event dispatch and indexing modes
+The `BackgroundWorker` supports two modes, controlled by the `IndexingMode` enum passed to the `Grover`/`GroverAsync` constructor:
 
-The `EventBus` supports two modes, controlled by the `IndexingMode` enum passed to the `Grover`/`GroverAsync` constructor:
+**`BACKGROUND` mode (default):** Write/edit/copy/restore operations use `worker.schedule(key, factory)` which dispatches to background `asyncio.Task` instances with **per-path debouncing** — multiple rapid writes to the same file within the `debounce_delay` window (default 0.1s) are coalesced into a single analysis pass using the latest content. This significantly reduces redundant work during burst writes.
 
-**`BACKGROUND` mode (default):** Events are dispatched to background `asyncio.Task` instances so that `write()`, `edit()`, and other mutating operations return immediately. File mutation events (`FILE_WRITTEN`, `FILE_RESTORED`) are **debounced per-path** — multiple rapid writes to the same file within the `debounce_delay` window (default 0.1s) are coalesced into a single analysis pass using the latest content. This significantly reduces redundant work during burst writes.
+Delete and move operations use `worker.cancel(key)` + `worker.schedule_immediate(coro)` — they cancel any pending debounced work for the affected path, then run cleanup immediately. Connection operations also use `schedule_immediate()` since they are lightweight graph updates.
 
-`FILE_DELETED` and `FILE_MOVED` events fire immediately (no debounce) and cancel any pending debounced event for the affected path — there's no point analyzing a file that was just deleted or moved. `CONNECTION_ADDED` and `CONNECTION_DELETED` events also fire immediately (they are lightweight graph operations).
+**`MANUAL` mode:** All scheduling is suppressed — `schedule()` and `schedule_immediate()` are no-ops. The caller is responsible for calling `index()` explicitly to populate the graph and search engine. This is useful for batch import scenarios where you write many files first, then index once at the end.
 
-**`MANUAL` mode:** All event dispatch is suppressed. `emit()` is a no-op. The caller is responsible for calling `index()` explicitly to populate the graph and search engine. This is useful for batch import scenarios where you write many files first, then index once at the end.
+### Post-commit graph projection
 
-### Nested emit handling
-
-The `_analyze_and_integrate` handler (triggered by `FILE_WRITTEN`) itself emits `CONNECTION_ADDED` events as it discovers import edges. To preserve ordering, a `_dispatching` flag tracks whether we're currently inside a handler. When `emit()` is called from within a running handler (nested emit), the event is dispatched **inline** rather than scheduled as a new background task. This ensures that by the time a `FILE_WRITTEN` handler completes, all its emitted connection events have also been processed.
+`_analyze_and_integrate` collects dependency edges in an `edges_to_project` list during the DB session. After the session commits, edges are projected directly into the in-memory graph via `graph.add_edge()`. This ensures graph edges are only added after the DB commit succeeds (post-commit ordering). "contains" edges (file → chunk) are structural and remain in-memory only — they are not persisted to the database.
 
 ### flush() and drain lifecycle
 
-`flush()` (public API) calls `drain()` on the EventBus, which:
+`flush()` (public API) calls `drain()` on the `BackgroundWorker`, which:
 
-1. Fires all pending debounce timers immediately (cancelling the timers and dispatching the events)
+1. Fires all pending debounce timers immediately (cancelling the timers and dispatching the work)
 2. Awaits all active background tasks
-3. Loops until settled — handlers may emit new events during drain, which are processed in subsequent iterations
+3. Loops until settled — tasks may schedule new work during drain, which is processed in subsequent iterations
 
-`close()` and `save()` automatically call `drain()` before persisting state, so pending events are always processed before shutdown.
+`close()` and `save()` automatically call `drain()` before persisting state, so pending work is always processed before shutdown.
 
-`index()` bypasses the event bus for file events — it calls `_analyze_and_integrate` directly rather than emitting `FILE_WRITTEN` events. However, `_analyze_and_integrate` still emits `CONNECTION_ADDED` events through the event bus as it discovers edges. `index()` completes all analysis inline regardless of indexing mode.
+`index()` bypasses the worker entirely — it calls `_analyze_and_integrate` directly for each file. `index()` completes all analysis inline regardless of indexing mode.
 
 ## Session management
 
@@ -378,7 +375,7 @@ The search layer follows the same two-protocol pattern as the filesystem:
 - **EmbeddingProvider** — converts text to vectors. Async-first, with `embed()` and `embed_batch()` methods. Built-in providers: sentence-transformers (local), OpenAI (API), LangChain adapter (any LangChain `Embeddings` instance).
 - **VectorStore** — stores and searches vectors. Async-first. Built-in stores: LocalVectorStore (in-process usearch HNSW), PineconeVectorStore (Pinecone cloud), DatabricksVectorStore (Databricks Vector Search).
 
-**SearchEngine** orchestrates them: embed text via provider → store vectors via store → search by embedding queries. `GroverAsync` creates a `SearchEngine` internally and wires it to the `EventBus`.
+**SearchEngine** orchestrates them: embed text via provider → store vectors via store → search by embedding queries. `GroverAsync` creates a `SearchEngine` per mount and wires it into the mount's search slot.
 
 **Construction-time validation.** `SearchEngine` validates component compatibility at construction time rather than at query time. If a vector store exposes a `dimension` property (duck-typed via `getattr`), the engine checks it matches the embedding provider's `dimensions`. A declared `model_name` is cross-checked against the provider's `model_name`. This catches model swaps and dimension mismatches before any data is indexed.
 
