@@ -240,8 +240,7 @@ class MinimalBackend:
     ) -> FileInfoResult | None:
         if path not in self._files:
             return None
-        name = path.rsplit("/", 1)[-1]
-        return FileInfoResult(path=path, name=name, is_directory=False)
+        return FileInfoResult(path=path, is_directory=False)
 
 
 # =========================================================================

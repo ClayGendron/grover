@@ -110,9 +110,9 @@ class TestAnalyzeWritesChunkRows:
             chunks = await backend.list_file_chunks("/project/funcs.py", session=sess)
 
         assert len(chunks) >= 2
-        names = [c.name for c in chunks]
-        assert "alpha" in names
-        assert "beta" in names
+        paths = [c.path for c in chunks]
+        assert any("alpha" in p for p in paths)
+        assert any("beta" in p for p in paths)
 
     @pytest.mark.asyncio
     async def test_analyze_no_vfs_chunk_files(self, grover: GroverAsync):
@@ -200,10 +200,10 @@ def gamma():
 
         async with grover._ctx.session_for(mount) as sess:
             chunks_after = await backend.list_file_chunks("/project/funcs.py", session=sess)
-        names = [c.name for c in chunks_after]
-        assert "alpha" in names
-        assert "gamma" in names
-        assert "beta" not in names
+        paths = [c.path for c in chunks_after]
+        assert any("alpha" in p for p in paths)
+        assert any("gamma" in p for p in paths)
+        assert not any("beta" in p for p in paths)
 
 
 # ==================================================================

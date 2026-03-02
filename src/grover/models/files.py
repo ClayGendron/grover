@@ -22,17 +22,15 @@ class FileBase(SQLModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     path: str = Field(index=True, unique=True)
     parent_path: str = Field(default="", index=True)
-    name: str = Field(default="")
-    owner_id: str | None = Field(default=None, index=True)
     is_directory: bool = Field(default=False)
-    mime_type: str = Field(default="text/plain")
     content: str | None = Field(default=None)
     content_hash: str | None = Field(default=None)
+    mime_type: str = Field(default="text/plain")
+    lines: int = Field(default=0)
     size_bytes: int = Field(default=0)
-    line_start: int | None = Field(default=None)
-    line_end: int | None = Field(default=None)
     current_version: int = Field(default=1)
     original_path: str | None = Field(default=None)
+    owner_id: str | None = Field(default=None, index=True)
     vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
@@ -68,6 +66,7 @@ class FileVersionBase(SQLModel):
     content_hash: str = Field(default="")
     size_bytes: int = Field(default=0)
     created_by: str | None = Field(default=None)
+    vector: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[invalid-argument-type]
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from collections import deque
 from typing import TYPE_CHECKING, Any
@@ -824,7 +823,6 @@ class RustworkxGraph:
                 target_path=data["target"],
                 type=data["type"],
                 weight=data["weight"],
-                metadata_json=json.dumps(data["metadata"]),
                 path=f"{data['source']}[{data['type']}]{data['target']}",
             )
             graph_edges[edge.id] = edge
@@ -909,14 +907,12 @@ class RustworkxGraph:
         # Load all edges
         result = await session.execute(select(FileConnection))
         for edge_row in result.scalars().all():
-            metadata: dict[str, Any] = json.loads(edge_row.metadata_json)
             self.add_edge(
                 _prefix(edge_row.source_path),
                 _prefix(edge_row.target_path),
                 edge_row.type,
                 weight=edge_row.weight,
                 edge_id=edge_row.id,
-                **metadata,
             )
 
     # ------------------------------------------------------------------

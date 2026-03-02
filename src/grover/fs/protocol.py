@@ -355,7 +355,6 @@ class SupportsConnections(Protocol):
         connection_type: str,
         *,
         weight: float = 1.0,
-        metadata: dict[str, Any] | None = None,
         session: AsyncSession | None = None,
     ) -> ConnectionResult: ...
 
@@ -388,7 +387,6 @@ class SupportsFileChunks(Protocol):
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-        user_id: str | None = None,
     ) -> int: ...
 
     async def delete_file_chunks(

@@ -596,7 +596,6 @@ class TestExistsGetInfo:
             await fs.write("/f.py", "hello\n", session=session)
             info = await fs.get_info("/f.py", session=session)
             assert info is not None
-            assert info.name == "f.py"
             assert info.is_directory is False
         await engine.dispose()
 

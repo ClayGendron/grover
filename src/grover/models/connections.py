@@ -28,8 +28,11 @@ class FileConnectionBase(SQLModel):
     target_path: str = Field(index=True)
     type: str = Field(default="")
     weight: float = Field(default=1.0)
-    metadata_json: str = Field(default="{}")
     created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
+    )
+    updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )

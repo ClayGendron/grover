@@ -308,34 +308,6 @@ class TestConnectionService:
         assert result.target_path == "/src/utils.py"
         assert result.connection_type == "imports"
 
-    async def test_add_connection_with_metadata(
-        self, db: tuple[AsyncEngine, ConnectionService]
-    ) -> None:
-        engine, svc = db
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-        async with factory() as sess:
-            result = await svc.add_connection(
-                sess,
-                "/a.py",
-                "/b.py",
-                "imports",
-                metadata={"line": 10, "symbol": "foo"},
-            )
-            await sess.commit()
-
-        assert result.success
-
-        # Verify metadata was stored
-        import json
-
-        async with factory() as sess:
-            row = await sess.execute(select(FileConnection))
-            record = row.scalar_one()
-            meta = json.loads(record.metadata_json)
-            assert meta["line"] == 10
-            assert meta["symbol"] == "foo"
-
 
 # =========================================================================
 # Integration: GroverAsync + DatabaseFileSystem + Graph

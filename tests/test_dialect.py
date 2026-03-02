@@ -52,7 +52,6 @@ class TestUpsertFile:
                 values={
                     "id": "test-id-1",
                     "path": "/hello.txt",
-                    "name": "hello.txt",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -64,7 +63,7 @@ class TestUpsertFile:
             result = await session.execute(select(File).where(File.path == "/hello.txt"))
             file = result.scalar_one_or_none()
             assert file is not None
-            assert file.name == "hello.txt"
+            assert file.path == "/hello.txt"
 
         await engine.dispose()
 
@@ -82,7 +81,6 @@ class TestUpsertFile:
                 values={
                     "id": "test-id-1",
                     "path": "/hello.txt",
-                    "name": "hello.txt",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -98,7 +96,6 @@ class TestUpsertFile:
                 values={
                     "id": "test-id-2",
                     "path": "/hello.txt",
-                    "name": "hello_updated.txt",
                     "is_directory": False,
                     "current_version": 2,
                 },
@@ -109,7 +106,6 @@ class TestUpsertFile:
             result = await session.execute(select(File).where(File.path == "/hello.txt"))
             file = result.scalar_one_or_none()
             assert file is not None
-            assert file.name == "hello_updated.txt"
             assert file.current_version == 2
 
         await engine.dispose()
@@ -193,8 +189,8 @@ class TestUpsertSqlitePgBranches:
                 values={
                     "id": "u1",
                     "path": "/up.txt",
-                    "name": "up.txt",
                     "is_directory": False,
+                    "mime_type": "text/plain",
                     "current_version": 1,
                 },
                 conflict_keys=["path"],
@@ -202,25 +198,25 @@ class TestUpsertSqlitePgBranches:
             await session.commit()
 
         async with factory() as session:
-            # Upsert with update_keys=["name"] — only name should update
+            # Upsert with update_keys=["mime_type"] — only mime_type should update
             await upsert_file(
                 session,
                 "sqlite",
                 values={
                     "id": "u2",
                     "path": "/up.txt",
-                    "name": "updated.txt",
                     "is_directory": False,
+                    "mime_type": "text/markdown",
                     "current_version": 99,
                 },
                 conflict_keys=["path"],
-                update_keys=["name"],
+                update_keys=["mime_type"],
             )
             await session.commit()
 
             result = await session.execute(select(File).where(File.path == "/up.txt"))
             f = result.scalar_one()
-            assert f.name == "updated.txt"
+            assert f.mime_type == "text/markdown"
             # current_version should NOT be updated (not in update_keys)
             assert f.current_version == 1
 
@@ -239,7 +235,6 @@ class TestUpsertSqlitePgBranches:
                 values={
                     "id": "dn1",
                     "path": "/dn.txt",
-                    "name": "original.txt",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -259,7 +254,7 @@ class TestUpsertSqlitePgBranches:
 
             result = await session.execute(select(File).where(File.path == "/dn.txt"))
             f = result.scalar_one()
-            assert f.name == "original.txt"
+            assert f.current_version == 1
 
         await engine.dispose()
 
@@ -278,7 +273,6 @@ class TestUpsertSqlitePgBranches:
                 values={
                     "id": "s1",
                     "path": "/schema.txt",
-                    "name": "schema.txt",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -305,7 +299,6 @@ class TestUpsertSqlitePgBranches:
                 values={
                     "id": "w1",
                     "path": "/wiki.txt",
-                    "name": "wiki.txt",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -317,7 +310,7 @@ class TestUpsertSqlitePgBranches:
 
             result = await session.execute(select(WikiFile).where(WikiFile.path == "/wiki.txt"))
             w = result.scalar_one()
-            assert w.name == "wiki.txt"
+            assert w.path == "/wiki.txt"
 
         await engine.dispose()
 
@@ -336,7 +329,7 @@ class TestUpsertMssql:
 
         await _upsert_mssql(
             mock_session,
-            values={"id": "m1", "path": "/m.txt", "name": "m.txt", "current_version": 1},
+            values={"id": "m1", "path": "/m.txt", "current_version": 1},
             conflict_keys=["path"],
             model=File,
         )
@@ -356,7 +349,7 @@ class TestUpsertMssql:
 
         await _upsert_mssql(
             mock_session,
-            values={"id": "m2", "path": "/m.txt", "name": "m.txt"},
+            values={"id": "m2", "path": "/m.txt", "mime_type": "text/plain"},
             conflict_keys=["path"],
             model=File,
             schema="dbo",
@@ -372,13 +365,13 @@ class TestUpsertMssql:
 
         await _upsert_mssql(
             mock_session,
-            values={"id": "m3", "path": "/m.txt", "name": "only_name", "current_version": 5},
+            values={"id": "m3", "path": "/m.txt", "mime_type": "text/markdown", "current_version": 5},
             conflict_keys=["path"],
             model=File,
-            update_keys=["name"],
+            update_keys=["mime_type"],
         )
         sql_text = str(mock_session.execute.call_args[0][0])
-        assert "target.name" in sql_text
+        assert "target.mime_type" in sql_text
         # current_version should NOT appear in UPDATE SET
         assert "target.current_version" not in sql_text
 
@@ -409,7 +402,7 @@ class TestUpsertMssql:
 
         await _upsert_mssql(
             mock_session,
-            values={"id": "w1", "path": "/w.txt", "name": "w.txt"},
+            values={"id": "w1", "path": "/w.txt", "mime_type": "text/plain"},
             conflict_keys=["path"],
             model=WikiFile,
         )

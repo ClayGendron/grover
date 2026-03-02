@@ -1378,10 +1378,9 @@ class LocalFileSystem:
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-        user_id: str | None = None,
     ) -> int:
         sess = self._require_session(session)
-        return await self.chunks.replace_file_chunks(sess, file_path, chunks, user_id=user_id)
+        return await self.chunks.replace_file_chunks(sess, file_path, chunks)
 
     async def delete_file_chunks(
         self,
@@ -1412,7 +1411,6 @@ class LocalFileSystem:
         connection_type: str,
         *,
         weight: float = 1.0,
-        metadata: dict | None = None,
         session: AsyncSession | None = None,
     ) -> ConnectionResult:
         sess = self._require_session(session)
@@ -1422,7 +1420,6 @@ class LocalFileSystem:
             target_path,
             connection_type,
             weight=weight,
-            metadata=metadata,
         )
 
     async def delete_connection(

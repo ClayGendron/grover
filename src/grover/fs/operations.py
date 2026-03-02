@@ -235,7 +235,6 @@ async def write_file(
 
         new_file = file_model(
             path=path,
-            name=name,
             parent_path=split_path(path)[0],
             owner_id=owner_id,
             content_hash=content_hash,
@@ -551,7 +550,6 @@ async def move_file(
                 if content is not None:
                     await write_content(new_path, content, session)
                 desc.path = new_path
-                desc.name = split_path(new_path)[1]
                 desc.parent_path = split_path(new_path)[0]
 
         content = await read_content(src, session)
@@ -559,7 +557,6 @@ async def move_file(
             await write_content(dest, content, session)
 
         src_file.path = dest
-        src_file.name = split_path(dest)[1]
         src_file.parent_path = split_path(dest)[0]
         src_file.updated_at = datetime.now(UTC)
 
@@ -618,7 +615,6 @@ async def move_file(
         dest_parent, dest_name = split_path(dest)
         new_dir = file_model(
             path=dest,
-            name=dest_name,
             parent_path=dest_parent,
             owner_id=src_file.owner_id,
             is_directory=True,
@@ -631,7 +627,6 @@ async def move_file(
             if orig_child.is_directory:
                 new_child = file_model(
                     path=new_child_path,
-                    name=cn,
                     parent_path=cp,
                     owner_id=src_file.owner_id,
                     is_directory=True,
@@ -639,7 +634,6 @@ async def move_file(
             else:
                 new_child = file_model(
                     path=new_child_path,
-                    name=cn,
                     parent_path=cp,
                     owner_id=src_file.owner_id,
                     content_hash=compute_content_hash(child_content or "")[0],
@@ -677,7 +671,6 @@ async def move_file(
         content_hash, size_bytes = compute_content_hash(content)
         new_file = file_model(
             path=dest,
-            name=dest_name,
             parent_path=dest_parent,
             owner_id=src_file.owner_id,
             content_hash=content_hash,

@@ -82,7 +82,6 @@ class MetadataService:
         """Convert a file record to FileInfoResult."""
         return FileInfoResult(
             path=f.path,
-            name=f.name,
             is_directory=f.is_directory,
             size_bytes=f.size_bytes or 0,
             mime_type=f.mime_type or "text/plain",

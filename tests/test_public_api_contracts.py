@@ -95,7 +95,7 @@ class InMemoryBackend:
     ) -> FileInfoResult | None:
         if path not in self._files:
             return None
-        return FileInfoResult(path=path, name=path.rsplit("/", 1)[-1], is_directory=False)
+        return FileInfoResult(path=path, is_directory=False)
 
     async def write(
         self,

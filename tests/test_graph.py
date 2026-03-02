@@ -596,8 +596,8 @@ class TestToSql:
 
 class TestFromSql:
     async def test_loads_nodes_from_files(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
         await async_session.commit()
 
         g = RustworkxGraph()
@@ -607,8 +607,8 @@ class TestFromSql:
         assert g.node_count == 2
 
     async def test_loads_edges(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
@@ -622,12 +622,11 @@ class TestFromSql:
         assert g.get_edge("/a.py", "/b.py")["type"] == "imports"
 
     async def test_skips_deleted_files(self, async_session: AsyncSession) -> None:
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
         async_session.add(
             File(
                 path="/deleted.py",
                 parent_path="/",
-                name="deleted.py",
                 deleted_at=datetime.now(UTC),
             )
         )
@@ -643,34 +642,12 @@ class TestFromSql:
         g.add_node("/old.py")
         assert g.has_node("/old.py")
 
-        async_session.add(File(path="/new.py", parent_path="/", name="new.py"))
+        async_session.add(File(path="/new.py", parent_path="/"))
         await async_session.commit()
 
         await g.from_sql(async_session)
         assert not g.has_node("/old.py")
         assert g.has_node("/new.py")
-
-    async def test_metadata_round_trips(self, async_session: AsyncSession) -> None:
-        import json
-
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
-        async_session.add(
-            FileConnection(
-                source_path="/a.py",
-                target_path="/b.py",
-                type="imports",
-                metadata_json=json.dumps({"line": 10, "symbol": "Foo"}),
-                path="/a.py[imports]/b.py",
-            )
-        )
-        await async_session.commit()
-
-        g = RustworkxGraph()
-        await g.from_sql(async_session)
-        data = g.get_edge("/a.py", "/b.py")
-        assert data["metadata"]["line"] == 10
-        assert data["metadata"]["symbol"] == "Foo"
 
     async def test_auto_creates_nodes_for_dangling_edges(self, async_session: AsyncSession) -> None:
         # Edge endpoints not in grover_files — from_sql should still load them
@@ -714,7 +691,8 @@ class TestRoundTrip:
         assert g2.get_edge("/a.py", "/b.py")["type"] == "imports"
         assert g2.get_edge("/b.py", "/c.py")["weight"] == 2.0
 
-    async def test_metadata_preserved(self, async_session: AsyncSession) -> None:
+    async def test_metadata_not_persisted(self, async_session: AsyncSession) -> None:
+        """In-memory metadata does not round-trip through DB (metadata_json removed)."""
         g1 = RustworkxGraph()
         g1.add_edge("/a.py", "/b.py", "imports", line=10, symbol="Foo")
         await g1.to_sql(async_session)
@@ -723,7 +701,8 @@ class TestRoundTrip:
         g2 = RustworkxGraph()
         await g2.from_sql(async_session)
         data = g2.get_edge("/a.py", "/b.py")
-        assert data["metadata"] == {"line": 10, "symbol": "Foo"}
+        # Metadata is in-memory only — not persisted to DB
+        assert data["metadata"] == {}
 
     async def test_edge_ids_preserved_round_trip(self, async_session: AsyncSession) -> None:
         g1 = RustworkxGraph()

@@ -1082,12 +1082,11 @@ class UserScopedFileSystem(DatabaseFileSystem):
         chunks: list[dict],
         *,
         session: AsyncSession | None = None,
-        user_id: str | None = None,
     ) -> int:
-        uid = self._require_user_id(user_id)
+        uid = self._require_user_id()
         stored = self._resolve_path(file_path, uid)
         sess = self._require_session(session)
-        return await self.chunks.replace_file_chunks(sess, stored, chunks, user_id=uid)
+        return await self.chunks.replace_file_chunks(sess, stored, chunks)
 
     async def delete_file_chunks(
         self,

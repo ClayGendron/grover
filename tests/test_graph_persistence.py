@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from sqlmodel import select
@@ -44,12 +43,12 @@ class TestToSql:
         assert rows[0].target_path == "/b.py"
         assert rows[0].type == "imports"
 
-    async def test_edge_weight_and_metadata(self, async_session: AsyncSession):
-        """Custom weight and metadata should round-trip through persistence."""
+    async def test_edge_weight(self, async_session: AsyncSession):
+        """Custom weight should round-trip through persistence."""
         g = RustworkxGraph()
         g.add_node("/a.py", parent_path="/")
         g.add_node("/b.py", parent_path="/")
-        g.add_edge("/a.py", "/b.py", "calls", weight=2.5, context="test")
+        g.add_edge("/a.py", "/b.py", "calls", weight=2.5)
 
         await g.to_sql(async_session)
         await async_session.flush()
@@ -57,8 +56,6 @@ class TestToSql:
         result = await async_session.execute(select(FileConnection))
         row = result.scalars().one()
         assert row.weight == 2.5
-        meta = json.loads(row.metadata_json)
-        assert meta["context"] == "test"
 
     async def test_stale_edge_cleanup(self, async_session: AsyncSession):
         """Edges removed from memory should be deleted from the DB."""
@@ -117,8 +114,8 @@ class TestFromSql:
 
     async def test_loads_nodes_and_edges(self, async_session: AsyncSession):
         """Files and connections in the DB should be loaded as nodes and edges."""
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/a.py", target_path="/b.py", type="imports", path="/a.py[imports]/b.py"
@@ -139,12 +136,11 @@ class TestFromSql:
         """Soft-deleted files should not be loaded as nodes."""
         from datetime import UTC, datetime
 
-        async_session.add(File(path="/active.py", parent_path="/", name="active.py"))
+        async_session.add(File(path="/active.py", parent_path="/"))
         async_session.add(
             File(
                 path="/deleted.py",
                 parent_path="/",
-                name="deleted.py",
                 deleted_at=datetime.now(UTC),
             )
         )
@@ -156,17 +152,16 @@ class TestFromSql:
         assert g.has_node("/active.py")
         assert not g.has_node("/deleted.py")
 
-    async def test_edge_metadata_loaded(self, async_session: AsyncSession):
-        """Edge metadata_json should be deserialized into edge data."""
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
+    async def test_edge_weight_loaded(self, async_session: AsyncSession):
+        """Edge weight should be loaded from DB into edge data."""
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/a.py",
                 target_path="/b.py",
                 type="imports",
                 weight=3.0,
-                metadata_json=json.dumps({"module": "auth"}),
                 path="/a.py[imports]/b.py",
             )
         )
@@ -178,12 +173,11 @@ class TestFromSql:
         edge = g.get_edge("/a.py", "/b.py")
         assert edge is not None
         assert edge["weight"] == 3.0
-        assert edge["metadata"]["module"] == "auth"
 
     async def test_dangling_edge_creates_node(self, async_session: AsyncSession):
         """Edges referencing paths not in the files table should auto-create nodes."""
         # Only one file in DB, but edge references two paths
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
         async_session.add(
             FileConnection(
                 source_path="/a.py",
@@ -206,7 +200,7 @@ class TestFromSql:
         g = RustworkxGraph()
         g.add_node("/old.py", parent_path="/")
 
-        async_session.add(File(path="/new.py", parent_path="/", name="new.py"))
+        async_session.add(File(path="/new.py", parent_path="/"))
         await async_session.flush()
 
         await g.from_sql(async_session)
@@ -234,7 +228,6 @@ class TestRoundTrip:
                 File(
                     path=path,
                     parent_path=node.get("parent_path", "/"),
-                    name=path.split("/")[-1],
                 )
             )
         await g1.to_sql(async_session)
@@ -252,25 +245,6 @@ class TestRoundTrip:
         edge = g2.get_edge("/b.py", "/c.py")
         assert edge["weight"] == 2.0
 
-    async def test_round_trip_with_metadata(self, async_session: AsyncSession):
-        """Edge metadata should survive a full round-trip."""
-        g1 = RustworkxGraph()
-        g1.add_node("/x.py", parent_path="/")
-        g1.add_node("/y.py", parent_path="/")
-        g1.add_edge("/x.py", "/y.py", "depends", module="core", priority=1)
-
-        async_session.add(File(path="/x.py", parent_path="/", name="x.py"))
-        async_session.add(File(path="/y.py", parent_path="/", name="y.py"))
-        await g1.to_sql(async_session)
-        await async_session.flush()
-
-        g2 = RustworkxGraph()
-        await g2.from_sql(async_session)
-
-        edge = g2.get_edge("/x.py", "/y.py")
-        assert edge["metadata"]["module"] == "core"
-        assert edge["metadata"]["priority"] == 1
-
     async def test_round_trip_preserves_edge_ids(self, async_session: AsyncSession):
         """Edge IDs should remain stable across save/load cycles."""
         g1 = RustworkxGraph()
@@ -281,8 +255,8 @@ class TestRoundTrip:
         original_edge = g1.get_edge("/a.py", "/b.py")
         original_id = original_edge["id"]
 
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
         await g1.to_sql(async_session)
         await async_session.flush()
 
@@ -299,8 +273,8 @@ class TestRoundTrip:
         g.add_node("/b.py", parent_path="/")
         g.add_edge("/a.py", "/b.py", "imports")
 
-        async_session.add(File(path="/a.py", parent_path="/", name="a.py"))
-        async_session.add(File(path="/b.py", parent_path="/", name="b.py"))
+        async_session.add(File(path="/a.py", parent_path="/"))
+        async_session.add(File(path="/b.py", parent_path="/"))
         await g.to_sql(async_session)
         await async_session.flush()
 

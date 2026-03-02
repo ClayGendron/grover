@@ -154,8 +154,6 @@ class IndexMixin:
                     chunk_dicts = [
                         {
                             "path": chunk.path,
-                            "name": chunk.name,
-                            "description": "",
                             "line_start": chunk.line_start,
                             "line_end": chunk.line_end,
                             "content": chunk.content,
@@ -164,7 +162,7 @@ class IndexMixin:
                         for chunk in chunks
                     ]
                     await mount.filesystem.replace_file_chunks(
-                        path, chunk_dicts, session=sess, user_id=user_id
+                        path, chunk_dicts, session=sess
                     )
 
                 # In-memory graph: chunk nodes + "contains" edges
@@ -203,7 +201,6 @@ class IndexMixin:
                             edge.target,
                             edge.edge_type,
                             weight=_w,
-                            metadata=dict(edge.metadata) if edge.metadata else None,
                             session=sess,
                         )
                         edges_to_project.append((edge.source, edge.target, edge.edge_type, _w))

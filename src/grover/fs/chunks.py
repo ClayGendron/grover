@@ -28,8 +28,6 @@ class ChunkService:
         session: AsyncSession,
         file_path: str,
         chunks: list[dict],
-        *,
-        user_id: str | None = None,
     ) -> int:
         """Delete all chunks for *file_path*, insert new ones. Returns count inserted."""
         await self.delete_file_chunks(session, file_path)
@@ -40,13 +38,10 @@ class ChunkService:
             record = model(
                 file_path=file_path,
                 path=chunk_data.get("path", ""),
-                name=chunk_data.get("name", ""),
-                description=chunk_data.get("description", ""),
                 line_start=chunk_data.get("line_start", 0),
                 line_end=chunk_data.get("line_end", 0),
                 content=chunk_data.get("content", ""),
                 content_hash=chunk_data.get("content_hash", ""),
-                user_id=user_id,
             )
             session.add(record)
             count += 1

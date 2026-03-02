@@ -33,7 +33,7 @@ class TestTableCreation:
 
 class TestDefaultFactories:
     def test_grover_file_defaults(self, session: Session):
-        f = File(path="/hello.txt", name="hello.txt", parent_path="/")
+        f = File(path="/hello.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
@@ -95,11 +95,11 @@ class TestDefaultFactories:
         assert conn.path == "/a.py[imports]/b.py"
         assert conn.type == "imports"
         assert conn.weight == 1.0
-        assert conn.metadata_json == "{}"
+        assert conn.weight == 1.0
 
     def test_query_round_trip(self, session: Session):
         """Insert and query back a File."""
-        f = File(path="/test.py", name="test.py", parent_path="/")
+        f = File(path="/test.py", parent_path="/")
         session.add(f)
         session.commit()
 
@@ -110,7 +110,6 @@ class TestDefaultFactories:
     def test_grover_file_directory(self, session: Session):
         d = File(
             path="/src",
-            name="src",
             parent_path="/",
             is_directory=True,
         )
@@ -123,7 +122,6 @@ class TestDefaultFactories:
     def test_grover_file_with_content(self, session: Session):
         f = File(
             path="/readme.md",
-            name="readme.md",
             parent_path="/",
             content="# Hello",
             content_hash="abc123",
@@ -136,7 +134,7 @@ class TestDefaultFactories:
         assert f.content_hash == "abc123"
 
     def test_file_vector_default_none(self, session: Session):
-        f = File(path="/vec.txt", name="vec.txt", parent_path="/")
+        f = File(path="/vec.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
@@ -179,7 +177,7 @@ class TestDefaultFactories:
 
 class TestFileBaseOwnerId:
     def test_file_base_owner_id_default_none(self, session: Session):
-        f = File(path="/no_owner.txt", name="no_owner.txt", parent_path="/")
+        f = File(path="/no_owner.txt", parent_path="/")
         session.add(f)
         session.commit()
         session.refresh(f)
@@ -188,7 +186,6 @@ class TestFileBaseOwnerId:
     def test_file_base_owner_id_set(self, session: Session):
         f = File(
             path="/owned.txt",
-            name="owned.txt",
             parent_path="/",
             owner_id="alice",
         )

@@ -19,13 +19,12 @@ from grover.types import (
 
 class TestFileInfoResult:
     def test_required_fields(self):
-        info = FileInfoResult(path="/hello.txt", name="hello.txt", is_directory=False)
+        info = FileInfoResult(path="/hello.txt", is_directory=False)
         assert info.path == "/hello.txt"
-        assert info.name == "hello.txt"
         assert info.is_directory is False
 
     def test_defaults(self):
-        info = FileInfoResult(path="/x", name="x", is_directory=True)
+        info = FileInfoResult(path="/x", is_directory=True)
         assert info.size_bytes == 0
         assert info.mime_type == "text/plain"
         assert info.version == 0
@@ -38,7 +37,6 @@ class TestFileInfoResult:
         now = datetime.now(UTC)
         info = FileInfoResult(
             path="/src",
-            name="src",
             is_directory=True,
             size_bytes=4096,
             mime_type="inode/directory",

@@ -49,12 +49,10 @@ class DirectoryService:
             if not dir_path:
                 continue
 
-            dir_name = parts[i - 1]
             parent = "/".join(parts[: i - 1]) or "/"
             values: dict[str, object] = {
                 "id": str(uuid.uuid4()),
                 "path": dir_path,
-                "name": dir_name,
                 "parent_path": parent,
                 "is_directory": True,
                 "current_version": 1,
@@ -118,7 +116,6 @@ class DirectoryService:
             values: dict[str, object] = {
                 "id": str(uuid.uuid4()),
                 "path": dir_path,
-                "name": name,
                 "parent_path": parent,
                 "is_directory": True,
                 "current_version": 1,

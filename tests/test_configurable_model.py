@@ -80,9 +80,8 @@ class TestModelInheritance:
 
     def test_custom_model_inherits_fields(self):
         """WikiFile should have all fields from FileBase."""
-        wiki = WikiFile(path="/test.md", name="test.md", parent_path="/")
+        wiki = WikiFile(path="/test.md", parent_path="/")
         assert wiki.path == "/test.md"
-        assert wiki.name == "test.md"
         assert wiki.current_version == 1
         assert wiki.deleted_at is None
         assert wiki.mime_type == "text/plain"
@@ -96,7 +95,7 @@ class TestModelInheritance:
     def test_default_file_still_works(self):
         """Default File model is unchanged."""
         assert File.__tablename__ == "grover_files"
-        f = File(path="/hello.py", name="hello.py", parent_path="/")
+        f = File(path="/hello.py", parent_path="/")
         assert f.path == "/hello.py"
 
 
@@ -191,7 +190,7 @@ class TestCustomModelFilesystem:
             result = await session.execute(select(WikiFile).where(WikiFile.path == "/page.md"))
             wiki_file = result.scalar_one_or_none()
             assert wiki_file is not None
-            assert wiki_file.name == "page.md"
+            assert wiki_file.path == "/page.md"
 
             # The default table should be empty
             result = await session.execute(select(File))
@@ -220,7 +219,6 @@ class TestUpsertWithCustomModel:
                 values={
                     "id": "wiki-1",
                     "path": "/wiki/page.md",
-                    "name": "page.md",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -234,7 +232,7 @@ class TestUpsertWithCustomModel:
             result = await session.execute(select(WikiFile).where(WikiFile.path == "/wiki/page.md"))
             row = result.scalar_one_or_none()
             assert row is not None
-            assert row.name == "page.md"
+            assert row.path == "/wiki/page.md"
 
             # Default table should be empty
             result = await session.execute(select(File))
@@ -256,7 +254,6 @@ class TestUpsertWithCustomModel:
                 values={
                     "id": "default-1",
                     "path": "/hello.txt",
-                    "name": "hello.txt",
                     "is_directory": False,
                     "current_version": 1,
                 },
@@ -284,8 +281,8 @@ class TestGraphWithCustomModel:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             # Insert into custom table
-            session.add(WikiFile(path="/wiki/a.md", parent_path="/wiki", name="a.md"))
-            session.add(WikiFile(path="/wiki/b.md", parent_path="/wiki", name="b.md"))
+            session.add(WikiFile(path="/wiki/a.md", parent_path="/wiki"))
+            session.add(WikiFile(path="/wiki/b.md", parent_path="/wiki"))
             session.add(
                 FileConnection(
                     source_path="/wiki/a.md",
@@ -313,12 +310,11 @@ class TestGraphWithCustomModel:
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
-            session.add(WikiFile(path="/wiki/active.md", parent_path="/wiki", name="active.md"))
+            session.add(WikiFile(path="/wiki/active.md", parent_path="/wiki"))
             session.add(
                 WikiFile(
                     path="/wiki/deleted.md",
                     parent_path="/wiki",
-                    name="deleted.md",
                     deleted_at=datetime.now(UTC),
                 )
             )
@@ -340,7 +336,7 @@ class TestGraphWithCustomModel:
 
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
-            session.add(File(path="/a.py", parent_path="/", name="a.py"))
+            session.add(File(path="/a.py", parent_path="/"))
             await session.commit()
 
             g = RustworkxGraph()
@@ -358,9 +354,9 @@ class TestGraphWithCustomModel:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             # Add to default table
-            session.add(File(path="/default.py", parent_path="/", name="default.py"))
+            session.add(File(path="/default.py", parent_path="/"))
             # Add to custom table
-            session.add(WikiFile(path="/wiki/page.md", parent_path="/wiki", name="page.md"))
+            session.add(WikiFile(path="/wiki/page.md", parent_path="/wiki"))
             await session.commit()
 
             # Load with custom model — should only see wiki_files

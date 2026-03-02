@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
@@ -34,7 +33,6 @@ class ConnectionService:
         connection_type: str,
         *,
         weight: float = 1.0,
-        metadata: dict[str, Any] | None = None,
     ) -> ConnectionResult:
         """Create or update a connection. Returns ConnectionResult."""
         model = self._model
@@ -47,8 +45,6 @@ class ConnectionService:
         if existing is not None:
             # Update existing
             existing.weight = weight
-            if metadata:
-                existing.metadata_json = json.dumps(metadata)
             await session.flush()
             return ConnectionResult(
                 path=path,
@@ -65,7 +61,6 @@ class ConnectionService:
             target_path=target_path,
             type=connection_type,
             weight=weight,
-            metadata_json=json.dumps(metadata or {}),
         )
         session.add(record)
         await session.flush()

@@ -114,7 +114,6 @@ class FileInfoResult(FileOperationResult):
     ``version`` from the base.
     """
 
-    name: str = ""
     is_directory: bool = False
     mime_type: str = "text/plain"
     size_bytes: int = 0

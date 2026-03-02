@@ -28,7 +28,6 @@ class TestFileConnectionModel:
         assert conn.path == "/a.py[]/b.py"
         assert conn.type == ""
         assert conn.weight == 1.0
-        assert conn.metadata_json == "{}"
         assert conn.created_at is not None
 
     def test_with_type_and_weight(self, session: Session):
@@ -37,7 +36,6 @@ class TestFileConnectionModel:
             target_path="/b.py",
             type="imports",
             weight=0.5,
-            metadata_json='{"module": "os"}',
             path="/a.py[imports]/b.py",
         )
         session.add(conn)
@@ -46,7 +44,6 @@ class TestFileConnectionModel:
 
         assert conn.type == "imports"
         assert conn.weight == 0.5
-        assert conn.metadata_json == '{"module": "os"}'
 
     def test_round_trip(self, session: Session):
         conn = FileConnection(

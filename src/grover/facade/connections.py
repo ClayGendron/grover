@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.protocol import SupportsConnections
@@ -29,7 +29,6 @@ class ConnectionMixin:
         connection_type: str,
         *,
         weight: float = 1.0,
-        metadata: dict[str, Any] | None = None,
     ) -> ConnectionResult:
         """Add a connection between two files, persisted through the filesystem.
 
@@ -74,7 +73,6 @@ class ConnectionMixin:
                 target_path,
                 connection_type,
                 weight=weight,
-                metadata=metadata,
                 session=sess,
             )
 
