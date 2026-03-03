@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from grover.graph import RustworkxGraph
-from grover.graph.protocols import SupportsFiltering, SupportsNodeSimilarity
+from grover.fs.providers.graph import RustworkxGraph
+from grover.fs.providers.graph.protocols import SupportsFiltering, SupportsNodeSimilarity
 
 # ======================================================================
 # find_nodes

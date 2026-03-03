@@ -80,8 +80,8 @@ sub = g.meeting_subgraph(["/project/a.py", "/project/b.py"])  # connecting subgr
 nodes = g.find_nodes(lang="python")                       # filter by attributes
 
 # Semantic search (requires embedding + search providers)
-from grover.search.stores import LocalVectorStore
-from grover.search.providers import OpenAIEmbedding
+from grover.fs.providers.search import LocalVectorStore
+from grover.fs.providers.embedding import OpenAIEmbedding
 
 g2 = Grover()
 g2.add_mount("/project", backend,

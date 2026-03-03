@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from grover.graph.analyzers._base import (
+from grover.analyzers._base import (
     AnalysisResult,
     ChunkFile,
     EdgeData,

@@ -11,7 +11,7 @@ import pytest
 from grover._grover import Grover
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
-from grover.search.stores.local import LocalVectorStore
+from grover.fs.providers.search.local import LocalVectorStore
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from grover.search.filters import and_, eq, gt
-from grover.search.stores.pinecone import PineconeVectorStore
-from grover.search.types import (
+from grover.fs.providers.search.filters import and_, eq, gt
+from grover.fs.providers.search.pinecone import PineconeVectorStore
+from grover.fs.providers.search.types import (
     IndexConfig,
     SparseVector,
     VectorEntry,
@@ -94,7 +94,7 @@ def mock_client(mock_index):
 @pytest.fixture
 async def store(mock_client, mock_index):
     """A connected PineconeVectorStore with mocked SDK."""
-    with patch("grover.search.stores.pinecone.PineconeAsyncio", return_value=mock_client):
+    with patch("grover.fs.providers.search.pinecone.PineconeAsyncio", return_value=mock_client):
         s = PineconeVectorStore(index_name="test-index", api_key="fake-key")
         await s.connect()
         yield s
@@ -109,7 +109,7 @@ async def store(mock_client, mock_index):
 class TestLifecycle:
     @pytest.mark.asyncio
     async def test_connect_creates_client_and_index(self, mock_client, mock_index):
-        with patch("grover.search.stores.pinecone.PineconeAsyncio", return_value=mock_client):
+        with patch("grover.fs.providers.search.pinecone.PineconeAsyncio", return_value=mock_client):
             s = PineconeVectorStore(index_name="test-index", api_key="fake-key")
             await s.connect()
             mock_client.describe_index.assert_called_once_with("test-index")
@@ -167,7 +167,7 @@ class TestUpsert:
 
     @pytest.mark.asyncio
     async def test_upsert_default_namespace(self, mock_client, mock_index):
-        with patch("grover.search.stores.pinecone.PineconeAsyncio", return_value=mock_client):
+        with patch("grover.fs.providers.search.pinecone.PineconeAsyncio", return_value=mock_client):
             s = PineconeVectorStore(index_name="test-index", api_key="k", namespace="default-ns")
             await s.connect()
             mock_index.upsert.return_value = SimpleNamespace(upserted_count=1)
@@ -464,7 +464,7 @@ class TestImportGuard:
     def test_import_guard_message(self):
         with (
             patch.dict("sys.modules", {"pinecone": None}),
-            patch("grover.search.stores.pinecone._HAS_PINECONE", False),
+            patch("grover.fs.providers.search.pinecone._HAS_PINECONE", False),
             pytest.raises(ImportError, match="pinecone is required"),
         ):
             PineconeVectorStore(index_name="x", api_key="k")
@@ -477,37 +477,37 @@ class TestImportGuard:
 
 class TestProtocolConformance:
     def test_satisfies_vector_store(self):
-        from grover.search.protocols import VectorStore
+        from grover.fs.providers.search.protocols import VectorStore
 
         s = PineconeVectorStore(index_name="x", api_key="k")
         assert isinstance(s, VectorStore)
 
     def test_satisfies_supports_namespaces(self):
-        from grover.search.protocols import SupportsNamespaces
+        from grover.fs.providers.search.protocols import SupportsNamespaces
 
         s = PineconeVectorStore(index_name="x", api_key="k")
         assert isinstance(s, SupportsNamespaces)
 
     def test_satisfies_supports_metadata_filter(self):
-        from grover.search.protocols import SupportsMetadataFilter
+        from grover.fs.providers.search.protocols import SupportsMetadataFilter
 
         s = PineconeVectorStore(index_name="x", api_key="k")
         assert isinstance(s, SupportsMetadataFilter)
 
     def test_satisfies_supports_index_lifecycle(self):
-        from grover.search.protocols import SupportsIndexLifecycle
+        from grover.fs.providers.search.protocols import SupportsIndexLifecycle
 
         s = PineconeVectorStore(index_name="x", api_key="k")
         assert isinstance(s, SupportsIndexLifecycle)
 
     def test_satisfies_supports_hybrid_search(self):
-        from grover.search.protocols import SupportsHybridSearch
+        from grover.fs.providers.search.protocols import SupportsHybridSearch
 
         s = PineconeVectorStore(index_name="x", api_key="k")
         assert isinstance(s, SupportsHybridSearch)
 
     def test_satisfies_supports_reranking(self):
-        from grover.search.protocols import SupportsReranking
+        from grover.fs.providers.search.protocols import SupportsReranking
 
         s = PineconeVectorStore(index_name="x", api_key="k")
         assert isinstance(s, SupportsReranking)

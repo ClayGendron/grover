@@ -10,8 +10,8 @@ import pytest
 
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
-from grover.graph import RustworkxGraph
-from grover.search.stores.local import LocalVectorStore
+from grover.fs.providers.graph import RustworkxGraph
+from grover.fs.providers.search.local import LocalVectorStore
 from grover.types import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from grover.fs.providers.disk import DiskStorageProvider
+from grover.fs.providers.graph import RustworkxGraph
 from grover.fs.providers.protocols import (
     ChunkProvider,
     GraphProvider,
@@ -13,7 +13,7 @@ from grover.fs.providers.protocols import (
     SupportsStorageReconcile,
     VersionProvider,
 )
-from grover.graph import RustworkxGraph
+from grover.fs.providers.storage.disk import DiskStorageProvider
 
 if TYPE_CHECKING:
     from pathlib import Path

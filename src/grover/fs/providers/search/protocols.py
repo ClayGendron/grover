@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from grover.search.filters import FilterExpression
-    from grover.search.types import (
+    from grover.fs.providers.search.filters import FilterExpression
+    from grover.fs.providers.search.types import (
         DeleteResult,
         IndexConfig,
         IndexInfo,

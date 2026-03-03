@@ -108,9 +108,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["ANN", "S101"]
-"src/grover/search/protocols.py" = ["A002"]  # filter= is the standard vector store API kwarg
-"src/grover/search/stores/pinecone.py" = ["A002"]
-"src/grover/search/stores/databricks.py" = ["A002"]
+"src/grover/fs/providers/search/protocols.py" = ["A002"]  # filter= is the standard vector store API kwarg
+"src/grover/fs/providers/search/pinecone.py" = ["A002"]
+"src/grover/fs/providers/search/databricks.py" = ["A002"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["grover"]

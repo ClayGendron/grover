@@ -25,7 +25,7 @@ from grover.types.operations import (
 
 from .database_fs import DatabaseFileSystem
 from .operations import paginate_content, write_file
-from .providers.disk import DiskStorageProvider
+from .providers.storage.disk import DiskStorageProvider
 from .utils import (
     get_similar_files,
     is_binary_file,

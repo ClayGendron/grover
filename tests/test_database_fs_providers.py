@@ -453,7 +453,7 @@ class TestSearchWithProviders:
 
     async def test_search_has_delegates_to_local_store(self):
         """search_has delegates to LocalVectorStore when available."""
-        from grover.search.stores.local import LocalVectorStore
+        from grover.fs.providers.search.local import LocalVectorStore
 
         store = LocalVectorStore(dimension=384)
         fs = DatabaseFileSystem(search_provider=store)

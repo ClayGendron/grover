@@ -321,9 +321,9 @@ Chunks are stored as database rows in `grover_file_chunks` (via `SupportsFileChu
 
 ## Adding a new analyzer
 
-1. Create `src/grover/graph/analyzers/your_language.py`.
+1. Create `src/grover/analyzers/your_language.py`.
 2. Implement the `Analyzer` protocol — `analyze_file(path, content) -> AnalysisResult`.
-3. Register it in `src/grover/graph/analyzers/__init__.py` with the appropriate file extensions.
+3. Register it in `src/grover/analyzers/__init__.py` with the appropriate file extensions.
 4. Add tests in `tests/test_analyzers.py`.
 
 Analyzers should be pure functions of `(path, content)`. They should never raise on malformed input — return an empty result instead.
@@ -417,10 +417,10 @@ Metadata filters are expressed as a provider-agnostic AST (`Comparison` and `Log
 
 ## Adding a new embedding provider
 
-1. Create `src/grover/search/providers/your_provider.py`.
+1. Create `src/grover/fs/providers/embedding/your_provider.py`.
 2. Implement the `EmbeddingProvider` protocol: async `embed(text)`, async `embed_batch(texts)`, plus `dimensions` and `model_name` properties.
 3. Import-guard any optional dependencies.
-4. Add the provider to `src/grover/search/providers/__init__.py`.
+4. Add the provider to `src/grover/fs/providers/embedding/__init__.py`.
 5. Add tests in `tests/test_embedding_providers.py`.
 
 The provider is passed to `add_mount(..., embedding_provider=...)` at mount time.
@@ -445,11 +445,11 @@ All five integration classes (`GroverBackend`, `GroverMiddleware`, `GroverRetrie
 
 ## Adding a new vector store
 
-1. Create `src/grover/search/stores/your_store.py`.
+1. Create `src/grover/fs/providers/search/your_store.py`.
 2. Implement the `SearchProvider` protocol: `upsert()`, `vector_search()`, `delete()`, `fetch()`, `lexical_search()`, `connect()`, `close()`.
 3. Add any applicable capability protocols (e.g., `SupportsMetadataFilter`).
 4. Import-guard any optional dependencies.
-5. Add the store to `src/grover/search/stores/__init__.py`.
+5. Add the store to `src/grover/fs/providers/search/__init__.py`.
 6. Add tests in `tests/test_your_store.py`.
 
 The store is passed to `add_mount(..., search_provider=...)` at mount time. Stores that don't support lexical search should return an empty `LexicalSearchResult` from `lexical_search()`.

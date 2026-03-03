@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from grover.search.filters import eq
-from grover.search.stores.local import LocalVectorStore
-from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
+from grover.fs.providers.search.filters import eq
+from grover.fs.providers.search.local import LocalVectorStore
+from grover.fs.providers.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
 
 # ------------------------------------------------------------------
 # Helpers

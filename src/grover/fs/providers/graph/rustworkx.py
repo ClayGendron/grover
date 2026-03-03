@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import rustworkx
 
-from grover.graph.types import SubgraphResult, subgraph_result
+from grover.fs.providers.graph.types import SubgraphResult, subgraph_result
 from grover.ref import Ref
 
 if TYPE_CHECKING:

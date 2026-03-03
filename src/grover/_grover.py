@@ -17,8 +17,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
     from grover.fs.protocol import StorageBackend
+    from grover.fs.providers.graph.protocols import GraphStore
     from grover.fs.providers.protocols import EmbeddingProvider, SearchProvider
-    from grover.graph.protocols import GraphStore
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
     from grover.mount import Mount

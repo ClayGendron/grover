@@ -8,15 +8,15 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from grover.analyzers._base import ChunkFile
 from grover.fs.providers.protocols import EmbeddingProvider
-from grover.graph.analyzers._base import ChunkFile
-from grover.ref import Ref
-from grover.search.extractors import (
+from grover.fs.providers.search.extractors import (
     EmbeddableChunk,
     extract_from_chunks,
     extract_from_file,
 )
-from grover.search.types import SearchResult
+from grover.fs.providers.search.types import SearchResult
+from grover.ref import Ref
 
 # ------------------------------------------------------------------
 # Fake provider for fast, deterministic unit tests

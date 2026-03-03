@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from grover.analyzers import AnalyzerRegistry
 from grover.facade.connections import ConnectionMixin
 from grover.facade.context import GroverContext
 from grover.facade.file_ops import FileOpsMixin
@@ -11,7 +12,6 @@ from grover.facade.mounting import MountMixin
 from grover.facade.search_ops import SearchOpsMixin
 from grover.facade.sharing import ShareMixin
 from grover.facade.version_trash import VersionTrashMixin
-from grover.graph.analyzers import AnalyzerRegistry
 from grover.mount.mounts import MountRegistry
 from grover.worker import BackgroundWorker, IndexingMode
 

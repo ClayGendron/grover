@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from grover.graph import RustworkxGraph
-from grover.graph.protocols import SupportsCentrality, SupportsConnectivity, SupportsTraversal
+from grover.fs.providers.graph import RustworkxGraph
+from grover.fs.providers.graph.protocols import (
+    SupportsCentrality,
+    SupportsConnectivity,
+    SupportsTraversal,
+)
 
 # ======================================================================
 # Centrality — PageRank

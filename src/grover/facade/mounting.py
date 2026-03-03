@@ -12,8 +12,8 @@ from grover.fs.exceptions import MountNotFoundError, SchemaIncompatibleError
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsReBAC
+from grover.fs.providers.graph.rustworkx import RustworkxGraph
 from grover.fs.utils import normalize_path
-from grover.graph._rustworkx import RustworkxGraph
 from grover.models.chunks import FileChunk
 from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion

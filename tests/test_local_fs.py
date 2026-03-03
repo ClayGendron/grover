@@ -469,7 +469,7 @@ class TestLocalFSInheritsDatabaseFS:
 
     async def test_has_disk_storage_provider(self, tmp_path: Path):
         """LocalFileSystem creates a DiskStorageProvider."""
-        from grover.fs.providers.disk import DiskStorageProvider
+        from grover.fs.providers.storage.disk import DiskStorageProvider
 
         fs, _ = await _make_local_fs(tmp_path)
         assert isinstance(fs.storage_provider, DiskStorageProvider)

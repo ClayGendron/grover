@@ -6,13 +6,13 @@ from types import MappingProxyType
 
 import pytest
 
-from grover.fs.providers.protocols import GraphProvider
-from grover.graph import RustworkxGraph
-from grover.graph.protocols import (
+from grover.fs.providers.graph import RustworkxGraph
+from grover.fs.providers.graph.protocols import (
     GraphStore,
     SupportsPersistence,
 )
-from grover.graph.types import SubgraphResult, subgraph_result
+from grover.fs.providers.graph.types import SubgraphResult, subgraph_result
+from grover.fs.providers.protocols import GraphProvider
 
 # ======================================================================
 # GraphStore protocol
@@ -119,10 +119,10 @@ class TestSubgraphResult:
 
 class TestNoBackwardAlias:
     def test_no_graph_in_exports(self) -> None:
-        import grover.graph
+        import grover.fs.providers.graph
 
-        assert "Graph" not in grover.graph.__all__
+        assert "Graph" not in grover.fs.providers.graph.__all__
 
     def test_import_graph_raises(self) -> None:
         with pytest.raises(ImportError):
-            from grover.graph import Graph  # type: ignore[attr-defined]  # noqa: F401
+            from grover.fs.providers.graph import Graph  # type: ignore[attr-defined]  # noqa: F401

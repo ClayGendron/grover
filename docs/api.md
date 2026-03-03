@@ -396,7 +396,7 @@ g = Grover(indexing_mode=IndexingMode.MANUAL)
 ### SearchResult (internal)
 
 ```python
-from grover.search.types import SearchResult
+from grover.fs.providers.search.types import SearchResult
 ```
 
 Internal type used by the filesystem's `SearchMethodsMixin` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileSearchCandidate` objects with `VectorEvidence`.
@@ -584,7 +584,7 @@ from grover.fs import (
 ## RustworkxGraph
 
 ```python
-from grover.graph import RustworkxGraph
+from grover.fs.providers.graph import RustworkxGraph
 ```
 
 In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string. Implements the `GraphProvider` protocol plus all capability protocols.
@@ -694,7 +694,7 @@ The graph is a pure in-memory projection. `from_sql()` loads file nodes from `gr
 ### Analyzers
 
 ```python
-from grover.graph.analyzers import (
+from grover.analyzers import (
     Analyzer,           # Protocol
     AnalyzerRegistry,   # Extension → analyzer mapping
     ChunkFile,          # Extracted code chunk
@@ -713,11 +713,11 @@ Built-in analyzers:
 
 ### Graph Protocols
 
-The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` (defined in `fs/providers/protocols.py`) is the core protocol; capability protocols (in `graph/protocols.py`) are opt-in. Check support with `isinstance()`:
+The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` (defined in `fs/providers/protocols.py`) is the core protocol; capability protocols (in `fs/providers/graph/protocols.py`) are opt-in. Check support with `isinstance()`:
 
 ```python
 from grover import GraphProvider
-from grover.graph.protocols import (
+from grover.fs.providers.graph.protocols import (
     SupportsCentrality,      # PageRank, betweenness, closeness, katz, degree
     SupportsConnectivity,    # Weakly/strongly connected components
     SupportsTraversal,       # Ancestors, descendants, topological sort, shortest paths
@@ -736,7 +736,7 @@ if isinstance(g.get_graph(), SupportsCentrality):
 ### SubgraphResult
 
 ```python
-from grover.graph.types import SubgraphResult
+from grover.fs.providers.graph.types import SubgraphResult
 ```
 
 Frozen dataclass returned by subgraph extraction methods. Deeply immutable — `tuple` for sequences, `MappingProxyType` for scores.
@@ -759,7 +759,7 @@ from grover import (
     VectorEntry, IndexConfig, IndexInfo,
     FilterExpression, FilterValue, eq, gt, and_, or_,
 )
-from grover.search.types import SearchResult, VectorHit  # internal types
+from grover.fs.providers.search.types import SearchResult, VectorHit  # internal types
 ```
 
 ### SearchProvider Protocol
@@ -805,14 +805,14 @@ class EmbeddingProvider(Protocol):
 **OpenAIEmbedding** — OpenAI API. Requires the `openai` extra.
 
 ```python
-from grover.search.providers import OpenAIEmbedding
+from grover.fs.providers.embedding import OpenAIEmbedding
 provider = OpenAIEmbedding(model="text-embedding-3-small", dimensions=384)
 ```
 
 **LangChainEmbedding** — wraps any LangChain `Embeddings` instance. Requires the `langchain` extra.
 
 ```python
-from grover.search.providers import LangChainEmbedding
+from grover.fs.providers.embedding import LangChainEmbedding
 provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
 ```
 
@@ -837,7 +837,7 @@ All built-in stores implement `SearchProvider`. Pass them to `add_mount(..., sea
 **LocalVectorStore** — in-process usearch HNSW index for local development.
 
 ```python
-from grover.search.stores import LocalVectorStore
+from grover.fs.providers.search import LocalVectorStore
 store = LocalVectorStore(dimension=384, metric="cosine")
 store.dimension  # 384
 ```
@@ -845,7 +845,7 @@ store.dimension  # 384
 **PineconeVectorStore** — Pinecone cloud vector database. Requires the `pinecone` extra.
 
 ```python
-from grover.search.stores import PineconeVectorStore
+from grover.fs.providers.search import PineconeVectorStore
 store = PineconeVectorStore(index_name="my-index", api_key="...", namespace="")
 await store.connect()
 ```
@@ -853,7 +853,7 @@ await store.connect()
 **DatabricksVectorStore** — Databricks Vector Search (Direct Vector Access). Requires the `databricks` extra.
 
 ```python
-from grover.search.stores import DatabricksVectorStore
+from grover.fs.providers.search import DatabricksVectorStore
 store = DatabricksVectorStore(
     index_name="catalog.schema.my_index",
     endpoint_name="my_endpoint",

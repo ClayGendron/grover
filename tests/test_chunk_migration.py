@@ -11,7 +11,7 @@ import pytest
 from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.protocol import SupportsFileChunks
-from grover.search.stores.local import LocalVectorStore
+from grover.fs.providers.search.local import LocalVectorStore
 
 if TYPE_CHECKING:
     from pathlib import Path

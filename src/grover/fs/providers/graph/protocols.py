@@ -19,7 +19,7 @@ from grover.fs.providers.protocols import GraphProvider
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.graph.types import SubgraphResult
+    from grover.fs.providers.graph.types import SubgraphResult
 
 # Canonical protocol lives in fs/providers/protocols.py.
 # Re-exported here for backward compatibility during transition.

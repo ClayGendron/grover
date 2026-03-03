@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsConnections, SupportsFileChunks, SupportsSearch
-from grover.search.extractors import extract_from_chunks, extract_from_file
+from grover.fs.providers.search.extractors import extract_from_chunks, extract_from_file
 from grover.types import ListDirEvidence
 
 if TYPE_CHECKING:

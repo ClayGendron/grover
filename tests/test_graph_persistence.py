@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from grover.graph import RustworkxGraph
+from grover.fs.providers.graph import RustworkxGraph
 from grover.models.connections import FileConnection
 from grover.models.files import File
 

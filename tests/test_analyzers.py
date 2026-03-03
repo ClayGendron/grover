@@ -7,7 +7,7 @@ import textwrap
 
 import pytest
 
-from grover.graph.analyzers import (
+from grover.analyzers import (
     Analyzer,
     AnalyzerRegistry,
     ChunkFile,
@@ -395,7 +395,7 @@ class TestPythonEdgeCases:
 
 class TestJSStructures:
     def test_function_declaration(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = "function greet(name) { return 'hello ' + name; }\n"
         analyzer = JavaScriptAnalyzer()
@@ -404,7 +404,7 @@ class TestJSStructures:
         assert "greet" in names
 
     def test_arrow_function(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = "const add = (a, b) => a + b;\n"
         analyzer = JavaScriptAnalyzer()
@@ -413,7 +413,7 @@ class TestJSStructures:
         assert "add" in names
 
     def test_class_and_methods(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = textwrap.dedent("""\
             class Greeter {
@@ -433,7 +433,7 @@ class TestJSStructures:
         assert "Greeter.greet" in names
 
     def test_inheritance(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = "class Dog extends Animal { bark() {} }\n"
         analyzer = JavaScriptAnalyzer()
@@ -443,7 +443,7 @@ class TestJSStructures:
         assert inherits[0].target == "Animal"
 
     def test_imports(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = textwrap.dedent("""\
             import { foo } from './utils';
@@ -457,7 +457,7 @@ class TestJSStructures:
         assert "/node_modules/lodash.js" in targets
 
     def test_contains_edges(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = "function a() {}\nfunction b() {}\n"
         analyzer = JavaScriptAnalyzer()
@@ -467,7 +467,7 @@ class TestJSStructures:
         assert all(e.source == "/src/app.js" for e in contains)
 
     def test_exported_function(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         code = "export function handler(req, res) {}\n"
         analyzer = JavaScriptAnalyzer()
@@ -483,7 +483,7 @@ class TestJSStructures:
 
 class TestJSGraceful:
     def test_returns_empty_without_treesitter(self):
-        from grover.graph.analyzers import javascript
+        from grover.analyzers import javascript
 
         orig = javascript._HAS_TREESITTER
         javascript._HAS_TREESITTER = False
@@ -498,14 +498,14 @@ class TestJSGraceful:
             javascript.JavaScriptAnalyzer._warned = False
 
     def test_logs_warning_once(self, caplog):
-        from grover.graph.analyzers import javascript
+        from grover.analyzers import javascript
 
         orig = javascript._HAS_TREESITTER
         javascript._HAS_TREESITTER = False
         javascript.JavaScriptAnalyzer._warned = False
         try:
             analyzer = javascript.JavaScriptAnalyzer()
-            with caplog.at_level("WARNING", logger="grover.graph.analyzers.javascript"):
+            with caplog.at_level("WARNING", logger="grover.analyzers.javascript"):
                 analyzer.analyze_file("/a.js", "x")
                 analyzer.analyze_file("/b.js", "y")
             warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -522,19 +522,19 @@ class TestJSGraceful:
 
 class TestTSAnalyzer:
     def test_extensions(self):
-        from grover.graph.analyzers.javascript import TypeScriptAnalyzer
+        from grover.analyzers.javascript import TypeScriptAnalyzer
 
         ts = TypeScriptAnalyzer()
         assert ".ts" in ts.extensions
         assert ".tsx" in ts.extensions
 
     def test_satisfies_protocol(self):
-        from grover.graph.analyzers.javascript import TypeScriptAnalyzer
+        from grover.analyzers.javascript import TypeScriptAnalyzer
 
         assert isinstance(TypeScriptAnalyzer(), Analyzer)
 
     def test_analyzes_typescript(self):
-        from grover.graph.analyzers.javascript import TypeScriptAnalyzer
+        from grover.analyzers.javascript import TypeScriptAnalyzer
 
         code = textwrap.dedent("""\
             function greet(name: string): string {
@@ -554,7 +554,7 @@ class TestTSAnalyzer:
 
 class TestGoStructures:
     def test_function(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -569,7 +569,7 @@ class TestGoStructures:
         assert "helper" in names
 
     def test_type_declaration(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -584,7 +584,7 @@ class TestGoStructures:
         assert "Server" in names
 
     def test_method_with_receiver(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -598,7 +598,7 @@ class TestGoStructures:
         assert "Server.Start" in names
 
     def test_imports_single(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -611,7 +611,7 @@ class TestGoStructures:
         assert imports[0].target == "fmt"
 
     def test_imports_grouped(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -628,7 +628,7 @@ class TestGoStructures:
         assert "net/http" in targets
 
     def test_contains_edges(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -641,7 +641,7 @@ class TestGoStructures:
         assert len(contains) == 2
 
     def test_method_metadata(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -655,7 +655,7 @@ class TestGoStructures:
         assert method_of[0].metadata["receiver"] == "S"
 
     def test_skips_init(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         code = textwrap.dedent("""\
             package main
@@ -676,7 +676,7 @@ class TestGoStructures:
 
 class TestGoGraceful:
     def test_returns_empty_without_treesitter(self):
-        from grover.graph.analyzers import go
+        from grover.analyzers import go
 
         orig = go._HAS_TREESITTER
         go._HAS_TREESITTER = False
@@ -691,14 +691,14 @@ class TestGoGraceful:
             go.GoAnalyzer._warned = False
 
     def test_logs_warning_once(self, caplog):
-        from grover.graph.analyzers import go
+        from grover.analyzers import go
 
         orig = go._HAS_TREESITTER
         go._HAS_TREESITTER = False
         go.GoAnalyzer._warned = False
         try:
             analyzer = go.GoAnalyzer()
-            with caplog.at_level("WARNING", logger="grover.graph.analyzers.go"):
+            with caplog.at_level("WARNING", logger="grover.analyzers.go"):
                 analyzer.analyze_file("/a.go", "package main")
                 analyzer.analyze_file("/b.go", "package main")
             warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -833,7 +833,7 @@ class TestExpressIntegration:
             pytest.skip("Express repo not cloned")
 
     def test_analyze_express(self):
-        from grover.graph.analyzers.javascript import JavaScriptAnalyzer
+        from grover.analyzers.javascript import JavaScriptAnalyzer
 
         # Express main entry
         content = (FIXTURES_DIR / "express" / "lib" / "express.js").read_text()
@@ -852,7 +852,7 @@ class TestChiIntegration:
             pytest.skip("chi repo not cloned")
 
     def test_analyze_chi_mux(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         content = (FIXTURES_DIR / "chi" / "mux.go").read_text()
         analyzer = GoAnalyzer()
@@ -860,7 +860,7 @@ class TestChiIntegration:
         assert len(chunks) > 0
 
     def test_method_scoping(self):
-        from grover.graph.analyzers.go import GoAnalyzer
+        from grover.analyzers.go import GoAnalyzer
 
         content = (FIXTURES_DIR / "chi" / "mux.go").read_text()
         analyzer = GoAnalyzer()

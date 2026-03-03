@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.analyzers import AnalyzerRegistry
     from grover.fs.providers.protocols import GraphProvider
-    from grover.graph.analyzers import AnalyzerRegistry
     from grover.mount import Mount
     from grover.mount.mounts import MountRegistry
     from grover.types import FileInfoResult

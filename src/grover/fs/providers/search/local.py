@@ -10,8 +10,8 @@ from typing import Any
 import numpy as np
 from usearch.index import Index
 
-from grover.search.filters import FilterExpression, compile_dict
-from grover.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
+from grover.fs.providers.search.filters import FilterExpression, compile_dict
+from grover.fs.providers.search.types import DeleteResult, UpsertResult, VectorEntry, VectorHit
 from grover.types.search import (
     FileSearchResult,
     LexicalSearchResult,

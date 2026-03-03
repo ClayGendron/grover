@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 import posixpath
 
-from grover.graph._rustworkx import RustworkxGraph
-from grover.graph.analyzers._base import (
+from grover.analyzers._base import (
     AnalysisResult,
     Analyzer,
     ChunkFile,
@@ -14,7 +13,7 @@ from grover.graph.analyzers._base import (
     build_chunk_path,
     extract_lines,
 )
-from grover.graph.analyzers.python import PythonAnalyzer
+from grover.analyzers.python import PythonAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class AnalyzerRegistry:
 
         # JS/TS — depends on tree-sitter
         try:
-            from grover.graph.analyzers.javascript import (
+            from grover.analyzers.javascript import (
                 JavaScriptAnalyzer,
                 TypeScriptAnalyzer,
             )
@@ -45,7 +44,7 @@ class AnalyzerRegistry:
 
         # Go — depends on tree-sitter
         try:
-            from grover.graph.analyzers.go import GoAnalyzer
+            from grover.analyzers.go import GoAnalyzer
 
             self.register(GoAnalyzer())
         except Exception:
@@ -87,7 +86,6 @@ __all__ = [
     "ChunkFile",
     "EdgeData",
     "PythonAnalyzer",
-    "RustworkxGraph",
     "build_chunk_path",
     "extract_lines",
     "get_analyzer",

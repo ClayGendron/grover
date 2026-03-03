@@ -9,9 +9,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from grover.fs.providers.search.types import DeleteResult as SearchDeleteResult
+    from grover.fs.providers.search.types import UpsertResult, VectorEntry
     from grover.ref import Ref
-    from grover.search.types import DeleteResult as SearchDeleteResult
-    from grover.search.types import UpsertResult, VectorEntry
     from grover.types.operations import (
         ChunkListResult,
         ChunkResult,

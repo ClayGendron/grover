@@ -18,6 +18,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from grover.fs.utils import (
+    compile_glob,
+    guess_mime_type,
+    has_binary_extension,
+    is_binary_file,
+    normalize_path,
+    validate_path,
+)
 from grover.types.operations import FileInfoResult, ReconcileResult
 from grover.types.search import (
     FileSearchCandidate,
@@ -32,15 +40,6 @@ from grover.types.search import (
 )
 from grover.types.search import (
     LineMatch as SearchLineMatch,
-)
-
-from ..utils import (
-    compile_glob,
-    guess_mime_type,
-    has_binary_extension,
-    is_binary_file,
-    normalize_path,
-    validate_path,
 )
 
 logger = logging.getLogger(__name__)

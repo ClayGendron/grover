@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.fs.providers.search.extractors import EmbeddableChunk
+    from grover.fs.providers.search.types import SearchResult
     from grover.fs.sharing import SharingService
-    from grover.search.extractors import EmbeddableChunk
-    from grover.search.types import SearchResult
     from grover.types.operations import (
         ChunkListResult,
         ChunkResult,

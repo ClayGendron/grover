@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from grover.graph.analyzers._base import ChunkFile
+    from grover.analyzers._base import ChunkFile
 
 
 @dataclass(frozen=True, slots=True)

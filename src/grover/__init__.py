@@ -18,11 +18,8 @@ from grover.fs.providers import (
     StorageProvider,
     VersionProvider,
 )
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.graph.types import SubgraphResult
-from grover.mount import Mount
-from grover.ref import Ref
-from grover.search.filters import (
+from grover.fs.providers.graph.types import SubgraphResult
+from grover.fs.providers.search.filters import (
     FilterExpression,
     FilterValue,
     and_,
@@ -37,7 +34,7 @@ from grover.search.filters import (
     not_in,
     or_,
 )
-from grover.search.protocols import (
+from grover.fs.providers.search.protocols import (
     SupportsHybridSearch,
     SupportsIndexLifecycle,
     SupportsMetadataFilter,
@@ -47,16 +44,19 @@ from grover.search.protocols import (
     SupportsTextSearch,
     VectorStore,
 )
-from grover.search.types import (
+from grover.fs.providers.search.types import (
     DeleteResult as SearchDeleteResult,
 )
-from grover.search.types import (
+from grover.fs.providers.search.types import (
     IndexConfig,
     IndexInfo,
     SearchResult,
     UpsertResult,
     VectorEntry,
 )
+from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.mount import Mount
+from grover.ref import Ref
 from grover.types import (
     ChunkListResult,
     ChunkResult,

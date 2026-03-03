@@ -9,7 +9,7 @@ from sqlmodel import SQLModel, select
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.dialect import upsert_file
-from grover.graph import RustworkxGraph
+from grover.fs.providers.graph import RustworkxGraph
 from grover.models.connections import FileConnection
 from grover.models.files import File, FileBase, FileVersionBase
 

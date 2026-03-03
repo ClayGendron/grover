@@ -23,7 +23,7 @@ from grover._grover_async import GroverAsync
 from grover.fs.connections import ConnectionService
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
-from grover.graph import RustworkxGraph
+from grover.fs.providers.graph import RustworkxGraph
 from grover.models.connections import FileConnection
 from grover.types import ConnectionResult
 

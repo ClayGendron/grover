@@ -13,15 +13,15 @@ import inspect
 import logging
 from typing import TYPE_CHECKING
 
+from grover.fs.providers.search.types import SearchResult, VectorEntry
 from grover.ref import Ref
-from grover.search.types import SearchResult, VectorEntry
 from grover.types.search import VectorSearchResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.search.extractors import EmbeddableChunk
-    from grover.search.stores.local import LocalVectorStore
+    from grover.fs.providers.search.extractors import EmbeddableChunk
+    from grover.fs.providers.search.local import LocalVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +387,7 @@ class SearchMethodsMixin:
 
     def _search_get_local_store(self) -> LocalVectorStore | None:
         """Return the store as a LocalVectorStore if it is one."""
-        from grover.search.stores.local import LocalVectorStore
+        from grover.fs.providers.search.local import LocalVectorStore
 
         search = getattr(self, "search_provider", None)
         if isinstance(search, LocalVectorStore):

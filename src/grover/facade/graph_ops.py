@@ -13,7 +13,7 @@ from grover.types import (
 
 if TYPE_CHECKING:
     from grover.facade.context import GroverContext
-    from grover.graph.protocols import GraphStore
+    from grover.fs.providers.graph.protocols import GraphStore
 
 
 class GraphOpsMixin:
@@ -79,7 +79,7 @@ class GraphOpsMixin:
         Raises :class:`~grover.fs.exceptions.CapabilityNotSupportedError` if
         the graph backend does not support centrality algorithms.
         """
-        from grover.graph.protocols import SupportsCentrality
+        from grover.fs.providers.graph.protocols import SupportsCentrality
 
         graph = self._ctx.resolve_graph_any(path)
         if not isinstance(graph, SupportsCentrality):
@@ -107,7 +107,7 @@ class GraphOpsMixin:
 
     def ancestors(self, path: str) -> GraphResult:
         """All transitive predecessors of *path* in the knowledge graph."""
-        from grover.graph.protocols import SupportsTraversal
+        from grover.fs.providers.graph.protocols import SupportsTraversal
 
         graph = self._ctx.resolve_graph(path)
         if not isinstance(graph, SupportsTraversal):
@@ -118,7 +118,7 @@ class GraphOpsMixin:
 
     def descendants(self, path: str) -> GraphResult:
         """All transitive successors of *path* in the knowledge graph."""
-        from grover.graph.protocols import SupportsTraversal
+        from grover.fs.providers.graph.protocols import SupportsTraversal
 
         graph = self._ctx.resolve_graph(path)
         if not isinstance(graph, SupportsTraversal):
@@ -134,7 +134,7 @@ class GraphOpsMixin:
         max_size: int = 50,
     ) -> GraphResult:
         """Extract the subgraph connecting *paths* via shortest paths."""
-        from grover.graph.protocols import SupportsSubgraph
+        from grover.fs.providers.graph.protocols import SupportsSubgraph
 
         graph = self._ctx.resolve_graph_any(paths[0] if paths else None)
         if not isinstance(graph, SupportsSubgraph):
@@ -152,7 +152,7 @@ class GraphOpsMixin:
         edge_types: list[str] | None = None,
     ) -> GraphResult:
         """Extract the neighborhood subgraph around *path*."""
-        from grover.graph.protocols import SupportsSubgraph
+        from grover.fs.providers.graph.protocols import SupportsSubgraph
 
         graph = self._ctx.resolve_graph(path)
         if not isinstance(graph, SupportsSubgraph):
@@ -168,7 +168,7 @@ class GraphOpsMixin:
 
     def find_nodes(self, *, path: str | None = None, **attrs: object) -> GraphResult:
         """Find graph nodes matching all attribute predicates."""
-        from grover.graph.protocols import SupportsFiltering
+        from grover.fs.providers.graph.protocols import SupportsFiltering
 
         graph = self._ctx.resolve_graph_any(path)
         if not isinstance(graph, SupportsFiltering):

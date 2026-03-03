@@ -7,8 +7,8 @@ import logging
 import os
 from typing import Any
 
-from grover.search.filters import FilterExpression, compile_databricks
-from grover.search.types import (
+from grover.fs.providers.search.filters import FilterExpression, compile_databricks
+from grover.fs.providers.search.types import (
     DeleteResult,
     IndexConfig,
     IndexInfo,
