@@ -39,7 +39,7 @@ class TestVerifyChainHealthy:
                 await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
             ).scalar_one()
 
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is True
             assert result.versions_checked == 6
@@ -58,7 +58,7 @@ class TestVerifyChainHealthy:
                 await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
             ).scalar_one()
 
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is True
             assert result.versions_checked == 1
@@ -90,7 +90,7 @@ class TestVerifyChainHealthy:
                 await session.delete(v)
             await session.flush()
 
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is True
             assert result.versions_checked == 0
@@ -110,7 +110,7 @@ class TestVerifyChainHealthy:
             ).scalar_one()
 
             total_versions = SNAPSHOT_INTERVAL + 1
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is True
             assert result.versions_checked == total_versions
@@ -147,7 +147,7 @@ class TestVerifyChainCorrupted:
             session.add(v2_rec)
             await session.flush()
 
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is False
             assert result.versions_failed > 0
@@ -186,7 +186,7 @@ class TestVerifyChainCorrupted:
             session.add(v1_rec)
             await session.flush()
 
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is False
             failed_versions = {e.version for e in result.errors}
@@ -219,7 +219,7 @@ class TestVerifyChainCorrupted:
             session.add(v1_rec)
             await session.flush()
 
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is False
             assert result.versions_failed == 1
@@ -255,7 +255,7 @@ class TestVerifyChainCorrupted:
             await session.flush()
 
             # Should NOT raise — errors are captured in the result
-            result = await fs.versioning.verify_chain(session, file_rec)
+            result = await fs.version_provider.verify_chain(session, file_rec)
 
             assert result.success is False
             assert result.versions_checked == 1  # only v2 remains

@@ -43,8 +43,8 @@ if TYPE_CHECKING:
     from grover.types.operations import FileInfoResult
 
     from .directories import DirectoryService
+    from .providers.protocols import VersionProvider
     from .sharing import SharingService
-    from .versioning import DefaultVersionProvider
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
     ContentWriter = Callable[[str, str, AsyncSession], Awaitable[None]]
@@ -79,7 +79,7 @@ async def check_external_edit(
     current_content: str,
     session: AsyncSession,
     *,
-    versioning: DefaultVersionProvider,
+    versioning: VersionProvider,
 ) -> bool:
     """Detect and record an external edit as a synthetic snapshot version.
 
@@ -210,7 +210,7 @@ async def write_file(
     session: AsyncSession,
     *,
     get_file_record: GetFileRecord,
-    versioning: DefaultVersionProvider,
+    versioning: VersionProvider,
     directories: DirectoryService,
     file_model: type[FileBase],
     read_content: ContentReader,
@@ -336,7 +336,7 @@ async def edit_file(
     session: AsyncSession,
     *,
     get_file_record: GetFileRecord,
-    versioning: DefaultVersionProvider,
+    versioning: VersionProvider,
     read_content: ContentReader,
     write_content: ContentWriter,
 ) -> EditResult:
@@ -402,7 +402,7 @@ async def delete_file(
     session: AsyncSession,
     *,
     get_file_record: GetFileRecord,
-    versioning: DefaultVersionProvider,
+    versioning: VersionProvider,
     file_model: type[FileBase],
     delete_content: ContentDeleter,
 ) -> DeleteResult:
@@ -468,7 +468,7 @@ async def move_file(
     session: AsyncSession,
     *,
     get_file_record: GetFileRecord,
-    versioning: DefaultVersionProvider,
+    versioning: VersionProvider,
     directories: DirectoryService,
     file_model: type[FileBase],
     read_content: ContentReader,

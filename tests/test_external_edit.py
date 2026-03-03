@@ -315,7 +315,7 @@ class TestCheckExternalEditUnit:
                 file,
                 "content\n",
                 session,
-                versioning=fs.versioning,
+                versioning=fs.version_provider,
             )
             assert detected is False
             assert file.current_version == original_version
@@ -334,7 +334,7 @@ class TestCheckExternalEditUnit:
                 file,
                 "different content\n",
                 session,
-                versioning=fs.versioning,
+                versioning=fs.version_provider,
             )
             assert detected is True
             assert file.current_version == original_version + 1
@@ -357,7 +357,7 @@ class TestCheckExternalEditUnit:
                 file,
                 "anything\n",
                 session,
-                versioning=fs.versioning,
+                versioning=fs.version_provider,
             )
             assert detected is False
         await engine.dispose()

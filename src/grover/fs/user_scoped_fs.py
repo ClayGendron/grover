@@ -52,7 +52,14 @@ if TYPE_CHECKING:
 
     from grover.models.chunks import FileChunkBase
     from grover.models.files import FileBase, FileVersionBase
+    from grover.search.protocols import EmbeddingProvider, VectorStore
 
+    from .providers.protocols import (
+        ChunkProvider,
+        GraphProvider,
+        StorageProvider,
+        VersionProvider,
+    )
     from .sharing import SharingService
 
 logger = logging.getLogger(__name__)
@@ -79,6 +86,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
         file_version_model: type[FileVersionBase] | None = None,
         file_chunk_model: type[FileChunkBase] | None = None,
         schema: str | None = None,
+        storage_provider: StorageProvider | None = None,
+        graph_provider: GraphProvider | None = None,
+        search_provider: VectorStore | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        version_provider: VersionProvider | None = None,
+        chunk_provider: ChunkProvider | None = None,
     ) -> None:
         super().__init__(
             dialect=dialect,
@@ -86,6 +99,12 @@ class UserScopedFileSystem(DatabaseFileSystem):
             file_version_model=file_version_model,
             file_chunk_model=file_chunk_model,
             schema=schema,
+            storage_provider=storage_provider,
+            graph_provider=graph_provider,
+            search_provider=search_provider,
+            embedding_provider=embedding_provider,
+            version_provider=version_provider,
+            chunk_provider=chunk_provider,
         )
         self._sharing = sharing
 

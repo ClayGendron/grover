@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from grover.models.files import FileBase
 
-    from .versioning import DefaultVersionProvider
+    from .providers.protocols import VersionProvider
 
     ContentDeleter = Callable[[str, AsyncSession], Awaitable[None]]
     GetFile = Callable[[AsyncSession, str, bool], Awaitable[FileBase | None]]
@@ -28,14 +28,14 @@ if TYPE_CHECKING:
 class TrashService:
     """Trash management: list, restore, and empty.
 
-    Depends on ``DefaultVersionProvider`` for cleaning up version records
+    Depends on a ``VersionProvider`` for cleaning up version records
     and a content-delete callback for removing content from storage.
     """
 
     def __init__(
         self,
         file_model: type[FileBase],
-        versioning: DefaultVersionProvider,
+        versioning: VersionProvider,
         delete_content_cb: ContentDeleter,
     ) -> None:
         self._file_model = file_model

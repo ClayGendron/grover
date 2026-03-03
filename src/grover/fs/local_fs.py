@@ -147,10 +147,10 @@ class LocalFileSystem:
 
         # Composed services (renamed: VersioningService → DefaultVersionProvider,
         # ChunkService → DefaultChunkProvider, MetadataService → absorbed)
-        self.versioning = DefaultVersionProvider(fm, fvm)
+        self.version_provider = DefaultVersionProvider(fm, fvm)
         self.directories = DirectoryService(fm, "sqlite", schema)
-        self.trash = TrashService(fm, self.versioning, self._delete_content)
-        self.chunks = DefaultChunkProvider(fcm)
+        self.trash = TrashService(fm, self.version_provider, self._delete_content)
+        self.chunk_provider = DefaultChunkProvider(fcm)
         self.connections = ConnectionService(FileConnection)
 
     @property
@@ -453,7 +453,7 @@ class LocalFileSystem:
             overwrite,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             directories=self.directories,
             file_model=self._file_model,
             read_content=self._read_content,
@@ -481,7 +481,7 @@ class LocalFileSystem:
             created_by,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             read_content=self._read_content,
             write_content=self._write_content,
         )
@@ -517,7 +517,7 @@ class LocalFileSystem:
                     True,
                     sess,
                     get_file_record=self._get_file_record,
-                    versioning=self.versioning,
+                    versioning=self.version_provider,
                     directories=self.directories,
                     file_model=self._file_model,
                     read_content=self._read_content,
@@ -529,7 +529,7 @@ class LocalFileSystem:
             permanent,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             file_model=self._file_model,
             delete_content=self._delete_content,
         )
@@ -692,7 +692,7 @@ class LocalFileSystem:
             dest,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             directories=self.directories,
             file_model=self._file_model,
             read_content=self._read_content,
@@ -1131,7 +1131,7 @@ class LocalFileSystem:
         file = await self._get_file_record(sess, path)
         if not file:
             return VersionResult(success=False, message=f"File not found: {path}")
-        versions = await self.versioning.list_versions(sess, file)
+        versions = await self.version_provider.list_versions(sess, file)
         candidates = [
             FileSearchCandidate(
                 path=f"{path}@{v.version}",
@@ -1171,7 +1171,7 @@ class LocalFileSystem:
                 success=False,
                 message=f"File not found: {path}",
             )
-        content = await self.versioning.get_version_content(sess, file, version)
+        content = await self.version_provider.get_version_content(sess, file, version)
         if content is None:
             return GetVersionContentResult(
                 success=False,
@@ -1227,7 +1227,7 @@ class LocalFileSystem:
                 message=f"File not found: {path}",
                 path=path,
             )
-        return await self.versioning.verify_chain(sess, file)
+        return await self.version_provider.verify_chain(sess, file)
 
     async def verify_all_versions(
         self,
@@ -1245,7 +1245,7 @@ class LocalFileSystem:
         )
         results: list[VerifyVersionResult] = []
         for file in result.scalars().all():
-            results.append(await self.versioning.verify_chain(sess, file))  # noqa: PERF401
+            results.append(await self.version_provider.verify_chain(sess, file))  # noqa: PERF401
         return results
 
     # ------------------------------------------------------------------
@@ -1375,7 +1375,7 @@ class LocalFileSystem:
                         True,
                         sess,
                         get_file_record=self._get_file_record,
-                        versioning=self.versioning,
+                        versioning=self.version_provider,
                         directories=self.directories,
                         file_model=self._file_model,
                         read_content=self._read_content,
@@ -1421,7 +1421,7 @@ class LocalFileSystem:
         session: AsyncSession | None = None,
     ) -> ChunkResult:
         sess = self._require_session(session)
-        return await self.chunks.replace_file_chunks(sess, file_path, chunks)
+        return await self.chunk_provider.replace_file_chunks(sess, file_path, chunks)
 
     async def delete_file_chunks(
         self,
@@ -1430,7 +1430,7 @@ class LocalFileSystem:
         session: AsyncSession | None = None,
     ) -> ChunkResult:
         sess = self._require_session(session)
-        return await self.chunks.delete_file_chunks(sess, file_path)
+        return await self.chunk_provider.delete_file_chunks(sess, file_path)
 
     async def list_file_chunks(
         self,
@@ -1439,7 +1439,7 @@ class LocalFileSystem:
         session: AsyncSession | None = None,
     ) -> ChunkListResult:
         sess = self._require_session(session)
-        return await self.chunks.list_file_chunks(sess, file_path)
+        return await self.chunk_provider.list_file_chunks(sess, file_path)
 
     # ------------------------------------------------------------------
     # Capability: SupportsConnections

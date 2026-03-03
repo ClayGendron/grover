@@ -1,4 +1,4 @@
-"""DatabaseFileSystem — pure SQL storage, stateless, no base class."""
+"""DatabaseFileSystem — pure SQL storage with pluggable providers."""
 
 from __future__ import annotations
 
@@ -13,20 +13,16 @@ from grover.models.chunks import FileChunk
 from grover.models.connections import FileConnection
 from grover.models.files import File, FileVersion
 from grover.types.operations import (
-    ChunkListResult,
-    ChunkResult,
     ConnectionListResult,
     ConnectionResult,
     DeleteResult,
     EditResult,
     ExistsResult,
     FileInfoResult,
-    GetVersionContentResult,
     MkdirResult,
     MoveResult,
     ReadResult,
     RestoreResult,
-    VerifyVersionResult,
     WriteResult,
 )
 from grover.types.search import (
@@ -39,8 +35,6 @@ from grover.types.search import (
     TrashResult,
     TreeEvidence,
     TreeResult,
-    VersionEvidence,
-    VersionResult,
 )
 from grover.types.search import (
     LineMatch as SearchLineMatch,
@@ -50,6 +44,12 @@ from .chunks import DefaultChunkProvider
 from .connections import ConnectionService
 from .directories import DirectoryService
 from .exceptions import GroverError
+from .mixins import (
+    ChunkMethodsMixin,
+    GraphMethodsMixin,
+    SearchMethodsMixin,
+    VersionMethodsMixin,
+)
 from .operations import (
     copy_file,
     delete_file,
@@ -60,6 +60,7 @@ from .operations import (
     read_file,
     write_file,
 )
+from .providers.protocols import SupportsStorageQueries
 from .trash import TrashService
 from .utils import (
     compile_glob,
@@ -76,24 +77,39 @@ if TYPE_CHECKING:
     from grover.models.chunks import FileChunkBase
     from grover.models.connections import FileConnectionBase
     from grover.models.files import FileBase, FileVersionBase
+    from grover.search.protocols import EmbeddingProvider, VectorStore
 
+    from .providers.protocols import (
+        ChunkProvider,
+        GraphProvider,
+        StorageProvider,
+        VersionProvider,
+    )
     from .sharing import SharingService
 
 logger = logging.getLogger(__name__)
 
 
-class DatabaseFileSystem:
-    """Database-backed file system — stateless, sessions provided per-operation.
+class DatabaseFileSystem(
+    GraphMethodsMixin,
+    SearchMethodsMixin,
+    VersionMethodsMixin,
+    ChunkMethodsMixin,
+):
+    """Database-backed file system with pluggable providers.
 
-    All content is stored in the database — portable and consistent
-    across deployments. Works with SQLite, PostgreSQL, MSSQL, etc.
+    All content is stored in the database by default — portable and
+    consistent across deployments.  When a ``storage_provider`` is set,
+    content I/O delegates to it (e.g. ``DiskStorageProvider`` for local disk).
 
-    This class holds only configuration (dialect, models, schema) and
-    composed services. It has no session factory, no mutable state,
-    and is safe for concurrent use from multiple requests.
+    Providers (keyword-only):
 
-    Implements ``StorageBackend``, ``SupportsVersions``, and
-    ``SupportsTrash`` protocols.
+    - ``storage_provider`` — external content I/O + queries (None = DB content)
+    - ``graph_provider`` — in-memory graph (None = no graph)
+    - ``search_provider`` — vector store (None = no vector search)
+    - ``embedding_provider`` — embedding model (None = no embeddings)
+    - ``version_provider`` — version management (default: ``DefaultVersionProvider``)
+    - ``chunk_provider`` — chunk management (default: ``DefaultChunkProvider``)
     """
 
     def __init__(
@@ -104,6 +120,13 @@ class DatabaseFileSystem:
         file_chunk_model: type[FileChunkBase] | None = None,
         file_connection_model: type[FileConnectionBase] | None = None,
         schema: str | None = None,
+        *,
+        storage_provider: StorageProvider | None = None,
+        graph_provider: GraphProvider | None = None,
+        search_provider: VectorStore | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        version_provider: VersionProvider | None = None,
+        chunk_provider: ChunkProvider | None = None,
     ) -> None:
         self.dialect = dialect
         self.schema = schema
@@ -114,13 +137,23 @@ class DatabaseFileSystem:
             file_connection_model or FileConnection
         )
 
-        # Composed services (renamed: VersioningService → DefaultVersionProvider,
-        # ChunkService → DefaultChunkProvider, MetadataService → absorbed)
-        self.versioning = DefaultVersionProvider(self._file_model, self._file_version_model)
+        # Pluggable providers
+        self.storage_provider = storage_provider
+        self.graph_provider = graph_provider
+        self.search_provider = search_provider
+        self.embedding_provider = embedding_provider
+        self.version_provider = version_provider or DefaultVersionProvider(
+            self._file_model, self._file_version_model
+        )
+        self.chunk_provider = chunk_provider or DefaultChunkProvider(self._file_chunk_model)
+
+        # Internal services
         self.directories = DirectoryService(self._file_model, dialect, schema)
-        self.trash = TrashService(self._file_model, self.versioning, self._delete_content)
-        self.chunks = DefaultChunkProvider(self._file_chunk_model)
+        self.trash = TrashService(self._file_model, self.version_provider, self._delete_content)
         self.connections = ConnectionService(self._file_connection_model)
+
+        # Validate search dimensions if both providers set
+        self._validate_search_dimensions()
 
     @property
     def file_model(self) -> type[FileBase]:
@@ -183,6 +216,8 @@ class DatabaseFileSystem:
     # ------------------------------------------------------------------
 
     async def _read_content(self, path: str, session: AsyncSession) -> str | None:
+        if self.storage_provider is not None:
+            return await self.storage_provider.read_content(path)
         path = normalize_path(path)
         model = self._file_model
         result = await session.execute(
@@ -195,6 +230,9 @@ class DatabaseFileSystem:
         return row[0] if row else None
 
     async def _write_content(self, path: str, content: str, session: AsyncSession) -> None:
+        if self.storage_provider is not None:
+            await self.storage_provider.write_content(path, content)
+            return
         path = normalize_path(path)
         model = self._file_model
         result = await session.execute(
@@ -207,7 +245,10 @@ class DatabaseFileSystem:
             file.content = content
 
     async def _delete_content(self, path: str, session: AsyncSession) -> None:
-        pass  # Content lives in the file record
+        if self.storage_provider is not None:
+            await self.storage_provider.delete_content(path)
+            return
+        # Content lives in the file record — no-op for DB storage
 
     # ------------------------------------------------------------------
     # Core protocol: StorageBackend
@@ -251,7 +292,7 @@ class DatabaseFileSystem:
             overwrite,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             directories=self.directories,
             file_model=self._file_model,
             read_content=self._read_content,
@@ -279,7 +320,7 @@ class DatabaseFileSystem:
             created_by,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             read_content=self._read_content,
             write_content=self._write_content,
         )
@@ -298,7 +339,7 @@ class DatabaseFileSystem:
             permanent,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             file_model=self._file_model,
             delete_content=self._delete_content,
         )
@@ -342,6 +383,8 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> ListDirResult:
+        if isinstance(self.storage_provider, SupportsStorageQueries):
+            return await self.storage_provider.storage_list_dir(path)
         sess = self._require_session(session)
         return await list_dir_db(
             path,
@@ -357,6 +400,9 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> ExistsResult:
+        if self.storage_provider is not None:
+            result = await self.storage_provider.exists(path)
+            return ExistsResult(exists=result, path=normalize_path(path))
         sess = self._require_session(session)
         valid, _error = validate_path(path)
         if not valid:
@@ -374,6 +420,8 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> FileInfoResult:
+        if self.storage_provider is not None:
+            return await self.storage_provider.get_info(path)
         sess = self._require_session(session)
         valid, error = validate_path(path)
         if not valid:
@@ -400,7 +448,7 @@ class DatabaseFileSystem:
             dest,
             sess,
             get_file_record=self._get_file_record,
-            versioning=self.versioning,
+            versioning=self.version_provider,
             directories=self.directories,
             file_model=self._file_model,
             read_content=self._read_content,
@@ -440,6 +488,8 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> GlobResult:
+        if isinstance(self.storage_provider, SupportsStorageQueries):
+            return await self.storage_provider.storage_glob(pattern, path)
         sess = self._require_session(session)
         path = normalize_path(path)
 
@@ -477,7 +527,7 @@ class DatabaseFileSystem:
                     model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                 )
             )
-            candidates = list(result.scalars().all())
+            db_files = list(result.scalars().all())
         else:
             # Fall back: load all non-deleted files under path
             if path == "/":
@@ -493,12 +543,12 @@ class DatabaseFileSystem:
                         model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
                     )
                 )
-            candidates = list(result.scalars().all())
+            db_files = list(result.scalars().all())
 
         # Post-filter with authoritative match (compile once for all candidates)
         glob_regex = compile_glob(pattern, path)
         matched = [
-            f for f in candidates if glob_regex is not None and glob_regex.match(f.path) is not None
+            f for f in db_files if glob_regex is not None and glob_regex.match(f.path) is not None
         ]
 
         candidates: list[FileSearchCandidate] = []
@@ -544,6 +594,21 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> GrepResult:
+        if isinstance(self.storage_provider, SupportsStorageQueries):
+            return await self.storage_provider.storage_grep(
+                pattern,
+                path,
+                glob_filter=glob_filter,
+                case_sensitive=case_sensitive,
+                fixed_string=fixed_string,
+                invert=invert,
+                word_match=word_match,
+                context_lines=context_lines,
+                max_results=max_results,
+                max_results_per_file=max_results_per_file,
+                count_only=count_only,
+                files_only=files_only,
+            )
         sess = self._require_session(session)
         path = normalize_path(path)
         context_lines = max(0, context_lines)
@@ -698,6 +763,8 @@ class DatabaseFileSystem:
         session: AsyncSession | None = None,
         user_id: str | None = None,
     ) -> TreeResult:
+        if isinstance(self.storage_provider, SupportsStorageQueries):
+            return await self.storage_provider.storage_tree(path, max_depth=max_depth)
         sess = self._require_session(session)
         path = normalize_path(path)
 
@@ -767,139 +834,6 @@ class DatabaseFileSystem:
         )
 
     # ------------------------------------------------------------------
-    # Capability: SupportsVersions
-    # ------------------------------------------------------------------
-
-    async def list_versions(
-        self,
-        path: str,
-        *,
-        session: AsyncSession | None = None,
-        user_id: str | None = None,
-    ) -> VersionResult:
-        sess = self._require_session(session)
-        path = normalize_path(path)
-        file = await self._get_file_record(sess, path)
-        if not file:
-            return VersionResult(success=False, message=f"File not found: {path}")
-        versions = await self.versioning.list_versions(sess, file)
-        candidates = [
-            FileSearchCandidate(
-                path=f"{path}@{v.version}",
-                evidence=[
-                    VersionEvidence(
-                        strategy="version",
-                        path=path,
-                        version=v.version,
-                        content_hash=v.content_hash,
-                        size_bytes=v.size_bytes,
-                        created_at=v.created_at,
-                        created_by=v.created_by,
-                    )
-                ],
-            )
-            for v in versions
-        ]
-        return VersionResult(
-            success=True,
-            message=f"Found {len(versions)} version(s)",
-            candidates=candidates,
-        )
-
-    async def get_version_content(
-        self,
-        path: str,
-        version: int,
-        *,
-        session: AsyncSession | None = None,
-        user_id: str | None = None,
-    ) -> GetVersionContentResult:
-        sess = self._require_session(session)
-        path = normalize_path(path)
-        file = await self._get_file_record(sess, path)
-        if not file:
-            return GetVersionContentResult(
-                success=False,
-                message=f"File not found: {path}",
-            )
-        content = await self.versioning.get_version_content(sess, file, version)
-        if content is None:
-            return GetVersionContentResult(
-                success=False,
-                message=f"Version {version} not found for {path}",
-            )
-        return GetVersionContentResult(success=True, message="OK", content=content)
-
-    async def restore_version(
-        self,
-        path: str,
-        version: int,
-        *,
-        session: AsyncSession | None = None,
-        user_id: str | None = None,
-    ) -> RestoreResult:
-        sess = self._require_session(session)
-        path = normalize_path(path)
-        vc_result = await self.get_version_content(path, version, session=sess)
-        if not vc_result.success or vc_result.content is None:
-            return RestoreResult(
-                success=False,
-                message=f"Version {version} not found for {path}",
-            )
-
-        write_result = await self.write(
-            path,
-            vc_result.content,
-            created_by="restore",
-            session=sess,
-        )
-
-        return RestoreResult(
-            success=True,
-            message=f"Restored {path} to version {version}",
-            path=path,
-            restored_version=version,
-            version=write_result.version,
-        )
-
-    async def verify_versions(
-        self,
-        path: str,
-        *,
-        session: AsyncSession | None = None,
-        user_id: str | None = None,
-    ) -> VerifyVersionResult:
-        sess = self._require_session(session)
-        path = normalize_path(path)
-        file = await self._get_file_record(sess, path)
-        if not file:
-            return VerifyVersionResult(
-                success=False,
-                message=f"File not found: {path}",
-                path=path,
-            )
-        return await self.versioning.verify_chain(sess, file)
-
-    async def verify_all_versions(
-        self,
-        *,
-        session: AsyncSession | None = None,
-        user_id: str | None = None,
-    ) -> list[VerifyVersionResult]:
-        sess = self._require_session(session)
-        model = self._file_model
-        result = await sess.execute(
-            select(model).where(
-                model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]
-                model.is_directory.is_(False),  # type: ignore[union-attr]
-            )
-        )
-        results: list[VerifyVersionResult] = []
-        for file in result.scalars().all():
-            results.append(await self.versioning.verify_chain(sess, file))  # noqa: PERF401
-        return results
-
-    # ------------------------------------------------------------------
     # Capability: SupportsTrash
     # ------------------------------------------------------------------
 
@@ -935,38 +869,6 @@ class DatabaseFileSystem:
     ) -> DeleteResult:
         sess = self._require_session(session)
         return await self.trash.empty_trash(sess, owner_id=owner_id)
-
-    # ------------------------------------------------------------------
-    # Capability: SupportsFileChunks
-    # ------------------------------------------------------------------
-
-    async def replace_file_chunks(
-        self,
-        file_path: str,
-        chunks: list[dict],
-        *,
-        session: AsyncSession | None = None,
-    ) -> ChunkResult:
-        sess = self._require_session(session)
-        return await self.chunks.replace_file_chunks(sess, file_path, chunks)
-
-    async def delete_file_chunks(
-        self,
-        file_path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> ChunkResult:
-        sess = self._require_session(session)
-        return await self.chunks.delete_file_chunks(sess, file_path)
-
-    async def list_file_chunks(
-        self,
-        file_path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> ChunkListResult:
-        sess = self._require_session(session)
-        return await self.chunks.list_file_chunks(sess, file_path)
 
     # ------------------------------------------------------------------
     # Capability: SupportsConnections
