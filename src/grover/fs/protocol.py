@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         ShareSearchResult,
         TrashResult,
         TreeResult,
+        VectorSearchResult,
         VersionResult,
     )
 
@@ -375,9 +376,9 @@ class SupportsSearch(Protocol):
         session: AsyncSession | None = None,
     ) -> None: ...
 
-    async def search_query(self, query: str, k: int = 10) -> list[SearchResult]: ...
+    async def vector_search(self, query: str, k: int = 10) -> VectorSearchResult: ...
 
-    async def lexical_search_query(
+    async def lexical_search(
         self,
         query: str,
         *,

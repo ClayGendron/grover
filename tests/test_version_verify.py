@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.diff import SNAPSHOT_INTERVAL
+from grover.fs.providers.versioning import SNAPSHOT_INTERVAL
 from grover.models.files import FileVersion
 from grover.types.operations import VerifyVersionResult, VersionChainError
 
@@ -36,7 +36,7 @@ class TestVerifyChainHealthy:
                 await fs.write("/f.py", f"version {i}\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             result = await fs.version_provider.verify_chain(session, file_rec)
@@ -55,7 +55,7 @@ class TestVerifyChainHealthy:
             await fs.write("/f.py", "only version\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             result = await fs.version_provider.verify_chain(session, file_rec)
@@ -73,7 +73,7 @@ class TestVerifyChainHealthy:
             # Create a file, then delete all its version records manually
             await fs.write("/f.py", "content\n", session=session)
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             # Delete all version records
@@ -106,7 +106,7 @@ class TestVerifyChainHealthy:
                 await fs.write("/f.py", f"v{i}\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             total_versions = SNAPSHOT_INTERVAL + 1
@@ -131,7 +131,7 @@ class TestVerifyChainCorrupted:
             await fs.write("/f.py", "line 1\nline 2\nline 3\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             # Corrupt version 2's diff content (it's a diff, not snapshot)
@@ -169,7 +169,7 @@ class TestVerifyChainCorrupted:
             await fs.write("/f.py", "line1\nline2\nline3\nline4\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             # Corrupt snapshot to a single-line value — diff hunk ranges
@@ -203,7 +203,7 @@ class TestVerifyChainCorrupted:
             await fs.write("/f.py", "good content\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             # Corrupt the stored hash (content is correct)
@@ -239,7 +239,7 @@ class TestVerifyChainCorrupted:
             await fs.write("/f.py", "v1\nv2\n", session=session)
 
             file_rec = (
-                await session.execute(select(fs._file_model).where(fs._file_model.path == "/f.py"))
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/f.py"))
             ).scalar_one()
 
             # Delete version 1 (the snapshot), leaving only the diff
@@ -328,9 +328,7 @@ class TestBackendVerifyVersions:
 
             # Corrupt /bad.py's hash
             file_rec = (
-                await session.execute(
-                    select(fs._file_model).where(fs._file_model.path == "/bad.py")
-                )
+                await session.execute(select(fs.file_model).where(fs.file_model.path == "/bad.py"))
             ).scalar_one()
             v1_rec = (
                 await session.execute(

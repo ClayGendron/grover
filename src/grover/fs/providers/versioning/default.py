@@ -11,8 +11,8 @@ from sqlmodel import select
 
 from grover.types.operations import VerifyVersionResult, VersionChainError
 
+from ...exceptions import ConsistencyError
 from .diff import SNAPSHOT_INTERVAL, compute_diff, reconstruct_version
-from .exceptions import ConsistencyError
 
 if TYPE_CHECKING:
     from datetime import datetime

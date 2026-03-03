@@ -13,7 +13,7 @@ from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from datetime import datetime
 
     from grover.ref import Ref
@@ -78,9 +78,9 @@ class FileSearchResult:
         return {c.path: list(c.evidence) for c in self.candidates}
 
     @staticmethod
-    def _dict_to_candidates(entries: dict[str, list[Evidence]]) -> list[FileSearchCandidate]:
+    def _dict_to_candidates(entries: Mapping[str, Sequence[Evidence]]) -> list[FileSearchCandidate]:
         """Convert dict back to candidates list."""
-        return [FileSearchCandidate(path=p, evidence=evs) for p, evs in entries.items()]
+        return [FileSearchCandidate(path=p, evidence=list(evs)) for p, evs in entries.items()]
 
     # -----------------------------------------------------------------
     # Properties and iteration

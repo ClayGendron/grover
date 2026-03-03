@@ -40,7 +40,6 @@ from grover.types.search import (
     LineMatch as SearchLineMatch,
 )
 
-from .chunks import DefaultChunkProvider
 from .connections import ConnectionService
 from .directories import DirectoryService
 from .exceptions import GroverError
@@ -60,7 +59,9 @@ from .operations import (
     read_file,
     write_file,
 )
+from .providers.chunks import DefaultChunkProvider
 from .providers.protocols import SupportsStorageQueries
+from .providers.versioning import DefaultVersionProvider
 from .trash import TrashService
 from .utils import (
     compile_glob,
@@ -69,7 +70,6 @@ from .utils import (
     normalize_path,
     validate_path,
 )
-from .versioning import DefaultVersionProvider
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,10 +131,10 @@ class DatabaseFileSystem(
     ) -> None:
         self.dialect = dialect
         self.schema = schema
-        self._file_model: type[FileBase] = file_model or File
-        self._file_version_model: type[FileVersionBase] = file_version_model or FileVersion
-        self._file_chunk_model: type[FileChunkBase] = file_chunk_model or FileChunk
-        self._file_connection_model: type[FileConnectionBase] = (
+        self.file_model: type[FileBase] = file_model or File
+        self.file_version_model: type[FileVersionBase] = file_version_model or FileVersion
+        self.file_chunk_model: type[FileChunkBase] = file_chunk_model or FileChunk
+        self.file_connection_model: type[FileConnectionBase] = (
             file_connection_model or FileConnection
         )
 
@@ -144,33 +144,17 @@ class DatabaseFileSystem(
         self.search_provider = search_provider
         self.embedding_provider = embedding_provider
         self.version_provider = version_provider or DefaultVersionProvider(
-            self._file_model, self._file_version_model
+            self.file_model, self.file_version_model
         )
-        self.chunk_provider = chunk_provider or DefaultChunkProvider(self._file_chunk_model)
+        self.chunk_provider = chunk_provider or DefaultChunkProvider(self.file_chunk_model)
 
         # Internal services
-        self.directories = DirectoryService(self._file_model, dialect, schema)
-        self.trash = TrashService(self._file_model, self.version_provider, self._delete_content)
-        self.connections = ConnectionService(self._file_connection_model)
+        self.directories = DirectoryService(self.file_model, dialect, schema)
+        self.trash = TrashService(self.file_model, self.version_provider, self._delete_content)
+        self.connections = ConnectionService(self.file_connection_model)
 
         # Validate search dimensions if both providers set
         self._validate_search_dimensions()
-
-    @property
-    def file_model(self) -> type[FileBase]:
-        return self._file_model
-
-    @property
-    def file_version_model(self) -> type[FileVersionBase]:
-        return self._file_version_model
-
-    @property
-    def file_chunk_model(self) -> type[FileChunkBase]:
-        return self._file_chunk_model
-
-    @property
-    def file_connection_model(self) -> type[FileConnectionBase]:
-        return self._file_connection_model
 
     @staticmethod
     def _require_session(session: AsyncSession | None) -> AsyncSession:
@@ -193,7 +177,7 @@ class DatabaseFileSystem(
         Absorbed from the former ``MetadataService.get_file()``.
         """
         path = normalize_path(path)
-        model = self._file_model
+        model = self.file_model
         conditions = [model.path == path]
         if not include_deleted:
             conditions.append(
@@ -220,7 +204,7 @@ class DatabaseFileSystem(
         if self.storage_provider is not None:
             return await self.storage_provider.read_content(path)
         path = normalize_path(path)
-        model = self._file_model
+        model = self.file_model
         result = await session.execute(
             select(model.content).where(
                 model.path == path,
@@ -235,7 +219,7 @@ class DatabaseFileSystem(
             await self.storage_provider.write_content(path, content)
             return
         path = normalize_path(path)
-        model = self._file_model
+        model = self.file_model
         result = await session.execute(
             select(model).where(
                 model.path == path,
@@ -295,7 +279,7 @@ class DatabaseFileSystem(
             get_file_record=self._get_file_record,
             versioning=self.version_provider,
             directories=self.directories,
-            file_model=self._file_model,
+            file_model=self.file_model,
             read_content=self._read_content,
             write_content=self._write_content,
             owner_id=owner_id,
@@ -341,7 +325,7 @@ class DatabaseFileSystem(
             sess,
             get_file_record=self._get_file_record,
             versioning=self.version_provider,
-            file_model=self._file_model,
+            file_model=self.file_model,
             delete_content=self._delete_content,
         )
 
@@ -391,7 +375,7 @@ class DatabaseFileSystem(
             path,
             sess,
             get_file_record=self._get_file_record,
-            file_model=self._file_model,
+            file_model=self.file_model,
         )
 
     async def exists(
@@ -451,7 +435,7 @@ class DatabaseFileSystem(
             get_file_record=self._get_file_record,
             versioning=self.version_provider,
             directories=self.directories,
-            file_model=self._file_model,
+            file_model=self.file_model,
             read_content=self._read_content,
             write_content=self._write_content,
             delete_content=self._delete_content,
@@ -517,7 +501,7 @@ class DatabaseFileSystem(
                     pattern=pattern,
                 )
 
-        model = self._file_model
+        model = self.file_model
 
         # Try SQL pre-filter for performance
         like_pattern = glob_to_sql_like(pattern, path)
@@ -639,7 +623,7 @@ class DatabaseFileSystem(
                 )
             candidate_paths = list(glob_result.files())
         else:
-            model = self._file_model
+            model = self.file_model
             if path != "/":
                 file = await self._get_file_record(sess, path)
                 if file and not file.is_directory:
@@ -783,7 +767,7 @@ class DatabaseFileSystem(
                     message=f"Not a directory: {path}",
                 )
 
-        model = self._file_model
+        model = self.file_model
         base_depth = path.count("/") if path != "/" else 0
 
         # Build query conditions

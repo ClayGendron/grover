@@ -389,13 +389,13 @@ class TestDiskStorageListDir:
 class TestDefaultProviderExports:
     def test_default_version_provider_is_accessible(self) -> None:
         from grover.fs import providers as prov
-        from grover.fs import versioning
+        from grover.fs.providers import versioning
 
         assert prov.DefaultVersionProvider is versioning.DefaultVersionProvider
 
     def test_default_chunk_provider_is_accessible(self) -> None:
-        from grover.fs import chunks
         from grover.fs import providers as prov
+        from grover.fs.providers import chunks
 
         assert prov.DefaultChunkProvider is chunks.DefaultChunkProvider
 

@@ -135,7 +135,7 @@ class VersionMethodsMixin:
         from sqlmodel import select
 
         sess = self._require_session(session)  # type: ignore[attr-defined]
-        model = self._file_model  # type: ignore[attr-defined]
+        model = self.file_model  # type: ignore[attr-defined]
         result = await sess.execute(
             select(model).where(
                 model.deleted_at.is_(None),

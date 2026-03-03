@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, SQLModel, select
 
-from grover.fs.chunks import DefaultChunkProvider
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.protocol import SupportsFileChunks
+from grover.fs.providers.chunks import DefaultChunkProvider
 from grover.models.chunks import FileChunk, FileChunkBase
 
 # ---------------------------------------------------------------------------

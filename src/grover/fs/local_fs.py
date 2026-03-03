@@ -151,10 +151,10 @@ class LocalFileSystem(DatabaseFileSystem):
                 cursor.close()
 
             async with self._engine.begin() as conn:
-                fm_table = self._file_model.__table__  # type: ignore[unresolved-attribute]
-                fv_table = self._file_version_model.__table__  # type: ignore[unresolved-attribute]
-                fc_table = self._file_chunk_model.__table__  # type: ignore[unresolved-attribute]
-                edge_table = self._file_connection_model.__table__  # type: ignore[unresolved-attribute]
+                fm_table = self.file_model.__table__  # type: ignore[unresolved-attribute]
+                fv_table = self.file_version_model.__table__  # type: ignore[unresolved-attribute]
+                fc_table = self.file_chunk_model.__table__  # type: ignore[unresolved-attribute]
+                edge_table = self.file_connection_model.__table__  # type: ignore[unresolved-attribute]
                 await conn.run_sync(lambda c: fm_table.create(c, checkfirst=True))
                 await conn.run_sync(lambda c: fv_table.create(c, checkfirst=True))
                 await conn.run_sync(lambda c: fc_table.create(c, checkfirst=True))
@@ -273,7 +273,7 @@ class LocalFileSystem(DatabaseFileSystem):
                     get_file_record=self._get_file_record,
                     versioning=self.version_provider,
                     directories=self.directories,
-                    file_model=self._file_model,
+                    file_model=self.file_model,
                     read_content=self._read_content,
                     write_content=self._write_content,
                 )
@@ -333,7 +333,7 @@ class LocalFileSystem(DatabaseFileSystem):
             if file.is_directory:
                 from sqlmodel import select
 
-                model = self._file_model
+                model = self.file_model
                 children_result = await sess.execute(
                     select(model).where(
                         model.path.startswith(restored_path + "/"),
@@ -418,7 +418,7 @@ class LocalFileSystem(DatabaseFileSystem):
                         get_file_record=self._get_file_record,
                         versioning=self.version_provider,
                         directories=self.directories,
-                        file_model=self._file_model,
+                        file_model=self.file_model,
                         read_content=self._read_content,
                         write_content=_noop_write,
                     )
@@ -427,7 +427,7 @@ class LocalFileSystem(DatabaseFileSystem):
         # Check DB records against disk
         from sqlmodel import select
 
-        model = self._file_model
+        model = self.file_model
         result = await sess.execute(
             select(model).where(
                 model.deleted_at.is_(None),  # type: ignore[unresolved-attribute]

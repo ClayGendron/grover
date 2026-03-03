@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, SQLModel, select
 
-from grover.fs.diff import apply_diff, compute_diff, reconstruct_version
+from grover.fs.providers.versioning import apply_diff, compute_diff, reconstruct_version
 from grover.models import (
     File,
     FileConnection,

@@ -255,7 +255,7 @@ class SearchOpsMixin:
                         continue
                     if getattr(mount.filesystem, "embedding_provider", None) is None:
                         continue
-                    result = await mount.filesystem.search_query(query, k)
+                    result = await mount.filesystem.vector_search(query, k)
                     if result.success:
                         combined = combined | result.rebase(mount.path)
                 combined.message = f"Found matches in {len(combined)} file(s)"
@@ -272,7 +272,7 @@ class SearchOpsMixin:
                     return VectorSearchResult(
                         success=False, message="No embedding_provider on mount"
                     )
-                result = await mount.filesystem.search_query(query, k)
+                result = await mount.filesystem.vector_search(query, k)
                 return result.rebase(mount.path)
         except Exception as e:
             return VectorSearchResult(
@@ -298,7 +298,7 @@ class SearchOpsMixin:
                     if not isinstance(mount.filesystem, SupportsSearch):
                         continue
                     async with self._ctx.session_for(mount) as sess:
-                        fts_results = await mount.filesystem.lexical_search_query(
+                        fts_results = await mount.filesystem.lexical_search(
                             query, k=k, session=sess
                         )
                     mount_entries: dict[str, list[Any]] = {}
@@ -326,7 +326,7 @@ class SearchOpsMixin:
                         message="Lexical search not available on this mount",
                     )
                 async with self._ctx.session_for(mount) as sess:
-                    fts_results = await mount.filesystem.lexical_search_query(
+                    fts_results = await mount.filesystem.lexical_search(
                         query, k=k, session=sess
                     )
                 entries: dict[str, list[Any]] = {}

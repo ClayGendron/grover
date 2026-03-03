@@ -148,7 +148,7 @@ class SearchMethodsMixin:
     # Query operations
     # ------------------------------------------------------------------
 
-    async def search_query(self, query: str, k: int = 10) -> VectorSearchResult:
+    async def vector_search(self, query: str, k: int = 10) -> VectorSearchResult:
         """Embed *query*, call ``search_provider.vector_search()``, return result."""
         embedding = getattr(self, "embedding_provider", None)
         search = getattr(self, "search_provider", None)
@@ -167,7 +167,7 @@ class SearchMethodsMixin:
         vector = await self._search_embed(query)
         return await search.vector_search(vector, k=k)
 
-    async def lexical_search_query(
+    async def lexical_search(
         self,
         query: str,
         *,
@@ -219,7 +219,7 @@ class SearchMethodsMixin:
 
         sess = self._require_session(session)  # type: ignore[attr-defined]
         dialect = getattr(self, "dialect", "sqlite")
-        model = self._file_model  # type: ignore[attr-defined]
+        model = self.file_model  # type: ignore[attr-defined]
 
         results: list[SearchResult] = []
 

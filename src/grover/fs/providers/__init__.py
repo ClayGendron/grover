@@ -1,6 +1,6 @@
 """Filesystem provider protocols and implementations."""
 
-from .defaults import DefaultChunkProvider, DefaultVersionProvider
+from .chunks import DefaultChunkProvider
 from .protocols import (
     ChunkProvider,
     EmbeddingProvider,
@@ -12,6 +12,7 @@ from .protocols import (
     VersionProvider,
 )
 from .storage.disk import DiskStorageProvider
+from .versioning import DefaultVersionProvider
 
 __all__ = [
     "ChunkProvider",

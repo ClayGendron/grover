@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.diff import SNAPSHOT_INTERVAL
 from grover.fs.exceptions import ConsistencyError
+from grover.fs.providers.versioning import SNAPSHOT_INTERVAL
 
 
 async def _make_fs():

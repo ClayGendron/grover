@@ -8,9 +8,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from grover.fs.chunks import DefaultChunkProvider
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.versioning import DefaultVersionProvider
+from grover.fs.providers.chunks import DefaultChunkProvider
+from grover.fs.providers.versioning import DefaultVersionProvider
 from grover.types.search import FileSearchCandidate, VectorEvidence, VectorSearchResult
 
 # ------------------------------------------------------------------
@@ -378,15 +378,15 @@ class TestSearchMethodsNoop:
         fs = DatabaseFileSystem()
         await fs.search_remove("/a.py")  # Should not raise
 
-    async def test_search_query_fails_without_embedding(self):
+    async def test_vector_search_fails_without_embedding(self):
         fs = DatabaseFileSystem()
-        result = await fs.search_query("test query")
+        result = await fs.vector_search("test query")
         assert result.success is False
         assert "no embedding provider" in result.message
 
-    async def test_search_query_fails_without_search(self):
+    async def test_vector_search_fails_without_search(self):
         fs = DatabaseFileSystem(embedding_provider=_mock_embedding_provider())
-        result = await fs.search_query("test query")
+        result = await fs.vector_search("test query")
         assert result.success is False
         assert "no search provider" in result.message
 
@@ -417,7 +417,7 @@ class TestSearchWithProviders:
         assert entries[0].id == "/a.py"
         assert entries[0].metadata["content"] == "hello world"
 
-    async def test_search_query_returns_results(self):
+    async def test_vector_search_returns_results(self):
         mock_embed = _mock_embedding_provider()
         mock_search = _mock_vector_store()
         mock_search.vector_search = AsyncMock(
@@ -444,7 +444,7 @@ class TestSearchWithProviders:
             search_provider=mock_search,
         )
 
-        result = await fs.search_query("hello")
+        result = await fs.vector_search("hello")
 
         assert result.success is True
         assert len(result.candidates) == 1
@@ -479,7 +479,7 @@ class TestSearchWithProviders:
 
 
 class TestLexicalSearch:
-    """lexical_search_query performs DB-based full-text search."""
+    """lexical_search performs DB-based full-text search."""
 
     async def test_lexical_search_like_fallback(self):
         """Fallback LIKE search works for unknown dialects."""
@@ -488,7 +488,7 @@ class TestLexicalSearch:
             await fs.write("/a.py", "hello world\n", session=session)
             await fs.write("/b.py", "goodbye world\n", session=session)
 
-            results = await fs.lexical_search_query("hello", session=session)
+            results = await fs.lexical_search("hello", session=session)
 
             assert len(results) == 1
             assert results[0].ref.path == "/a.py"
@@ -500,7 +500,7 @@ class TestLexicalSearch:
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/a.py", "hello world\n", session=session)
-            results = await fs.lexical_search_query("nonexistent", session=session)
+            results = await fs.lexical_search("nonexistent", session=session)
             assert len(results) == 0
         await engine.dispose()
 
@@ -511,7 +511,7 @@ class TestLexicalSearch:
             for i in range(5):
                 await fs.write(f"/f{i}.py", f"common text {i}\n", session=session)
 
-            results = await fs.lexical_search_query("common", k=2, session=session)
+            results = await fs.lexical_search("common", k=2, session=session)
             assert len(results) == 2
         await engine.dispose()
 

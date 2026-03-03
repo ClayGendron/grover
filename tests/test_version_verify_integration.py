@@ -208,7 +208,7 @@ class TestReconcileChainErrors:
         # Corrupt a version hash directly in DB
         async with lfs._session_factory() as sess:
             file_rec = (
-                await sess.execute(select(lfs._file_model).where(lfs._file_model.path == "/f.py"))
+                await sess.execute(select(lfs.file_model).where(lfs.file_model.path == "/f.py"))
             ).scalar_one()
             v1_rec = (
                 await sess.execute(
