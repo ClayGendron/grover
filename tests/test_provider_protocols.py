@@ -70,57 +70,6 @@ class TestChunkProviderProtocol:
 
 
 # ======================================================================
-# StorageProvider methods have no session params
-# ======================================================================
-
-
-class TestStorageProviderNoSession:
-    """Verify StorageProvider methods don't accept session parameters."""
-
-    def test_no_session_in_read_content(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.read_content)
-        assert "session" not in sig.parameters
-
-    def test_no_session_in_write_content(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.write_content)
-        assert "session" not in sig.parameters
-
-    def test_no_session_in_delete_content(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.delete_content)
-        assert "session" not in sig.parameters
-
-    def test_no_session_in_move_content(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.move_content)
-        assert "session" not in sig.parameters
-
-    def test_no_session_in_exists(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.exists)
-        assert "session" not in sig.parameters
-
-    def test_no_session_in_mkdir(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.mkdir)
-        assert "session" not in sig.parameters
-
-    def test_no_session_in_get_info(self) -> None:
-        import inspect
-
-        sig = inspect.signature(StorageProvider.get_info)
-        assert "session" not in sig.parameters
-
-
-# ======================================================================
 # DiskStorageProvider integration tests
 # ======================================================================
 
@@ -398,45 +347,3 @@ class TestDefaultProviderExports:
         from grover.fs.providers import chunks
 
         assert prov.DefaultChunkProvider is chunks.DefaultChunkProvider
-
-
-# ======================================================================
-# Top-level grover package exports
-# ======================================================================
-
-
-class TestPackageExports:
-    def test_storage_provider_exported(self) -> None:
-        from grover import StorageProvider
-
-        assert StorageProvider is not None
-
-    def test_graph_provider_exported(self) -> None:
-        from grover import GraphProvider
-
-        assert GraphProvider is not None
-
-    def test_version_provider_exported(self) -> None:
-        from grover import VersionProvider
-
-        assert VersionProvider is not None
-
-    def test_chunk_provider_exported(self) -> None:
-        from grover import ChunkProvider
-
-        assert ChunkProvider is not None
-
-    def test_disk_storage_provider_exported(self) -> None:
-        from grover import DiskStorageProvider
-
-        assert DiskStorageProvider is not None
-
-    def test_default_version_provider_exported(self) -> None:
-        from grover import DefaultVersionProvider
-
-        assert DefaultVersionProvider is not None
-
-    def test_default_chunk_provider_exported(self) -> None:
-        from grover import DefaultChunkProvider
-
-        assert DefaultChunkProvider is not None

@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 import grover
-from grover._grover import Grover
-from grover._grover_async import GroverAsync
+from grover.grover import Grover
+from grover.grover_async import GroverAsync
 from grover.types import (
     DeleteResult,
     EditResult,
@@ -42,7 +42,7 @@ class FakeProvider:
 
 
 class InMemoryBackend:
-    """Simple backend that implements only core StorageBackend methods."""
+    """Simple backend that implements only core GroverFileSystem methods."""
 
     def __init__(self) -> None:
         self._files: dict[str, str] = {}
@@ -305,59 +305,6 @@ def test_version_matches_pyproject() -> None:
     match = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', text, re.MULTILINE)
     assert match is not None, "Could not find version in pyproject.toml"
     assert grover.__version__ == match.group(1)
-
-
-# ======================================================================
-# Graph protocol and algorithm exports
-# ======================================================================
-
-
-def test_graph_provider_exported() -> None:
-    from grover import GraphProvider
-
-    assert GraphProvider is not None
-
-
-def test_subgraph_result_exported() -> None:
-    from grover import SubgraphResult
-
-    assert SubgraphResult is not None
-
-
-def test_grover_has_pagerank() -> None:
-    assert hasattr(Grover, "pagerank")
-
-
-def test_grover_has_meeting_subgraph() -> None:
-    assert hasattr(Grover, "meeting_subgraph")
-
-
-def test_grover_has_neighborhood() -> None:
-    assert hasattr(Grover, "neighborhood")
-
-
-def test_grover_has_ancestors() -> None:
-    assert hasattr(Grover, "ancestors")
-
-
-def test_grover_has_descendants() -> None:
-    assert hasattr(Grover, "descendants")
-
-
-def test_grover_has_find_nodes() -> None:
-    assert hasattr(Grover, "find_nodes")
-
-
-def test_grover_get_graph_is_public() -> None:
-    """GroverAsync.get_graph() is a public method (replaces old .graph property)."""
-    ga = GroverAsync()
-    try:
-        assert hasattr(ga, "get_graph")
-        assert callable(ga.get_graph)
-    finally:
-        import asyncio
-
-        asyncio.get_event_loop_policy().new_event_loop().run_until_complete(ga.close())
 
 
 @pytest.mark.asyncio

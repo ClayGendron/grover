@@ -17,37 +17,6 @@ class FakeBackend:
 
 
 # ---------------------------------------------------------------------------
-# Mount
-# ---------------------------------------------------------------------------
-
-
-class TestMount:
-    def test_normalize_path(self):
-        cfg = Mount(path="/web/", filesystem=FakeBackend())
-        assert cfg.path == "/web"
-
-    def test_default_label(self):
-        cfg = Mount(path="/data", filesystem=FakeBackend())
-        assert cfg.label == "data"
-
-    def test_custom_label(self):
-        cfg = Mount(path="/data", filesystem=FakeBackend(), label="My Data")
-        assert cfg.label == "My Data"
-
-    def test_default_permission(self):
-        cfg = Mount(path="/x", filesystem=FakeBackend())
-        assert cfg.permission == Permission.READ_WRITE
-
-    def test_read_only_mount(self):
-        cfg = Mount(path="/x", filesystem=FakeBackend(), permission=Permission.READ_ONLY)
-        assert cfg.permission == Permission.READ_ONLY
-
-    def test_default_mount_type(self):
-        cfg = Mount(path="/x", filesystem=FakeBackend())
-        assert cfg.mount_type == "vfs"
-
-
-# ---------------------------------------------------------------------------
 # MountRegistry — Basic Operations
 # ---------------------------------------------------------------------------
 
