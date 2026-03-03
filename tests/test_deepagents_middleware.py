@@ -3,53 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import math
 from typing import TYPE_CHECKING
 
 import pytest
 
+from _helpers import FAKE_DIM, FakeProvider
+
 da = pytest.importorskip("deepagents")
 
-from grover._grover import Grover  # noqa: E402
-from grover._grover_async import GroverAsync  # noqa: E402
 from grover.fs.local_fs import LocalFileSystem  # noqa: E402
 from grover.fs.providers.search.local import LocalVectorStore  # noqa: E402
+from grover.grover import Grover  # noqa: E402
+from grover.grover_async import GroverAsync  # noqa: E402
 from grover.integrations.deepagents._middleware import GroverMiddleware  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
-
-
-# ------------------------------------------------------------------
-# Fake embedding provider (deterministic, fast)
-# ------------------------------------------------------------------
-
-_FAKE_DIM = 32
-
-
-class FakeProvider:
-    def embed(self, text: str) -> list[float]:
-        return self._hash_to_vector(text)
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [self._hash_to_vector(t) for t in texts]
-
-    @property
-    def dimensions(self) -> int:
-        return _FAKE_DIM
-
-    @property
-    def model_name(self) -> str:
-        return "fake-test-model"
-
-    @staticmethod
-    def _hash_to_vector(text: str) -> list[float]:
-        h = hashlib.sha256(text.encode()).digest()
-        raw = [float(b) for b in h]
-        norm = math.sqrt(sum(x * x for x in raw))
-        return [x / norm for x in raw]
 
 
 # ------------------------------------------------------------------
@@ -72,7 +42,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
         "/project",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
-        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     yield g
     g.close()
@@ -91,7 +61,7 @@ async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
         "/project",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
-        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -465,7 +435,7 @@ def _make_sync_middleware(tmp_path: Path) -> tuple[GroverMiddleware, GroverAsync
             "/project",
             LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
-            search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+            search_provider=LocalVectorStore(dimension=FAKE_DIM),
         )
         return g
 

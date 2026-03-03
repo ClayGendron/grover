@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import math
 from dataclasses import FrozenInstanceError
 
 import pytest
 
+from _helpers import FakeProvider
 from grover.analyzers._base import ChunkFile
 from grover.fs.providers.protocols import EmbeddingProvider
 from grover.fs.providers.search.extractors import (
@@ -17,38 +16,6 @@ from grover.fs.providers.search.extractors import (
 )
 from grover.fs.providers.search.types import SearchResult
 from grover.ref import Ref
-
-# ------------------------------------------------------------------
-# Fake provider for fast, deterministic unit tests
-# ------------------------------------------------------------------
-
-_FAKE_DIM = 32
-
-
-class FakeProvider:
-    """Deterministic embedding provider that hashes text into a vector."""
-
-    def embed(self, text: str) -> list[float]:
-        return self._hash_to_vector(text)
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [self._hash_to_vector(t) for t in texts]
-
-    @property
-    def dimensions(self) -> int:
-        return _FAKE_DIM
-
-    @property
-    def model_name(self) -> str:
-        return "fake-test-model"
-
-    @staticmethod
-    def _hash_to_vector(text: str) -> list[float]:
-        h = hashlib.sha256(text.encode()).digest()
-        raw = [float(b) for b in h]
-        norm = math.sqrt(sum(x * x for x in raw))
-        return [x / norm for x in raw]
-
 
 # ==================================================================
 # EmbeddableChunk

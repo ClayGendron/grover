@@ -123,6 +123,7 @@ root = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 asyncio_mode = "auto"
 norecursedirs = ["tests/fixtures/repos"]
 markers = [

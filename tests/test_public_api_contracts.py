@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import grover
+from _helpers import FakeProvider
 from grover.grover import Grover
 from grover.grover_async import GroverAsync
 from grover.types import (
@@ -21,24 +22,6 @@ from grover.types import (
     ReadResult,
     WriteResult,
 )
-
-
-class FakeProvider:
-    """Small deterministic embedding provider for tests."""
-
-    @property
-    def dimensions(self) -> int:
-        return 3
-
-    @property
-    def model_name(self) -> str:
-        return "fake-test-model"
-
-    def embed(self, text: str) -> list[float]:
-        return [0.0, 0.0, 0.0]
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [[0.0, 0.0, 0.0] for _ in texts]
 
 
 class InMemoryBackend:

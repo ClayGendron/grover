@@ -2,52 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
-import math
 from typing import TYPE_CHECKING
 
 import pytest
 
-from grover._grover_async import GroverAsync
+from _helpers import FAKE_DIM, FakeProvider
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.providers.graph import RustworkxGraph
 from grover.fs.providers.search.local import LocalVectorStore
+from grover.grover_async import GroverAsync
 from grover.types import GraphResult
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-# ------------------------------------------------------------------
-# Fake embedding provider
-# ------------------------------------------------------------------
-
-_FAKE_DIM = 32
-
-
-class FakeProvider:
-    """Deterministic embedding provider for testing."""
-
-    def embed(self, text: str) -> list[float]:
-        return self._hash_to_vector(text)
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [self._hash_to_vector(t) for t in texts]
-
-    @property
-    def dimensions(self) -> int:
-        return _FAKE_DIM
-
-    @property
-    def model_name(self) -> str:
-        return "fake-test-model"
-
-    @staticmethod
-    def _hash_to_vector(text: str) -> list[float]:
-        h = hashlib.sha256(text.encode()).digest()
-        raw = [float(b) for b in h]
-        norm = math.sqrt(sum(x * x for x in raw))
-        return [x / norm for x in raw]
 
 
 # ------------------------------------------------------------------
@@ -78,7 +45,7 @@ async def grover(workspace1: Path, tmp_path: Path) -> GroverAsync:
         "/project",
         lfs,
         embedding_provider=FakeProvider(),
-        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -94,13 +61,13 @@ async def multi_grover(workspace1: Path, workspace2: Path, tmp_path: Path) -> Gr
         "/mount1",
         lfs1,
         embedding_provider=FakeProvider(),
-        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     await g.add_mount(
         "/mount2",
         lfs2,
         embedding_provider=FakeProvider(),
-        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -302,7 +269,7 @@ class TestEngineMountGraphSearch:
                 "/db",
                 engine=engine,
                 embedding_provider=FakeProvider(),
-                search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+                search_provider=LocalVectorStore(dimension=FAKE_DIM),
             )
             mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/db")
             assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)

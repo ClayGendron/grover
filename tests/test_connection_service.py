@@ -11,58 +11,25 @@ This covers:
 
 from __future__ import annotations
 
-import hashlib
-import math
 from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from grover._grover_async import GroverAsync
+from _helpers import FakeProvider
 from grover.fs.connections import ConnectionService
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.providers.graph import RustworkxGraph
-from grover.models.connections import FileConnection
+from grover.grover_async import GroverAsync
+from grover.models.connection import FileConnection
 from grover.types import ConnectionResult
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
-
-
-# =========================================================================
-# Helpers
-# =========================================================================
-
-_FAKE_DIM = 32
-
-
-class FakeProvider:
-    """Deterministic embedding provider for testing."""
-
-    def embed(self, text: str) -> list[float]:
-        return self._hash_to_vector(text)
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [self._hash_to_vector(t) for t in texts]
-
-    @property
-    def dimensions(self) -> int:
-        return _FAKE_DIM
-
-    @property
-    def model_name(self) -> str:
-        return "fake-test-model"
-
-    @staticmethod
-    def _hash_to_vector(text: str) -> list[float]:
-        h = hashlib.sha256(text.encode()).digest()
-        raw = [float(b) for b in h]
-        norm = math.sqrt(sum(x * x for x in raw))
-        return [x / norm for x in raw]
 
 
 # =========================================================================

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,46 +9,15 @@ if TYPE_CHECKING:
 
 import pytest
 
-from grover._grover import Grover
+from _helpers import FAKE_DIM, FakeProvider
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.providers.graph import RustworkxGraph
 from grover.fs.providers.search.local import LocalVectorStore
+from grover.grover import Grover
 from grover.types import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-# ------------------------------------------------------------------
-# Fake embedding provider (deterministic, fast)
-# ------------------------------------------------------------------
-
-_FAKE_DIM = 32
-
-
-class FakeProvider:
-    """Deterministic embedding provider for testing."""
-
-    def embed(self, text: str) -> list[float]:
-        return self._hash_to_vector(text)
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [self._hash_to_vector(t) for t in texts]
-
-    @property
-    def dimensions(self) -> int:
-        return _FAKE_DIM
-
-    @property
-    def model_name(self) -> str:
-        return "fake-test-model"
-
-    @staticmethod
-    def _hash_to_vector(text: str) -> list[float]:
-        h = hashlib.sha256(text.encode()).digest()
-        raw = [float(b) for b in h]
-        norm = math.sqrt(sum(x * x for x in raw))
-        return [x / norm for x in raw]
 
 
 # ------------------------------------------------------------------
@@ -73,7 +40,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
         "/project",
         LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
-        search_provider=LocalVectorStore(dimension=_FAKE_DIM),
+        search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     yield g
     g.close()
@@ -411,7 +378,7 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
 
     from grover.fs.sharing import SharingService
     from grover.fs.user_scoped_fs import UserScopedFileSystem
-    from grover.models.shares import FileShare
+    from grover.models.share import FileShare
 
     g = Grover()
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
