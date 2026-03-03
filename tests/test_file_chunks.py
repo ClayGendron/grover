@@ -1,4 +1,4 @@
-"""Tests for FileChunk model, DefaultChunkProvider, and SupportsFileChunks protocol."""
+"""Tests for FileChunk model and DefaultChunkProvider."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from sqlmodel import Session, SQLModel, select
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.protocol import SupportsFileChunks
+from grover.fs.protocol import GroverFileSystem
 from grover.fs.providers.chunks import DefaultChunkProvider
-from grover.models.chunks import FileChunk, FileChunkBase
+from grover.models.chunk import FileChunk, FileChunkBase
 
 # ---------------------------------------------------------------------------
 # Model tests (sync — same pattern as test_models.py)
@@ -187,14 +187,14 @@ class TestDefaultChunkProvider:
 # ---------------------------------------------------------------------------
 
 
-class TestSupportsFileChunksProtocol:
+class TestGroverFileSystemProtocol:
     def test_database_fs_satisfies_protocol(self):
         dbfs = DatabaseFileSystem()
-        assert isinstance(dbfs, SupportsFileChunks)
+        assert isinstance(dbfs, GroverFileSystem)
 
     def test_local_fs_satisfies_protocol(self, tmp_path):
         lfs = LocalFileSystem(workspace_dir=tmp_path, data_dir=tmp_path / ".grover")
-        assert isinstance(lfs, SupportsFileChunks)
+        assert isinstance(lfs, GroverFileSystem)
 
 
 # ---------------------------------------------------------------------------

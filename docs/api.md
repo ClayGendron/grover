@@ -47,7 +47,7 @@ Mount a storage backend at a virtual path. You can pass either:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `path` | `str` | required | Virtual mount path (e.g., `"/project"`) |
-| `filesystem` | `StorageBackend | None` | `None` | Pre-created backend instance |
+| `filesystem` | `GroverFileSystem | None` | `None` | Pre-created backend instance |
 | `engine` | `AsyncEngine | None` | `None` | SQLAlchemy async engine (creates DatabaseFileSystem) |
 | `session_factory` | `Callable[..., AsyncSession] | None` | `None` | Custom session factory |
 | `dialect` | `str` | `"sqlite"` | Database dialect (`"sqlite"`, `"postgresql"`, `"mssql"`) |
@@ -513,9 +513,8 @@ from grover.fs import (
     DatabaseFileSystem,
     MountRegistry,
     Permission,
-    StorageBackend,
-    SupportsVersions,
-    SupportsTrash,
+    GroverFileSystem,
+    SupportsReBAC,
     SupportsReconcile,
 )
 ```
@@ -528,7 +527,7 @@ LocalFileSystem(workspace_dir, *, data_dir=None)
 
 Stores files on disk at `workspace_dir`. Metadata and version history live in a SQLite database at `data_dir` (defaults to `~/.grover/{workspace_slug}/`).
 
-Implements: `StorageBackend`, `SupportsVersions`, `SupportsTrash`, `SupportsReconcile`, `SupportsSearch`, `SupportsFileChunks`.
+Implements: `GroverFileSystem`, `SupportsReconcile`.
 
 ### DatabaseFileSystem
 
@@ -539,7 +538,7 @@ DatabaseFileSystem(*, dialect="sqlite", file_model=None,
 
 Pure-database storage. All content lives in the `File.content` column. Stateless — requires a session to be injected by VFS.
 
-Implements: `StorageBackend`, `SupportsVersions`, `SupportsTrash`, `SupportsSearch`, `SupportsFileChunks`.
+Implements: `GroverFileSystem`.
 
 ### Permission
 
@@ -556,14 +555,11 @@ Permission.READ_ONLY   # Reads and listings only
 
 | Protocol | Methods |
 |----------|---------|
-| `StorageBackend` | `open`, `close`, `read`, `write`, `edit`, `delete`, `mkdir`, `move`, `copy`, `list_dir`, `exists`, `get_info`, `glob`, `grep`, `tree` |
-| `SupportsVersions` | `list_versions`, `get_version_content`, `restore_version`, `verify_versions`, `verify_all_versions` |
-| `SupportsTrash` | `list_trash`, `restore_from_trash`, `empty_trash` |
+| `GroverFileSystem` | CRUD (`read`, `write`, `edit`, `delete`, `mkdir`, `move`, `copy`), queries (`list_dir`, `exists`, `get_info`, `glob`, `grep`, `tree`), versioning (`list_versions`, `get_version_content`, `restore_version`, `verify_versions`, `verify_all_versions`), trash (`list_trash`, `restore_from_trash`, `empty_trash`), search (`vector_search`, `lexical_search`, `search_add_batch`, `search_remove_file`), connections (`add_connection`, `delete_connection`, `list_connections`), chunks (`replace_file_chunks`, `delete_file_chunks`, `list_file_chunks`) |
+| `SupportsReBAC` | `share`, `unshare`, `list_shares_on_path`, `list_shared_with_me` |
 | `SupportsReconcile` | `reconcile` |
-| `SupportsSearch` | `search_query`, `search_add_batch`, `search_remove_file`, `lexical_search_query` — search via filesystem providers |
-| `SupportsFileChunks` | `replace_file_chunks`, `delete_file_chunks`, `list_file_chunks` |
 
-All protocols are `runtime_checkable`. Implement `StorageBackend` for a minimal custom backend; add optional protocols as needed.
+All protocols are `runtime_checkable`. Every backend must implement `GroverFileSystem`. The two opt-in protocols are for features only some backends provide.
 
 ### Exceptions
 

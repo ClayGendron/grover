@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func
 from sqlmodel import select
 
-from grover.models.chunks import FileChunk
-from grover.models.connections import FileConnection
-from grover.models.files import File, FileVersion
+from grover.models.chunk import FileChunk
+from grover.models.connection import FileConnection
+from grover.models.file import File
+from grover.models.version import FileVersion
 from grover.types.operations import (
     ConnectionListResult,
     ConnectionResult,
@@ -74,9 +75,10 @@ from .utils import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.chunks import FileChunkBase
-    from grover.models.connections import FileConnectionBase
-    from grover.models.files import FileBase, FileVersionBase
+    from grover.models.chunk import FileChunkBase
+    from grover.models.connection import FileConnectionBase
+    from grover.models.file import FileBase
+    from grover.models.version import FileVersionBase
 
     from .providers.protocols import (
         ChunkProvider,
@@ -236,7 +238,7 @@ class DatabaseFileSystem(
         # Content lives in the file record — no-op for DB storage
 
     # ------------------------------------------------------------------
-    # Core protocol: StorageBackend
+    # Core protocol: GroverFileSystem
     # ------------------------------------------------------------------
 
     async def read(
@@ -819,7 +821,7 @@ class DatabaseFileSystem(
         )
 
     # ------------------------------------------------------------------
-    # Capability: SupportsTrash
+    # Trash operations
     # ------------------------------------------------------------------
 
     async def list_trash(
@@ -856,7 +858,7 @@ class DatabaseFileSystem(
         return await self.trash.empty_trash(sess, owner_id=owner_id)
 
     # ------------------------------------------------------------------
-    # Capability: SupportsConnections
+    # Connection operations
     # ------------------------------------------------------------------
 
     async def add_connection(

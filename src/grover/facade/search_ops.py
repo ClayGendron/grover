@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from grover.fs.protocol import SupportsSearch
 from grover.fs.utils import normalize_path
 from grover.types import (
     FileSearchCandidate,
@@ -229,10 +228,9 @@ class SearchOpsMixin:
         """Semantic (vector) search, routed to per-mount filesystem providers."""
         path = normalize_path(path)
 
-        # Check if any mount has search providers
+        # Check if any mount has search providers configured
         has_search = any(
-            isinstance(mount.filesystem, SupportsSearch)
-            and getattr(mount.filesystem, "search_provider", None) is not None
+            getattr(mount.filesystem, "search_provider", None) is not None
             and getattr(mount.filesystem, "embedding_provider", None) is not None
             for mount in self._ctx.registry.list_visible_mounts()
         )
@@ -249,8 +247,7 @@ class SearchOpsMixin:
             if path == "/":
                 combined = VectorSearchResult(success=True, message="")
                 for mount in self._ctx.registry.list_visible_mounts():
-                    if not isinstance(mount.filesystem, SupportsSearch):
-                        continue
+                    assert mount.filesystem is not None
                     if getattr(mount.filesystem, "search_provider", None) is None:
                         continue
                     if getattr(mount.filesystem, "embedding_provider", None) is None:
@@ -262,10 +259,7 @@ class SearchOpsMixin:
                 return combined
             else:
                 mount, _rel_path = self._ctx.registry.resolve(path)
-                if not isinstance(mount.filesystem, SupportsSearch):
-                    return VectorSearchResult(
-                        success=False, message="Mount does not support search"
-                    )
+                assert mount.filesystem is not None
                 if getattr(mount.filesystem, "search_provider", None) is None:
                     return VectorSearchResult(success=False, message="No search_provider on mount")
                 if getattr(mount.filesystem, "embedding_provider", None) is None:
@@ -295,8 +289,7 @@ class SearchOpsMixin:
             if path == "/":
                 combined: LexicalSearchResult = LexicalSearchResult(success=True, message="")
                 for mount in self._ctx.registry.list_visible_mounts():
-                    if not isinstance(mount.filesystem, SupportsSearch):
-                        continue
+                    assert mount.filesystem is not None
                     async with self._ctx.session_for(mount) as sess:
                         fts_results = await mount.filesystem.lexical_search(
                             query, k=k, session=sess
@@ -320,15 +313,9 @@ class SearchOpsMixin:
                 return combined
             else:
                 mount, _rel_path = self._ctx.registry.resolve(path)
-                if not isinstance(mount.filesystem, SupportsSearch):
-                    return LexicalSearchResult(
-                        success=False,
-                        message="Lexical search not available on this mount",
-                    )
+                assert mount.filesystem is not None
                 async with self._ctx.session_for(mount) as sess:
-                    fts_results = await mount.filesystem.lexical_search(
-                        query, k=k, session=sess
-                    )
+                    fts_results = await mount.filesystem.lexical_search(query, k=k, session=sess)
                 entries: dict[str, list[Any]] = {}
                 for sr in fts_results:
                     fp = mount.path + sr.ref.path
@@ -369,14 +356,12 @@ class SearchOpsMixin:
         lex_result: FileSearchResult | None = None
 
         has_vector = any(
-            isinstance(mount.filesystem, SupportsSearch)
-            and getattr(mount.filesystem, "search_provider", None) is not None
+            getattr(mount.filesystem, "search_provider", None) is not None
             and getattr(mount.filesystem, "embedding_provider", None) is not None
             for mount in self._ctx.registry.list_visible_mounts()
         )
         has_lexical = any(
-            isinstance(mount.filesystem, SupportsSearch)
-            for mount in self._ctx.registry.list_visible_mounts()
+            mount.filesystem is not None for mount in self._ctx.registry.list_visible_mounts()
         )
 
         if has_vector:

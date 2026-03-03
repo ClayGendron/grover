@@ -19,10 +19,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from grover._grover_async import GroverAsync
 from grover.fs.database_fs import DatabaseFileSystem
-from grover.models.chunks import FileChunk
-from grover.models.connections import FileConnection
+from grover.grover_async import GroverAsync
+from grover.models.chunk import FileChunk
+from grover.models.connection import FileConnection
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -442,38 +442,40 @@ class TestAnalyzeEdgeCases:
         await g.close()
         await engine.dispose()
 
-    async def test_analyze_fallback_no_supports_connections(
-        self, dbfs_setup: tuple[GroverAsync, AsyncEngine]
-    ) -> None:
-        """Backend without SupportsConnections should add edges directly to graph."""
-        g, engine = dbfs_setup
+    async def test_analyze_fallback_readonly_mount(self, tmp_path: Path) -> None:
+        """Read-only mount should add edges directly to graph, skipping DB."""
+        from grover.fs.permissions import Permission
 
-        await g.write("/vfs/main.py", "x = 1\n")
-        await g.flush()
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
 
-        # Temporarily patch SupportsConnections in the indexing module so
-        # isinstance(fs, SupportsConnections) returns False
-        import grover.facade.indexing as idx_mod
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        dfs = DatabaseFileSystem(dialect="sqlite")
 
-        orig_proto = idx_mod.SupportsConnections
-        idx_mod.SupportsConnections = type("_Dummy", (), {})  # type: ignore[assignment]
+        g = GroverAsync()
+        await g.add_mount("/ro", dfs, session_factory=factory, permission=Permission.READ_ONLY)
+        # Seed a file via a writable mount, then test analysis on the read-only one
+        # We need to write the file directly through the backend to seed it
+        async with factory() as sess:
+            await dfs.write("/ro/main.py", _SINGLE_IMPORT_CODE, session=sess)
+            await sess.commit()
 
-        try:
-            stats = await g._analyze_and_integrate("/vfs/main.py", _SINGLE_IMPORT_CODE)
-        finally:
-            idx_mod.SupportsConnections = orig_proto  # type: ignore[assignment]
+        stats = await g._analyze_and_integrate("/ro/main.py", _SINGLE_IMPORT_CODE)
 
-        # Edges should still be added (via fallback path: directly to graph)
+        # Edges should still be added (via fallback: directly to graph)
         assert stats["edges_added"] >= 1
 
-        # Graph should have the import edge
-        graph = g.get_graph("/vfs")
-        assert graph.has_node("/vfs/main.py")
+        # Graph should have the node
+        graph = g.get_graph("/ro")
+        assert graph.has_node("/ro/main.py")
 
-        # DB should have NO connections (fallback path skips DB)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        # DB should have NO connections (read-only fallback skips DB)
         async with factory() as sess:
             rows = await sess.execute(
-                select(FileConnection).where(FileConnection.source_path == "/vfs/main.py")
+                select(FileConnection).where(FileConnection.source_path == "/ro/main.py")
             )
             assert len(list(rows.scalars().all())) == 0
+
+        await g.close()
+        await engine.dispose()

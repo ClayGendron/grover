@@ -1,13 +1,18 @@
-"""StorageBackend protocol — runtime-checkable interfaces.
+"""GroverFileSystem protocol — runtime-checkable interfaces.
 
-Split into a core protocol and opt-in capability protocols so that
-non-SQL backends can implement just the core without being forced
-to provide versioning, trash, or reconciliation.
+``GroverFileSystem`` is the single protocol that every backend must
+implement.  It covers CRUD, queries, versioning, trash, search,
+connections, and file chunks.
+
+There are two opt-in capability protocols:
+
+* ``SupportsReBAC`` — relationship-based access control
+* ``SupportsReconcile`` — disk ↔ DB reconciliation
 
 The shared services (DefaultVersionProvider, DirectoryService,
 TrashService) and the orchestration functions in ``operations.py`` are
 built on SQLAlchemy and are intended for SQL-backed backends only.
-Non-SQL backends implement the StorageBackend protocol directly without
+Non-SQL backends implement the GroverFileSystem protocol directly without
 using these shared modules.
 """
 
@@ -55,12 +60,8 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class StorageBackend(Protocol):
-    """Core interface every backend must implement.
-
-    ``session`` is optional on all methods.  SQL backends should
-    fail fast if ``session is None``.  Non-SQL backends ignore it.
-    """
+class GroverFileSystem(Protocol):
+    """Core interface every backend must implement."""
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -219,10 +220,9 @@ class StorageBackend(Protocol):
         user_id: str | None = None,
     ) -> TreeResult: ...
 
-
-@runtime_checkable
-class SupportsVersions(Protocol):
-    """Opt-in: version listing, content retrieval, restore."""
+    # ------------------------------------------------------------------
+    # Versioning
+    # ------------------------------------------------------------------
 
     async def list_versions(
         self,
@@ -265,10 +265,9 @@ class SupportsVersions(Protocol):
         user_id: str | None = None,
     ) -> list[VerifyVersionResult]: ...
 
-
-@runtime_checkable
-class SupportsTrash(Protocol):
-    """Opt-in: soft-delete trash management."""
+    # ------------------------------------------------------------------
+    # Trash
+    # ------------------------------------------------------------------
 
     async def list_trash(
         self,
@@ -294,6 +293,92 @@ class SupportsTrash(Protocol):
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> DeleteResult: ...
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    async def search_add_batch(
+        self,
+        entries: list[EmbeddableChunk],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None: ...
+
+    async def search_remove_file(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> None: ...
+
+    async def vector_search(self, query: str, k: int = 10) -> VectorSearchResult: ...
+
+    async def lexical_search(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[SearchResult]: ...
+
+    # ------------------------------------------------------------------
+    # Connections
+    # ------------------------------------------------------------------
+
+    async def add_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        connection_type: str,
+        *,
+        weight: float = 1.0,
+        session: AsyncSession | None = None,
+    ) -> ConnectionResult: ...
+
+    async def delete_connection(
+        self,
+        source_path: str,
+        target_path: str,
+        *,
+        connection_type: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> ConnectionResult: ...
+
+    async def list_connections(
+        self,
+        path: str,
+        *,
+        direction: str = "both",
+        connection_type: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> ConnectionListResult: ...
+
+    # ------------------------------------------------------------------
+    # File chunks
+    # ------------------------------------------------------------------
+
+    async def replace_file_chunks(
+        self,
+        file_path: str,
+        chunks: list[dict],
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkResult: ...
+
+    async def delete_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkResult: ...
+
+    async def list_file_chunks(
+        self,
+        file_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkListResult: ...
 
 
 @runtime_checkable
@@ -350,98 +435,3 @@ class SupportsReconcile(Protocol):
         *,
         session: AsyncSession | None = None,
     ) -> ReconcileResult: ...
-
-
-@runtime_checkable
-class SupportsSearch(Protocol):
-    """Opt-in: search index operations (vector + lexical).
-
-    Backends implementing this protocol provide methods for adding,
-    removing, and querying entries in a vector store and/or full-text
-    index.  ``DatabaseFileSystem`` satisfies this via
-    :class:`~grover.fs.mixins.search_methods.SearchMethodsMixin`.
-    """
-
-    async def search_add_batch(
-        self,
-        entries: list[EmbeddableChunk],
-        *,
-        session: AsyncSession | None = None,
-    ) -> None: ...
-
-    async def search_remove_file(
-        self,
-        path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> None: ...
-
-    async def vector_search(self, query: str, k: int = 10) -> VectorSearchResult: ...
-
-    async def lexical_search(
-        self,
-        query: str,
-        *,
-        k: int = 10,
-        session: AsyncSession | None = None,
-    ) -> list[SearchResult]: ...
-
-
-@runtime_checkable
-class SupportsConnections(Protocol):
-    """Opt-in: DB-backed file connection storage."""
-
-    async def add_connection(
-        self,
-        source_path: str,
-        target_path: str,
-        connection_type: str,
-        *,
-        weight: float = 1.0,
-        session: AsyncSession | None = None,
-    ) -> ConnectionResult: ...
-
-    async def delete_connection(
-        self,
-        source_path: str,
-        target_path: str,
-        *,
-        connection_type: str | None = None,
-        session: AsyncSession | None = None,
-    ) -> ConnectionResult: ...
-
-    async def list_connections(
-        self,
-        path: str,
-        *,
-        direction: str = "both",
-        connection_type: str | None = None,
-        session: AsyncSession | None = None,
-    ) -> ConnectionListResult: ...
-
-
-@runtime_checkable
-class SupportsFileChunks(Protocol):
-    """Opt-in: DB-backed file chunk storage."""
-
-    async def replace_file_chunks(
-        self,
-        file_path: str,
-        chunks: list[dict],
-        *,
-        session: AsyncSession | None = None,
-    ) -> ChunkResult: ...
-
-    async def delete_file_chunks(
-        self,
-        file_path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> ChunkResult: ...
-
-    async def list_file_chunks(
-        self,
-        file_path: str,
-        *,
-        session: AsyncSession | None = None,
-    ) -> ChunkListResult: ...

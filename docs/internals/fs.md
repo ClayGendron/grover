@@ -261,42 +261,40 @@ The SQLite engine is configured with these pragmas on every connection:
 
 ## Capability Protocols
 
-Backends implement the core `StorageBackend` protocol plus optional capability protocols. VFS checks capabilities at runtime using `isinstance()`.
+Grover uses a two-tier protocol structure. `GroverFileSystem` is the single protocol every backend must implement (CRUD, queries, versioning, trash, search, connections, chunks). Two opt-in protocols remain:
 
 ### Protocol Hierarchy
 
 ```
-StorageBackend (core — 12 methods)
-    open, close, read, write, edit, delete, mkdir, move, copy, list_dir, exists, get_info
-├── SupportsVersions (opt-in)
-│     list_versions → VersionResult
-│     get_version_content → GetVersionContentResult
-│     restore_version → RestoreResult
-├── SupportsTrash (opt-in)
-│     list_trash → TrashResult
-│     restore_from_trash → RestoreResult
-│     empty_trash → DeleteResult
-├── SupportsReconcile (opt-in)
-│     reconcile → dict[str, int]
-└── SupportsFileChunks (opt-in)
-      replace_file_chunks → int (count inserted)
-      delete_file_chunks → int (count deleted)
-      list_file_chunks → list[FileChunkBase]
+GroverFileSystem (core — every backend)
+    Lifecycle: open, close
+    CRUD: read, write, edit, delete, mkdir, move, copy
+    Queries: list_dir, exists, get_info, glob, grep, tree
+    Versioning: list_versions, get_version_content, restore_version, verify_versions, verify_all_versions
+    Trash: list_trash, restore_from_trash, empty_trash
+    Search: vector_search, lexical_search, search_add_batch, search_remove_file
+    Connections: add_connection, delete_connection, list_connections
+    Chunks: replace_file_chunks, delete_file_chunks, list_file_chunks
+
+SupportsReBAC (opt-in — user-scoped access control)
+    share, unshare, list_shares_on_path, list_shared_with_me
+
+SupportsReconcile (opt-in — disk ↔ DB sync)
+    reconcile → ReconcileResult
 ```
 
 ### Implementation
 
-| Backend | StorageBackend | SupportsVersions | SupportsTrash | SupportsReconcile | SupportsFileChunks |
-|---------|:---:|:---:|:---:|:---:|:---:|
-| LocalFileSystem | Y | Y | Y | Y | Y |
-| DatabaseFileSystem | Y | Y | Y | N | Y |
-| Custom (minimal) | Y | - | - | - | - |
+| Backend | GroverFileSystem | SupportsReconcile | SupportsReBAC |
+|---------|:---:|:---:|:---:|
+| LocalFileSystem | Y | Y | N |
+| DatabaseFileSystem | Y | N | N |
+| UserScopedFileSystem | Y | N | Y |
 
-### Unsupported Capability Handling
+### Opt-in Capability Handling
 
-- **Targeted path operations** (e.g., `list_versions("/path")`) → VFS raises `CapabilityNotSupportedError`
-- **Aggregate endpoints** (e.g., `list_trash()`, `empty_trash()`) → VFS silently skips unsupported mounts
-- **`delete(permanent=False)`** on non-trash backends → Returns `DeleteResult(success=False)` with guidance to use `permanent=True`
+- **`reconcile()`** → silently skips mounts that don't implement `SupportsReconcile`
+- **Share operations** (`share`, `unshare`, etc.) → returns failure result if backend doesn't implement `SupportsReBAC`
 
 `GroverAsync` catches `CapabilityNotSupportedError` and returns appropriate `Result(success=False, message=...)`. The agent loop always gets Results, never unhandled exceptions from normal operations.
 
@@ -307,7 +305,7 @@ Chunks (functions, classes, methods extracted by code analyzers) are stored as *
 When `_analyze_and_integrate()` processes a file:
 
 1. The analyzer extracts chunks (list of `ChunkFile` records).
-2. If the backend supports `SupportsFileChunks`, chunk records are written to the DB via `backend.replace_file_chunks()`. This is a full replace: all existing chunks for the file are deleted, then new ones are inserted.
+2. Chunk records are written to the DB via `backend.replace_file_chunks()`. This is a full replace: all existing chunks for the file are deleted, then new ones are inserted.
 3. Graph nodes and "contains" edges are created for each chunk (using synthetic `path` identifiers). These graph nodes have `parent_path`, `line_start`, `line_end`, and `name` attributes.
 4. Chunks are embedded and indexed in the per-mount search engine with enriched metadata (`chunk_name`, `line_start`, `line_end`).
 

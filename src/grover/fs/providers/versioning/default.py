@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.files import FileBase, FileVersionBase
+    from grover.models.file import FileBase
+    from grover.models.version import FileVersionBase
 
 
 @dataclass(frozen=True, slots=True)

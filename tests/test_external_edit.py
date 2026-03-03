@@ -10,7 +10,8 @@ from sqlmodel import SQLModel, select
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.operations import check_external_edit
 from grover.fs.utils import compute_content_hash
-from grover.models.files import File, FileVersion
+from grover.models.file import File
+from grover.models.version import FileVersion
 
 
 async def _make_fs():

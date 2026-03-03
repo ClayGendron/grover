@@ -35,9 +35,10 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from grover.models.chunks import FileChunkBase
-    from grover.models.connections import FileConnectionBase
-    from grover.models.files import FileBase, FileVersionBase
+    from grover.models.chunk import FileChunkBase
+    from grover.models.connection import FileConnectionBase
+    from grover.models.file import FileBase
+    from grover.models.version import FileVersionBase
 
 logger = logging.getLogger(__name__)
 

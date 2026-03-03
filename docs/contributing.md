@@ -111,7 +111,7 @@ src/grover/
 ├── fs/                   # Filesystem layer
 │   ├── local_fs.py       # Thin subclass of DatabaseFileSystem (disk + SQLite)
 │   ├── database_fs.py    # Base class — owns all providers
-│   ├── protocol.py       # StorageBackend + capability protocols
+│   ├── protocol.py       # GroverFileSystem + opt-in protocols
 │   ├── operations.py     # Shared orchestration functions
 │   ├── providers/        # Provider protocols + implementations
 │   │   ├── protocols.py  # GraphProvider, SearchProvider, EmbeddingProvider, etc.

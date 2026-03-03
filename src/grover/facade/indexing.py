@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 from grover.fs.exceptions import MountNotFoundError
 from grover.fs.permissions import Permission
-from grover.fs.protocol import SupportsConnections, SupportsFileChunks, SupportsSearch
 from grover.fs.providers.search.extractors import extract_from_chunks, extract_from_file
 from grover.types import ListDirEvidence
 
@@ -61,11 +60,9 @@ class IndexMixin:
         except MountNotFoundError:
             return
         async with self._ctx.session_for(mount) as sess:
-            # Remove search entries via filesystem's search methods
-            if isinstance(mount.filesystem, SupportsSearch):
-                await mount.filesystem.search_remove_file(path, session=sess)
-            if isinstance(mount.filesystem, SupportsFileChunks):
-                await mount.filesystem.delete_file_chunks(path, session=sess)
+            assert mount.filesystem is not None
+            await mount.filesystem.search_remove_file(path, session=sess)
+            await mount.filesystem.delete_file_chunks(path, session=sess)
             conn_svc = getattr(mount.filesystem, "connections", None)
             if conn_svc is not None:
                 await conn_svc.delete_connections_for_path(sess, path)
@@ -139,15 +136,15 @@ class IndexMixin:
 
         # Single session for all DB operations (search, chunks, connections)
         async with self._ctx.session_for(mount) as sess:
-            # Remove old search entries via filesystem's search methods
-            if isinstance(mount.filesystem, SupportsSearch):
-                await mount.filesystem.search_remove_file(path, session=sess)
+            assert mount.filesystem is not None
+            # Remove old search entries
+            await mount.filesystem.search_remove_file(path, session=sess)
 
             if analysis is not None:
                 chunks, edges = analysis
 
                 # Write chunk DB rows
-                if isinstance(mount.filesystem, SupportsFileChunks) and chunks:
+                if chunks:
                     chunk_dicts = [
                         {
                             "path": chunk.path,
@@ -178,7 +175,7 @@ class IndexMixin:
                 # Skip connection writes for read-only mounts (defensive).
                 dep_edges = [e for e in edges if e.edge_type != "contains"]
                 is_writable = mount.permission != Permission.READ_ONLY
-                if isinstance(mount.filesystem, SupportsConnections) and dep_edges and is_writable:
+                if dep_edges and is_writable:
                     # Delete stale outgoing connections before re-adding.
                     # Only outgoing (source_path == path) so we preserve
                     # edges from OTHER files that point to this one.
@@ -201,23 +198,21 @@ class IndexMixin:
                         edges_to_project.append((edge.source, edge.target, edge.edge_type, _w))
                         stats["edges_added"] += 1
                 elif dep_edges:
-                    # Fallback: no SupportsConnections, add directly to graph
+                    # Read-only mount: add directly to in-memory graph
                     for edge in dep_edges:
                         meta: dict[str, Any] = dict(edge.metadata)
                         graph.add_edge(edge.source, edge.target, edge_type=edge.edge_type, **meta)
                         stats["edges_added"] += 1
 
-                # Index chunks for search via filesystem's search methods
-                if isinstance(mount.filesystem, SupportsSearch):
-                    embeddable = extract_from_chunks(chunks)
-                    if embeddable:
-                        await mount.filesystem.search_add_batch(embeddable, session=sess)
+                # Index chunks for search
+                embeddable = extract_from_chunks(chunks)
+                if embeddable:
+                    await mount.filesystem.search_add_batch(embeddable, session=sess)
             else:
                 # No analysis — index whole file for search
-                if isinstance(mount.filesystem, SupportsSearch):
-                    embeddable = extract_from_file(path, content)
-                    if embeddable:
-                        await mount.filesystem.search_add_batch(embeddable, session=sess)
+                embeddable = extract_from_file(path, content)
+                if embeddable:
+                    await mount.filesystem.search_add_batch(embeddable, session=sess)
 
         # Project edges into graph after commit (post-commit ordering)
         for source, target, edge_type, weight in edges_to_project:

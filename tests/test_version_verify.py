@@ -10,7 +10,7 @@ from sqlmodel import SQLModel, select
 
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.providers.versioning import SNAPSHOT_INTERVAL
-from grover.models.files import FileVersion
+from grover.models.version import FileVersion
 from grover.types.operations import VerifyVersionResult, VersionChainError
 
 

@@ -14,13 +14,9 @@ from grover.fs.exceptions import (
 from grover.fs.local_fs import LocalFileSystem
 from grover.fs.permissions import Permission
 from grover.fs.protocol import (
-    StorageBackend,
-    SupportsConnections,
+    GroverFileSystem,
     SupportsReBAC,
     SupportsReconcile,
-    SupportsSearch,
-    SupportsTrash,
-    SupportsVersions,
 )
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.utils import format_read_output
@@ -58,6 +54,7 @@ __all__ = [
     "GlobResult",
     "GrepResult",
     "GroverError",
+    "GroverFileSystem",
     "ListDirResult",
     "LocalFileSystem",
     "MkdirResult",
@@ -70,14 +67,9 @@ __all__ = [
     "RestoreResult",
     "SchemaIncompatibleError",
     "ShareSearchResult",
-    "StorageBackend",
     "StorageError",
-    "SupportsConnections",
     "SupportsReBAC",
     "SupportsReconcile",
-    "SupportsSearch",
-    "SupportsTrash",
-    "SupportsVersions",
     "TrashResult",
     "TreeResult",
     "UserScopedFileSystem",

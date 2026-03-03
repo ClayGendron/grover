@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.fs.exceptions import MountNotFoundError
-from grover.fs.protocol import SupportsTrash
 from grover.fs.utils import normalize_path
 from grover.types import (
     DeleteResult,
@@ -132,13 +131,6 @@ class FileOpsMixin:
         try:
             mount, rel_path = self._ctx.registry.resolve(path)
             assert mount.filesystem is not None
-
-            if not permanent and not self._ctx.get_capability(mount.filesystem, SupportsTrash):
-                return DeleteResult(
-                    success=False,
-                    message="Trash not supported on this mount. "
-                    "Use permanent=True to delete permanently.",
-                )
 
             async with self._ctx.session_for(mount) as sess:
                 result = await mount.filesystem.delete(

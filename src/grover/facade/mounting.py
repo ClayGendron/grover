@@ -14,10 +14,11 @@ from grover.fs.permissions import Permission
 from grover.fs.protocol import SupportsReBAC
 from grover.fs.providers.graph.rustworkx import RustworkxGraph
 from grover.fs.utils import normalize_path
-from grover.models.chunks import FileChunk
-from grover.models.connections import FileConnection
-from grover.models.files import File, FileVersion
-from grover.models.shares import FileShare
+from grover.models.chunk import FileChunk
+from grover.models.connection import FileConnection
+from grover.models.file import File
+from grover.models.share import FileShare
+from grover.models.version import FileVersion
 from grover.mount import Mount
 
 if TYPE_CHECKING:
@@ -26,10 +27,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from grover.facade.context import GroverContext
-    from grover.fs.protocol import StorageBackend
+    from grover.fs.protocol import GroverFileSystem
     from grover.fs.providers.protocols import EmbeddingProvider, SearchProvider
-    from grover.models.chunks import FileChunkBase
-    from grover.models.files import FileBase, FileVersionBase
+    from grover.models.chunk import FileChunkBase
+    from grover.models.file import FileBase
+    from grover.models.version import FileVersionBase
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class MountMixin:
     async def add_mount(
         self,
         mount_or_path: str | Mount | None = None,
-        filesystem: StorageBackend | None = None,
+        filesystem: GroverFileSystem | None = None,
         *,
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,
@@ -183,7 +185,7 @@ class MountMixin:
         self,
         path: str,
         engine: AsyncEngine,
-        backend: StorageBackend | None,
+        backend: GroverFileSystem | None,
         file_model: type[FileBase] | None,
         file_version_model: type[FileVersionBase] | None,
         file_chunk_model: type[FileChunkBase] | None,
@@ -269,7 +271,7 @@ class MountMixin:
         self,
         path: str,
         session_factory: Callable[..., AsyncSession],
-        backend: StorageBackend | None,
+        backend: GroverFileSystem | None,
         dialect: str,
         file_model: type[FileBase] | None,
         file_version_model: type[FileVersionBase] | None,
@@ -303,7 +305,7 @@ class MountMixin:
     async def _create_backend_mount(
         self,
         path: str,
-        backend: StorageBackend,
+        backend: GroverFileSystem,
         mount_type: str | None,
         permission: Permission,
         label: str,

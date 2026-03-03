@@ -235,7 +235,7 @@ class TestDelete:
     async def test_permanent_delete_cleans_versions(self):
         from sqlmodel import select
 
-        from grover.models.files import FileVersion
+        from grover.models.version import FileVersion
 
         fs, factory, engine = await _make_fs()
         async with factory() as session:
@@ -318,7 +318,7 @@ class TestTrash:
     async def test_empty_trash_cleans_versions(self):
         from sqlmodel import select
 
-        from grover.models.files import FileVersion
+        from grover.models.version import FileVersion
 
         fs, factory, engine = await _make_fs()
         async with factory() as session:
@@ -617,7 +617,7 @@ class TestHashValidation:
         """Corrupt a version's content_hash in DB, get_version_content raises ConsistencyError."""
         from sqlmodel import select
 
-        from grover.models.files import FileVersion
+        from grover.models.version import FileVersion
 
         fs, factory, engine = await _make_fs()
         async with factory() as session:

@@ -78,24 +78,23 @@ Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every m
 
 ## Capability protocols
 
-Not every backend supports every feature. Rather than checking flags or catching `NotImplementedError`, Grover uses runtime-checkable protocols:
+Grover uses a two-tier protocol structure:
 
 ```python
-class StorageBackend(Protocol):       # Core: read, write, edit, delete, ...
-class SupportsVersions(Protocol):     # list_versions, restore_version, ...
-class SupportsTrash(Protocol):        # list_trash, restore_from_trash, ...
-class SupportsReconcile(Protocol):    # reconcile (sync disk ↔ DB)
-class SupportsFileChunks(Protocol):   # replace/delete/list file chunks
-class SupportsSearch(Protocol):       # search methods via filesystem providers
+class GroverFileSystem(Protocol):     # Full interface: CRUD, queries, versioning,
+                                      # trash, search, connections, file chunks
+class SupportsReBAC(Protocol):        # Opt-in: relationship-based access control
+class SupportsReconcile(Protocol):    # Opt-in: disk ↔ DB reconciliation
 ```
 
-VFS checks capabilities with `isinstance(backend, SupportsVersions)` at runtime. If a backend doesn't support a capability:
+Every backend must implement the full `GroverFileSystem` protocol. The facade calls `mount.filesystem` methods directly without capability checks.
 
-- **Targeted operations** (e.g., `list_versions("/path")`) raise `CapabilityNotSupportedError`.
-- **Aggregate operations** (e.g., `list_trash()` across all mounts) silently skip unsupported backends.
-- **GroverAsync** catches capability errors and returns `Result(success=False, message=...)` so the caller always gets a clean result, never an unhandled exception.
+Two opt-in protocols remain for features that only some backends provide:
 
-This makes it straightforward to write a minimal custom backend — just implement `StorageBackend` and skip the optional protocols.
+- **`SupportsReBAC`** — user-scoped paths and sharing. Only `UserScopedFileSystem` implements this.
+- **`SupportsReconcile`** — disk ↔ DB reconciliation. Only `LocalFileSystem` implements this.
+
+These are checked at runtime with `isinstance(backend, SupportsReconcile)`. The facade skips backends that don't implement opt-in protocols (e.g., `reconcile()` silently skips non-reconcilable mounts).
 
 ### Provider protocols
 
@@ -155,7 +154,7 @@ The opposite ordering (commit-first) would create **phantom metadata**: the DB s
 ```
 Mount "/project"
     ├── path: str                      (mount point)
-    ├── filesystem: StorageBackend     (required — the backend with providers)
+    ├── filesystem: GroverFileSystem   (required — the backend with providers)
     ├── session_factory: ...           (optional — for DB-backed filesystems)
     ├── permission: Permission         (read-write or read-only)
     └── hidden: bool                   (excluded from listing/indexing)
@@ -292,7 +291,7 @@ Code analyzers produce edges automatically. You can also add manual edges via `a
 All persistent edges (user-created and analyzer-discovered) are persisted through the filesystem layer via `ConnectionService`, stored in the `grover_file_connections` table. The graph is updated via background worker processing after the DB transaction commits:
 
 1. Caller invokes `add_connection(source, target, type)` on `GroverAsync`
-2. `GroverAsync` delegates to the backend's `add_connection()` (through `SupportsConnections`)
+2. `GroverAsync` delegates to the backend's `add_connection()` (part of `GroverFileSystem`)
 3. `ConnectionService` writes the record to `grover_file_connections`
 4. After the session commits, `_process_connection_added` updates the in-memory graph (`graph.add_edge()`)
 
@@ -317,7 +316,7 @@ The `AnalyzerRegistry` maps file extensions to analyzer implementations. Built-i
 - **JavaScript/TypeScript** — uses tree-sitter (requires `treesitter` extra)
 - **Go** — uses tree-sitter (requires `treesitter` extra)
 
-Chunks are stored as database rows in `grover_file_chunks` (via `SupportsFileChunks` protocol). Their graph node paths use stable synthetic identifiers based on symbol names (not line numbers, which drift on edits). This means chunk paths survive refactoring as long as the symbol name doesn't change.
+Chunks are stored as database rows in `grover_file_chunks` (via `GroverFileSystem` chunk methods). Their graph node paths use stable synthetic identifiers based on symbol names (not line numbers, which drift on edits). This means chunk paths survive refactoring as long as the symbol name doesn't change.
 
 ## Adding a new analyzer
 
@@ -341,7 +340,7 @@ To create a user-scoped mount, pass a `UserScopedFileSystem` as the backend:
 ```python
 from grover.fs.user_scoped_fs import UserScopedFileSystem
 from grover.fs.sharing import SharingService
-from grover.models.shares import FileShare
+from grover.models.share import FileShare
 
 backend = UserScopedFileSystem(sharing=SharingService(FileShare))
 await g.add_mount("/ws", backend, engine=engine)

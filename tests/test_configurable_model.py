@@ -10,8 +10,9 @@ from sqlmodel import SQLModel, select
 from grover.fs.database_fs import DatabaseFileSystem
 from grover.fs.dialect import upsert_file
 from grover.fs.providers.graph import RustworkxGraph
-from grover.models.connections import FileConnection
-from grover.models.files import File, FileBase, FileVersionBase
+from grover.models.connection import FileConnection
+from grover.models.file import File, FileBase
+from grover.models.version import FileVersionBase
 
 # ---------------------------------------------------------------------------
 # Custom model definitions (what a developer would write)

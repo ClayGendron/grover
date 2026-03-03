@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover._grover_async import GroverAsync
 from grover.fs.local_fs import LocalFileSystem
-from grover.fs.protocol import SupportsFileChunks
+from grover.fs.protocol import GroverFileSystem
 from grover.fs.providers.search.local import LocalVectorStore
+from grover.grover_async import GroverAsync
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,7 +110,7 @@ class TestAnalyzeWritesChunkRows:
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
-        assert isinstance(backend, SupportsFileChunks)
+        assert isinstance(backend, GroverFileSystem)
 
         async with grover._ctx.session_for(mount) as sess:
             result = await backend.list_file_chunks("/project/funcs.py", session=sess)
@@ -171,7 +171,7 @@ class TestReAnalyzeReplacesChunks:
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
-        assert isinstance(backend, SupportsFileChunks)
+        assert isinstance(backend, GroverFileSystem)
 
         # Check initial chunks
         async with grover._ctx.session_for(mount) as sess:
@@ -214,7 +214,7 @@ class TestDeleteCleansChunks:
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
-        assert isinstance(backend, SupportsFileChunks)
+        assert isinstance(backend, GroverFileSystem)
 
         # Verify chunks exist
         async with grover._ctx.session_for(mount) as sess:
@@ -244,7 +244,7 @@ class TestMoveReIndexesChunks:
 
         mount = _get_mount(grover, "/project")
         backend = mount.filesystem
-        assert isinstance(backend, SupportsFileChunks)
+        assert isinstance(backend, GroverFileSystem)
 
         # Verify old chunks
         async with grover._ctx.session_for(mount) as sess:

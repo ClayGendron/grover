@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from grover.fs.exceptions import CapabilityNotSupportedError
 from grover.fs.permissions import Permission
-from grover.fs.protocol import SupportsReconcile, SupportsTrash, SupportsVersions
+from grover.fs.protocol import SupportsReconcile
 from grover.fs.utils import normalize_path
 from grover.types import (
     DeleteResult,
@@ -28,40 +27,26 @@ class VersionTrashMixin:
     _ctx: GroverContext
 
     # ------------------------------------------------------------------
-    # Version operations (absorbed from VFS, capability-gated)
+    # Version operations
     # ------------------------------------------------------------------
 
     async def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
         path = normalize_path(path)
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
-            if cap is None:
-                raise CapabilityNotSupportedError(
-                    f"Mount at {mount.path} does not support versioning"
-                )
-            async with self._ctx.session_for(mount) as sess:
-                return await cap.list_versions(rel_path, session=sess, user_id=user_id)
-        except CapabilityNotSupportedError as e:
-            return VersionResult(success=False, message=str(e))
+        mount, rel_path = self._ctx.registry.resolve(path)
+        assert mount.filesystem is not None
+        async with self._ctx.session_for(mount) as sess:
+            return await mount.filesystem.list_versions(rel_path, session=sess, user_id=user_id)
 
     async def get_version_content(
         self, path: str, version: int, *, user_id: str | None = None
     ) -> GetVersionContentResult:
         path = normalize_path(path)
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
-            if cap is None:
-                raise CapabilityNotSupportedError(
-                    f"Mount at {mount.path} does not support versioning"
-                )
-            async with self._ctx.session_for(mount) as sess:
-                return await cap.get_version_content(
-                    rel_path, version, session=sess, user_id=user_id
-                )
-        except CapabilityNotSupportedError as e:
-            return GetVersionContentResult(success=False, message=str(e))
+        mount, rel_path = self._ctx.registry.resolve(path)
+        assert mount.filesystem is not None
+        async with self._ctx.session_for(mount) as sess:
+            return await mount.filesystem.get_version_content(
+                rel_path, version, session=sess, user_id=user_id
+            )
 
     async def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
@@ -70,42 +55,30 @@ class VersionTrashMixin:
         if err := self._ctx.check_writable(path):
             return RestoreResult(success=False, message=err)
 
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
-            if cap is None:
-                raise CapabilityNotSupportedError(
-                    f"Mount at {mount.path} does not support versioning"
-                )
-            async with self._ctx.session_for(mount) as sess:
-                result = await cap.restore_version(rel_path, version, session=sess, user_id=user_id)
-            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
-            if result.success:
-                self._ctx.worker.schedule(
-                    path,
-                    lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
-                )
-            return result
-        except CapabilityNotSupportedError as e:
-            return RestoreResult(success=False, message=str(e))
+        mount, rel_path = self._ctx.registry.resolve(path)
+        assert mount.filesystem is not None
+        async with self._ctx.session_for(mount) as sess:
+            result = await mount.filesystem.restore_version(
+                rel_path, version, session=sess, user_id=user_id
+            )
+        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        if result.success:
+            self._ctx.worker.schedule(
+                path,
+                lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
+            )
+        return result
 
     async def verify_versions(
         self, path: str, *, user_id: str | None = None
     ) -> VerifyVersionResult:
         path = normalize_path(path)
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
-            if cap is None:
-                raise CapabilityNotSupportedError(
-                    f"Mount at {mount.path} does not support versioning"
-                )
-            async with self._ctx.session_for(mount) as sess:
-                result = await cap.verify_versions(rel_path, session=sess, user_id=user_id)
-            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
-            return result
-        except CapabilityNotSupportedError as e:
-            return VerifyVersionResult(success=False, message=str(e), path=path)
+        mount, rel_path = self._ctx.registry.resolve(path)
+        assert mount.filesystem is not None
+        async with self._ctx.session_for(mount) as sess:
+            result = await mount.filesystem.verify_versions(rel_path, session=sess, user_id=user_id)
+        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        return result
 
     async def verify_all_versions(self, mount_path: str | None = None) -> list[VerifyVersionResult]:
         all_results: list[VerifyVersionResult] = []
@@ -115,29 +88,25 @@ class VersionTrashMixin:
             mounts = [m for m in mounts if m.path == mount_path]
 
         for mount in mounts:
-            cap = self._ctx.get_capability(mount.filesystem, SupportsVersions)
-            if cap is None:
-                continue
+            assert mount.filesystem is not None
             async with self._ctx.session_for(mount) as sess:
-                results = await cap.verify_all_versions(session=sess)
+                results = await mount.filesystem.verify_all_versions(session=sess)
             for r in results:
                 r.path = self._ctx.prefix_path(r.path, mount.path) or r.path
             all_results.extend(results)
         return all_results
 
     # ------------------------------------------------------------------
-    # Trash operations (absorbed from VFS, capability-gated)
+    # Trash operations
     # ------------------------------------------------------------------
 
     async def list_trash(self, *, user_id: str | None = None) -> TrashResult:
         """List all items in trash across all mounts."""
         combined = TrashResult(success=True, message="")
         for mount in self._ctx.registry.list_mounts():
-            cap = self._ctx.get_capability(mount.filesystem, SupportsTrash)
-            if cap is None:
-                continue
+            assert mount.filesystem is not None
             async with self._ctx.session_for(mount) as sess:
-                result = await cap.list_trash(session=sess, user_id=user_id)
+                result = await mount.filesystem.list_trash(session=sess, user_id=user_id)
             if result.success:
                 rebased = result.rebase(mount.path)
                 combined = combined | rebased
@@ -149,22 +118,19 @@ class VersionTrashMixin:
         if err := self._ctx.check_writable(path):
             return RestoreResult(success=False, message=err)
 
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            cap = self._ctx.get_capability(mount.filesystem, SupportsTrash)
-            if cap is None:
-                raise CapabilityNotSupportedError(f"Mount at {mount.path} does not support trash")
-            async with self._ctx.session_for(mount) as sess:
-                result = await cap.restore_from_trash(rel_path, session=sess, user_id=user_id)
-            result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
-            if result.success:
-                self._ctx.worker.schedule(
-                    path,
-                    lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
-                )
-            return result
-        except CapabilityNotSupportedError as e:
-            return RestoreResult(success=False, message=str(e))
+        mount, rel_path = self._ctx.registry.resolve(path)
+        assert mount.filesystem is not None
+        async with self._ctx.session_for(mount) as sess:
+            result = await mount.filesystem.restore_from_trash(
+                rel_path, session=sess, user_id=user_id
+            )
+        result.path = self._ctx.prefix_path(result.path, mount.path) or result.path
+        if result.success:
+            self._ctx.worker.schedule(
+                path,
+                lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
+            )
+        return result
 
     async def empty_trash(self, *, user_id: str | None = None) -> DeleteResult:
         """Empty trash across all mounts.  Skips read-only mounts."""
@@ -174,11 +140,9 @@ class VersionTrashMixin:
             # Skip read-only mounts — empty_trash is a mutation
             if mount.permission == Permission.READ_ONLY:
                 continue
-            cap = self._ctx.get_capability(mount.filesystem, SupportsTrash)
-            if cap is None:
-                continue
+            assert mount.filesystem is not None
             async with self._ctx.session_for(mount) as sess:
-                result = await cap.empty_trash(session=sess, user_id=user_id)
+                result = await mount.filesystem.empty_trash(session=sess, user_id=user_id)
             if not result.success:
                 return result
             total_deleted += result.total_deleted or 0

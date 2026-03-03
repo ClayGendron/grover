@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.fs.exceptions import MountNotFoundError
-from grover.fs.protocol import SupportsConnections
 from grover.fs.utils import normalize_path
 from grover.types import ConnectionListResult, ConnectionResult
 
@@ -57,18 +56,9 @@ class ConnectionMixin:
                 connection_type=connection_type,
             )
 
-        backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
-        if backend is None:
-            return ConnectionResult(
-                success=False,
-                message="Backend does not support connections",
-                source_path=source_path,
-                target_path=target_path,
-                connection_type=connection_type,
-            )
-
+        assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
-            result = await backend.add_connection(
+            result = await mount.filesystem.add_connection(
                 source_path,
                 target_path,
                 connection_type,
@@ -118,18 +108,9 @@ class ConnectionMixin:
                 connection_type=connection_type or "",
             )
 
-        backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
-        if backend is None:
-            return ConnectionResult(
-                success=False,
-                message="Backend does not support connections",
-                source_path=source_path,
-                target_path=target_path,
-                connection_type=connection_type or "",
-            )
-
+        assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
-            result = await backend.delete_connection(
+            result = await mount.filesystem.delete_connection(
                 source_path,
                 target_path,
                 connection_type=connection_type,
@@ -159,12 +140,9 @@ class ConnectionMixin:
         except MountNotFoundError:
             return ConnectionListResult(connections=[], path=path)
 
-        backend = self._ctx.get_capability(mount.filesystem, SupportsConnections)
-        if backend is None:
-            return ConnectionListResult(connections=[], path=path)
-
+        assert mount.filesystem is not None
         async with self._ctx.session_for(mount) as sess:
-            return await backend.list_connections(
+            return await mount.filesystem.list_connections(
                 path,
                 direction=direction,
                 connection_type=connection_type,

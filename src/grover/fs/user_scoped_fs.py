@@ -4,7 +4,7 @@ Subclasses ``DatabaseFileSystem`` and adds per-user path namespacing,
 ``@shared`` virtual directory resolution, share permission checks,
 and owner-scoped trash.  Implements the ``SupportsReBAC`` protocol.
 
-VFS treats this as an opaque ``StorageBackend`` — all user-scoping
+VFS treats this as an opaque ``GroverFileSystem`` — all user-scoping
 logic lives here, not in VFS.
 """
 
@@ -50,8 +50,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.chunks import FileChunkBase
-    from grover.models.files import FileBase, FileVersionBase
+    from grover.models.chunk import FileChunkBase
+    from grover.models.file import FileBase
+    from grover.models.version import FileVersionBase
 
     from .providers.protocols import (
         ChunkProvider,
@@ -74,8 +75,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
     virtual namespace resolves to another user's files with permission
     checks via a ``SharingService``.
 
-    Implements ``StorageBackend``, ``SupportsVersions``, ``SupportsTrash``,
-    and ``SupportsReBAC`` protocols.
+    Implements ``GroverFileSystem`` and ``SupportsReBAC`` protocols.
     """
 
     def __init__(
@@ -356,7 +356,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         )
 
     # ------------------------------------------------------------------
-    # Core protocol: StorageBackend (overrides)
+    # Core protocol: GroverFileSystem (overrides)
     # ------------------------------------------------------------------
 
     async def read(
@@ -826,7 +826,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         return result
 
     # ------------------------------------------------------------------
-    # Capability: SupportsVersions (overrides)
+    # Version operations (overrides)
     # ------------------------------------------------------------------
 
     async def list_versions(
@@ -899,7 +899,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         return result
 
     # ------------------------------------------------------------------
-    # Capability: SupportsTrash (overrides)
+    # Trash operations (overrides)
     # ------------------------------------------------------------------
 
     async def list_trash(
@@ -1109,7 +1109,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         )
 
     # ------------------------------------------------------------------
-    # Capability: SupportsFileChunks (overrides with user scoping)
+    # File chunk operations (overrides with user scoping)
     # ------------------------------------------------------------------
 
     async def replace_file_chunks(

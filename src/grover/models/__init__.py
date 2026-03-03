@@ -1,15 +1,14 @@
 """SQLModel database models for Grover."""
 
-from grover.models.chunks import FileChunk, FileChunkBase
-from grover.models.connections import FileConnection, FileConnectionBase
-from grover.models.files import (
+from grover.models.chunk import FileChunk, FileChunkBase
+from grover.models.connection import FileConnection, FileConnectionBase
+from grover.models.file import (
     File,
     FileBase,
-    FileVersion,
-    FileVersionBase,
 )
-from grover.models.shares import FileShare, FileShareBase
+from grover.models.share import FileShare, FileShareBase
 from grover.models.vector import Vector, VectorType
+from grover.models.version import FileVersion, FileVersionBase
 
 __all__ = [
     "File",

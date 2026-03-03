@@ -6,8 +6,8 @@ import asyncio
 import threading
 from typing import TYPE_CHECKING, TypeVar
 
-from grover._grover_async import GroverAsync
 from grover.fs.permissions import Permission
+from grover.grover_async import GroverAsync
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
@@ -16,11 +16,12 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-    from grover.fs.protocol import StorageBackend
+    from grover.fs.protocol import GroverFileSystem
     from grover.fs.providers.graph.protocols import GraphStore
     from grover.fs.providers.protocols import EmbeddingProvider, SearchProvider
-    from grover.models.chunks import FileChunkBase
-    from grover.models.files import FileBase, FileVersionBase
+    from grover.models.chunk import FileChunkBase
+    from grover.models.file import FileBase
+    from grover.models.version import FileVersionBase
     from grover.mount import Mount
     from grover.types import (
         ConnectionListResult,
@@ -122,7 +123,7 @@ class Grover:
     def add_mount(
         self,
         path_or_mount: str | Mount | None = None,
-        filesystem: StorageBackend | None = None,
+        filesystem: GroverFileSystem | None = None,
         *,
         engine: AsyncEngine | None = None,
         session_factory: Callable[..., AsyncSession] | None = None,

@@ -14,8 +14,8 @@ from sqlmodel import select
 from grover.fs.exceptions import AuthenticationRequiredError
 from grover.fs.sharing import SharingService
 from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.models.files import File
-from grover.models.shares import FileShare
+from grover.models.file import File
+from grover.models.share import FileShare
 from grover.types import ShareEvidence, ShareResult
 
 if TYPE_CHECKING:
@@ -1193,23 +1193,11 @@ class TestProtocolCompliance:
         usfs = UserScopedFileSystem(sharing=sharing)
         assert isinstance(usfs, SupportsReBAC)
 
-    def test_supports_versions_protocol(self):
-        from grover.fs.protocol import SupportsVersions
-
-        usfs = UserScopedFileSystem()
-        assert isinstance(usfs, SupportsVersions)
-
-    def test_supports_trash_protocol(self):
-        from grover.fs.protocol import SupportsTrash
-
-        usfs = UserScopedFileSystem()
-        assert isinstance(usfs, SupportsTrash)
-
     def test_supports_storage_backend_protocol(self):
-        from grover.fs.protocol import StorageBackend
+        from grover.fs.protocol import GroverFileSystem
 
         usfs = UserScopedFileSystem()
-        assert isinstance(usfs, StorageBackend)
+        assert isinstance(usfs, GroverFileSystem)
 
 
 # ---------------------------------------------------------------------------
