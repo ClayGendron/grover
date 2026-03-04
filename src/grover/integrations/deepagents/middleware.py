@@ -234,7 +234,7 @@ class GroverMiddleware(AgentMiddleware):
                 return asyncio.run(get_version_content_async(path, version))
             assert grover_s is not None
             try:
-                result = grover_s.get_version_content(path, version)
+                result = grover_s.read_version(path, version)
             except Exception as e:
                 return f"Error: {e}"
             return _format_version_content(result, path, version)
@@ -242,7 +242,7 @@ class GroverMiddleware(AgentMiddleware):
         async def get_version_content_async(path: str, version: int) -> str:
             assert grover_a is not None
             try:
-                result = await grover_a.get_version_content(path, version)
+                result = await grover_a.read_version(path, version)
             except Exception as e:
                 return f"Error: {e}"
             return _format_version_content(result, path, version)

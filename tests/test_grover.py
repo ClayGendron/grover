@@ -424,3 +424,41 @@ class TestGroverSyncAuthenticated:
         assert copy_result.success is True
         move_result = auth_grover.move("/ws/src.md", "/ws/moved.md", user_id="alice")
         assert move_result.success is True
+
+
+# ==================================================================
+# Version operations (sync)
+# ==================================================================
+
+
+class TestGroverVersionOps:
+    def test_read_version(self, grover: Grover):
+        """Sync read_version returns the content of a specific version."""
+        grover.write("/project/doc.txt", "version one")
+        grover.write("/project/doc.txt", "version two")
+        result = grover.read_version("/project/doc.txt", 1)
+        assert result.success is True
+        assert result.content == "version one"
+
+    def test_diff_versions_basic(self, grover: Grover):
+        """Sync diff_versions computes a unified diff."""
+        grover.write("/project/doc.txt", "hello\n")
+        grover.write("/project/doc.txt", "hello world\n")
+        result = grover.diff_versions("/project/doc.txt", 1, 2)
+        assert result.success is True
+        assert result.version_a == 1
+        assert result.version_b == 2
+        assert result.diff != ""
+
+    def test_diff_versions_invalid_version(self, grover: Grover):
+        """Sync diff_versions with nonexistent version returns failure."""
+        grover.write("/project/doc.txt", "content\n")
+        result = grover.diff_versions("/project/doc.txt", 1, 999)
+        assert result.success is False
+
+    def test_tree(self, grover: Grover):
+        """tree() works on sync facade."""
+        grover.write("/project/a.py", "a\n")
+        result = grover.tree("/project")
+        assert result.success is True
+        assert len(result) >= 1

@@ -5,14 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from grover.results import (
-    FileCandidate,
     FileSearchResult,
     GlobResult,
     GrepResult,
     LexicalEvidence,
     LexicalSearchResult,
-    TreeEvidence,
-    TreeResult,
     VectorSearchResult,
 )
 from grover.util.paths import normalize_path
@@ -165,52 +162,6 @@ class SearchOpsMixin:
             return result.rebase(mount.path)
         except Exception as e:
             return GrepResult(success=False, message=f"Grep failed: {e}", pattern=pattern)
-
-    async def tree(
-        self, path: str = "/", *, max_depth: int | None = None, user_id: str | None = None
-    ) -> TreeResult:
-        path = normalize_path(path)
-        try:
-            if path == "/":
-                root_candidates = [
-                    FileCandidate(
-                        path=mount.path,
-                        evidence=[
-                            TreeEvidence(
-                                operation="tree",
-                                depth=0,
-                                is_directory=True,
-                            )
-                        ],
-                    )
-                    for mount in self._ctx.registry.list_visible_mounts()
-                ]
-                combined = TreeResult(success=True, message="", file_candidates=root_candidates)
-
-                if max_depth is None or max_depth > 0:
-                    for mount in self._ctx.registry.list_visible_mounts():
-                        assert mount.filesystem is not None
-                        async with self._ctx.session_for(mount) as sess:
-                            result = await mount.filesystem.tree(
-                                "/", max_depth=max_depth, session=sess, user_id=user_id
-                            )
-                        if result.success:
-                            combined = combined | result.rebase(mount.path)
-
-                combined.message = (
-                    f"{combined.total_dirs} directories, {combined.total_files} files"
-                )
-                return combined
-
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.tree(
-                    rel_path, max_depth=max_depth, session=sess, user_id=user_id
-                )
-            return result.rebase(mount.path)
-        except Exception as e:
-            return TreeResult(success=False, message=f"Tree failed: {e}")
 
     # ------------------------------------------------------------------
     # Search

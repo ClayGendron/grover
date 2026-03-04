@@ -56,7 +56,7 @@ DatabaseFileSystem
 
 ```
 GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin, GraphOpsMixin,
-            VersionTrashMixin, ShareMixin, ConnectionMixin, IndexMixin)
+            ShareMixin, ConnectionMixin, IndexMixin)
 ```
 
 Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every mixin declares `_ctx: GroverContext` as a class-level annotation so type checkers resolve attribute access.
@@ -64,10 +64,9 @@ Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every m
 | Mixin | File | Responsibility |
 |-------|------|---------------|
 | `MountMixin` | `api/mounting.py` | Mount lifecycle: add, unmount, init meta FS |
-| `FileOpsMixin` | `api/file_ops.py` | File CRUD: read, write, edit, delete, mkdir, list_dir, move, copy |
-| `SearchOpsMixin` | `api/search_ops.py` | Queries: glob, grep, tree, vector/lexical/hybrid search |
+| `FileOpsMixin` | `api/file_ops.py` | File CRUD, tree, versions, trash, reconciliation |
+| `SearchOpsMixin` | `api/search_ops.py` | Queries: glob, grep, vector/lexical/hybrid search |
 | `GraphOpsMixin` | `api/graph_ops.py` | Graph queries: predecessors, successors, pagerank |
-| `VersionTrashMixin` | `api/version_trash.py` | Versions, trash, reconciliation |
 | `ShareMixin` | `api/sharing.py` | Share/unshare between users |
 | `ConnectionMixin` | `api/connections.py` | Manual edge CRUD (persisted through FS) |
 | `IndexMixin` | `api/indexing.py` | Event handlers, analysis pipeline, indexing, save, close |

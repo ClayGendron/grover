@@ -15,7 +15,6 @@ from grover.api.indexing import IndexMixin
 from grover.api.mounting import MountMixin
 from grover.api.search_ops import SearchOpsMixin
 from grover.api.sharing import ShareMixin
-from grover.api.version_trash import VersionTrashMixin
 from grover.mount import MountRegistry
 from grover.permissions import Permission
 from grover.worker import BackgroundWorker, IndexingMode
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
         ConnectionListResult,
         ConnectionResult,
         DeleteResult,
+        DiffVersionsResult,
         EditResult,
         ExistsResult,
         FileInfoResult,
@@ -57,7 +57,6 @@ if TYPE_CHECKING:
         TrashResult,
         TreeResult,
         VectorSearchResult,
-        VerifyVersionResult,
         VersionResult,
         WriteResult,
     )
@@ -70,7 +69,6 @@ class GroverAsync(
     FileOpsMixin,
     SearchOpsMixin,
     GraphOpsMixin,
-    VersionTrashMixin,
     ShareMixin,
     ConnectionMixin,
     IndexMixin,
@@ -344,10 +342,15 @@ class Grover:
     def list_versions(self, path: str, *, user_id: str | None = None) -> VersionResult:
         return self._run(self._async.list_versions(path, user_id=user_id))
 
-    def get_version_content(
+    def read_version(
         self, path: str, version: int, *, user_id: str | None = None
     ) -> GetVersionContentResult:
-        return self._run(self._async.get_version_content(path, version, user_id=user_id))
+        return self._run(self._async.read_version(path, version, user_id=user_id))
+
+    def diff_versions(
+        self, path: str, version_a: int, version_b: int, *, user_id: str | None = None
+    ) -> DiffVersionsResult:
+        return self._run(self._async.diff_versions(path, version_a, version_b, user_id=user_id))
 
     def restore_version(
         self, path: str, version: int, *, user_id: str | None = None
@@ -365,12 +368,6 @@ class Grover:
 
     def reconcile(self, mount_path: str | None = None) -> ReconcileResult:
         return self._run(self._async.reconcile(mount_path))
-
-    def verify_versions(self, path: str, *, user_id: str | None = None) -> VerifyVersionResult:
-        return self._run(self._async.verify_versions(path, user_id=user_id))
-
-    def verify_all_versions(self, mount_path: str | None = None) -> list[VerifyVersionResult]:
-        return self._run(self._async.verify_all_versions(mount_path))
 
     # ------------------------------------------------------------------
     # Share wrappers (sync)
