@@ -143,9 +143,7 @@ class TestListSharesOnPath:
 
 
 class TestListSharedWith:
-    async def test_list_shared_with(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_list_shared_with(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         await usfs._create_share(
             async_session,
             "/alice/a.md",
@@ -312,9 +310,7 @@ class TestCheckPermission:
         result = await usfs._check_permission(async_session, "/alice/notes.md", "bob")
         assert result is True
 
-    async def test_directory_inherit(
-        self, usfs: UserScopedFileSystem, async_session: AsyncSession
-    ):
+    async def test_directory_inherit(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
         """Share on /alice/projects/ grants /alice/projects/docs/file.md."""
         await usfs._create_share(
             async_session,
@@ -323,9 +319,7 @@ class TestCheckPermission:
             permission="read",
             granted_by="alice",
         )
-        result = await usfs._check_permission(
-            async_session, "/alice/projects/docs/file.md", "bob"
-        )
+        result = await usfs._check_permission(async_session, "/alice/projects/docs/file.md", "bob")
         assert result is True
 
     async def test_no_match(self, usfs: UserScopedFileSystem, async_session: AsyncSession):
@@ -418,9 +412,7 @@ class TestCheckPermission:
             permission="read",
             granted_by="alice",
         )
-        result = await usfs._check_permission(
-            async_session, "/alice/deep/nested/file.md", "bob"
-        )
+        result = await usfs._check_permission(async_session, "/alice/deep/nested/file.md", "bob")
         assert result is True
 
 
@@ -462,9 +454,7 @@ class TestUpdateSharePaths:
             permission="read",
             granted_by="alice",
         )
-        count = await usfs._update_share_paths(
-            async_session, "/alice/notes.md", "/alice/final.md"
-        )
+        count = await usfs._update_share_paths(async_session, "/alice/notes.md", "/alice/final.md")
         assert count == 1
         shares = await usfs._list_shared_with(async_session, "bob")
         assert shares[0].path == "/alice/final.md"

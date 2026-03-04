@@ -357,7 +357,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         count = 0
         for share in shares:
             if share.path == old_prefix or share.path.startswith(old_prefix + "/"):
-                share.path = new_prefix + share.path[len(old_prefix):]
+                share.path = new_prefix + share.path[len(old_prefix) :]
                 count += 1
         if count > 0:
             await session.flush()
