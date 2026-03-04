@@ -44,14 +44,14 @@ except ImportError as _exc:
         "Install it with: pip install 'grover[langchain]'"
     ) from _exc
 
-from grover.integrations.langchain._loader import GroverLoader
-from grover.integrations.langchain._retriever import GroverRetriever
+from grover.integrations.langchain.loader import GroverLoader
+from grover.integrations.langchain.retriever import GroverRetriever
 
 __all__ = ["GroverLoader", "GroverRetriever"]
 
 # GroverStore is conditional on langgraph
 try:
-    from grover.integrations.langchain._store import GroverStore
+    from grover.integrations.langchain.store import GroverStore
 
     __all__ = [*__all__, "GroverStore"]
 except ImportError:

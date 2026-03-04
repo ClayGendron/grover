@@ -9,7 +9,7 @@ Both classes accept ``Grover`` (sync) or ``GroverAsync`` (native async).
 Sync usage::
 
     from grover import Grover
-    from grover.fs.local_fs import LocalFileSystem
+    from grover.backends.local import LocalFileSystem
     from grover.integrations.deepagents import GroverBackend, GroverMiddleware
 
     g = Grover()
@@ -21,7 +21,7 @@ Sync usage::
 Async usage::
 
     from grover import GroverAsync
-    from grover.fs.local_fs import LocalFileSystem
+    from grover.backends.local import LocalFileSystem
     from grover.integrations.deepagents import GroverBackend, GroverMiddleware
 
     ga = GroverAsync()
@@ -42,7 +42,7 @@ except ImportError as _exc:
         "Install it with: pip install 'grover[deepagents]'"
     ) from _exc
 
-from grover.integrations.deepagents._backend import GroverBackend
-from grover.integrations.deepagents._middleware import GroverMiddleware
+from grover.integrations.deepagents.backend import GroverBackend
+from grover.integrations.deepagents.middleware import GroverMiddleware
 
 __all__ = ["GroverBackend", "GroverMiddleware"]

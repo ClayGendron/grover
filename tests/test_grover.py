@@ -10,11 +10,11 @@ if TYPE_CHECKING:
 import pytest
 
 from _helpers import FAKE_DIM, FakeProvider
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.search.local import LocalVectorStore
-from grover.grover import Grover
-from grover.types import GraphResult, VectorSearchResult
+from grover.backends.local import LocalFileSystem
+from grover.client import Grover
+from grover.providers.graph import RustworkxGraph
+from grover.providers.search.local import LocalVectorStore
+from grover.results import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -376,7 +376,7 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     """Sync Grover with a UserScopedFileSystem backend."""
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    from grover.fs.user_scoped_fs import UserScopedFileSystem
+    from grover.backends.user_scoped import UserScopedFileSystem
     from grover.models.share import FileShare
 
     g = Grover()

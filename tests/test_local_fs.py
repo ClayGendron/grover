@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from grover.fs.local_fs import LocalFileSystem
+from grover.backends.local import LocalFileSystem
 
 
 async def _make_local_fs(tmp_path: Path) -> tuple[LocalFileSystem, AsyncSession]:
@@ -461,7 +461,7 @@ class TestLocalFSInheritsDatabaseFS:
 
     async def test_isinstance_database_fs(self, tmp_path: Path):
         """LocalFileSystem is a subclass of DatabaseFileSystem."""
-        from grover.fs.database_fs import DatabaseFileSystem
+        from grover.backends.database import DatabaseFileSystem
 
         fs, _ = await _make_local_fs(tmp_path)
         assert isinstance(fs, DatabaseFileSystem)
@@ -469,7 +469,7 @@ class TestLocalFSInheritsDatabaseFS:
 
     async def test_has_disk_storage_provider(self, tmp_path: Path):
         """LocalFileSystem creates a DiskStorageProvider."""
-        from grover.fs.providers.storage.disk import DiskStorageProvider
+        from grover.providers.storage.disk import DiskStorageProvider
 
         fs, _ = await _make_local_fs(tmp_path)
         assert isinstance(fs.storage_provider, DiskStorageProvider)

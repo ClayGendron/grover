@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 from grover import Grover
-from grover.fs.database_fs import DatabaseFileSystem
+from grover.backends.database import DatabaseFileSystem
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SQLITE_PATH = REPO_ROOT / "grover_repo.db"

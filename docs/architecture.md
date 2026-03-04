@@ -52,7 +52,7 @@ DatabaseFileSystem
 
 ## GroverAsync facade structure
 
-`GroverAsync` is split into mixin classes, each in its own file under `src/grover/facade/`. The main class inherits all mixins and defines only `__init__`:
+`GroverAsync` is split into mixin classes, each in its own file under `src/grover/api/`. The main class inherits all mixins and defines only `__init__`:
 
 ```
 GroverAsync(MountMixin, FileOpsMixin, SearchOpsMixin, GraphOpsMixin,
@@ -63,16 +63,16 @@ Shared state lives in a `GroverContext` dataclass stored as `self._ctx`. Every m
 
 | Mixin | File | Responsibility |
 |-------|------|---------------|
-| `MountMixin` | `facade/mounting.py` | Mount lifecycle: add, unmount, init meta FS |
-| `FileOpsMixin` | `facade/file_ops.py` | File CRUD: read, write, edit, delete, mkdir, list_dir, move, copy |
-| `SearchOpsMixin` | `facade/search_ops.py` | Queries: glob, grep, tree, vector/lexical/hybrid search |
-| `GraphOpsMixin` | `facade/graph_ops.py` | Graph queries: dependents, dependencies, impacts, pagerank |
-| `VersionTrashMixin` | `facade/version_trash.py` | Versions, trash, reconciliation |
-| `ShareMixin` | `facade/sharing.py` | Share/unshare between users |
-| `ConnectionMixin` | `facade/connections.py` | Manual edge CRUD (persisted through FS) |
-| `IndexMixin` | `facade/indexing.py` | Event handlers, analysis pipeline, indexing, save, close |
+| `MountMixin` | `api/mounting.py` | Mount lifecycle: add, unmount, init meta FS |
+| `FileOpsMixin` | `api/file_ops.py` | File CRUD: read, write, edit, delete, mkdir, list_dir, move, copy |
+| `SearchOpsMixin` | `api/search_ops.py` | Queries: glob, grep, tree, vector/lexical/hybrid search |
+| `GraphOpsMixin` | `api/graph_ops.py` | Graph queries: dependents, dependencies, impacts, pagerank |
+| `VersionTrashMixin` | `api/version_trash.py` | Versions, trash, reconciliation |
+| `ShareMixin` | `api/sharing.py` | Share/unshare between users |
+| `ConnectionMixin` | `api/connections.py` | Manual edge CRUD (persisted through FS) |
+| `IndexMixin` | `api/indexing.py` | Event handlers, analysis pipeline, indexing, save, close |
 
-`GroverContext` (`facade/context.py`) holds the worker, mount registry, analyzer registry, indexing mode, and helper methods used across all mixins (session management, permission checks, path prefixing, graph resolution via `resolve_graph()`).
+`GroverContext` (`api/context.py`) holds the worker, mount registry, analyzer registry, indexing mode, and helper methods used across all mixins (session management, permission checks, path prefixing, graph resolution via `resolve_graph()`).
 
 **Why mixins?** Each method exists once — no forwarding stubs or delegation boilerplate. The public API is unchanged: `from grover import GroverAsync` works exactly as before.
 
@@ -98,7 +98,7 @@ These are checked at runtime with `isinstance(backend, SupportsReconcile)`. The 
 
 ### Provider protocols
 
-Provider protocols are co-located with their provider implementations. Each subdirectory under `fs/providers/` has a `protocol.py` defining its protocol:
+Provider protocols are co-located with their provider implementations. Each subdirectory under `providers/` has a `protocol.py` defining its protocol:
 
 ```python
 class StorageProvider(Protocol):    # Disk I/O: read/write/delete content
@@ -338,11 +338,9 @@ User scoping is implemented in `UserScopedFileSystem`, a subclass of `DatabaseFi
 To create a user-scoped mount, pass a `UserScopedFileSystem` as the backend:
 
 ```python
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.fs.sharing import SharingService
-from grover.models.share import FileShare
+from grover.backends.user_scoped import UserScopedFileSystem
 
-backend = UserScopedFileSystem(sharing=SharingService(FileShare))
+backend = UserScopedFileSystem()
 await g.add_mount("/ws", backend, engine=engine)
 ```
 
@@ -416,10 +414,10 @@ Metadata filters are expressed as a provider-agnostic AST (`Comparison` and `Log
 
 ## Adding a new embedding provider
 
-1. Create `src/grover/fs/providers/embedding/your_provider.py`.
+1. Create `src/grover/providers/embedding/your_provider.py`.
 2. Implement the `EmbeddingProvider` protocol: async `embed(text)`, async `embed_batch(texts)`, plus `dimensions` and `model_name` properties.
 3. Import-guard any optional dependencies.
-4. Add the provider to `src/grover/fs/providers/embedding/__init__.py`.
+4. Add the provider to `src/grover/providers/embedding/__init__.py`.
 5. Add tests in `tests/test_embedding_providers.py`.
 
 The provider is passed to `add_mount(..., embedding_provider=...)` at mount time.
@@ -444,11 +442,11 @@ All five integration classes (`GroverBackend`, `GroverMiddleware`, `GroverRetrie
 
 ## Adding a new vector store
 
-1. Create `src/grover/fs/providers/search/your_store.py`.
+1. Create `src/grover/providers/search/your_store.py`.
 2. Implement the `SearchProvider` protocol: `upsert()`, `vector_search()`, `delete()`, `fetch()`, `lexical_search()`, `connect()`, `close()`.
 3. Add any applicable capability protocols (e.g., `SupportsMetadataFilter`).
 4. Import-guard any optional dependencies.
-5. Add the store to `src/grover/fs/providers/search/__init__.py`.
+5. Add the store to `src/grover/providers/search/__init__.py`.
 6. Add tests in `tests/test_your_store.py`.
 
 The store is passed to `add_mount(..., search_provider=...)` at mount time. Stores that don't support lexical search should return an empty `LexicalSearchResult` from `lexical_search()`.

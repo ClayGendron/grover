@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlmodel import select
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.exceptions import AuthenticationRequiredError
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.grover_async import GroverAsync
+from grover.backends.database import DatabaseFileSystem
+from grover.backends.user_scoped import UserScopedFileSystem
+from grover.client import GroverAsync
+from grover.exceptions import AuthenticationRequiredError
 from grover.models.file import File
 from grover.models.share import FileShare
 from grover.worker import IndexingMode

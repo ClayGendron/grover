@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.backends.user_scoped import UserScopedFileSystem
 from grover.models.share import FileShare
 
 if TYPE_CHECKING:

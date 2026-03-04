@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.grover_async import GroverAsync
+from grover.backends.database import DatabaseFileSystem
+from grover.backends.user_scoped import UserScopedFileSystem
+from grover.client import GroverAsync
 from grover.models.share import FileShare
 from grover.worker import IndexingMode
 

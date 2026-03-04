@@ -11,10 +11,12 @@ from _helpers import FakeProvider
 
 lg = pytest.importorskip("langgraph")
 
-from grover.fs.local_fs import LocalFileSystem  # noqa: E402
-from grover.grover import Grover  # noqa: E402
-from grover.grover_async import GroverAsync  # noqa: E402
-from grover.integrations.langchain._store import GroverStore  # noqa: E402
+from grover.backends.local import LocalFileSystem  # noqa: E402
+from grover.client import (  # noqa: E402
+    Grover,
+    GroverAsync,
+)
+from grover.integrations.langchain.store import GroverStore  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

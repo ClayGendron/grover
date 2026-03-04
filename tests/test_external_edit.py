@@ -7,11 +7,11 @@ import hashlib
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from grover.fs.content import compute_content_hash
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.operations import check_external_edit
+from grover.backends.database import DatabaseFileSystem
 from grover.models.file import File
 from grover.models.version import FileVersion
+from grover.util.content import compute_content_hash
+from grover.util.operations import check_external_edit
 
 
 async def _make_fs():

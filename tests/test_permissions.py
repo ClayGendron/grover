@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.permissions import Permission
-from grover.grover_async import GroverAsync
-from grover.types import (
+from grover.backends.local import LocalFileSystem
+from grover.client import GroverAsync
+from grover.permissions import Permission
+from grover.results import (
     ConnectionListResult,
     ConnectionResult,
     DeleteResult,
@@ -349,6 +349,6 @@ class TestReconcileReadOnly:
     async def test_reconcile_skips_ro_mounts(self, grover_mixed: GroverAsync) -> None:
         stats = await grover_mixed.reconcile()
         # Should complete without error — ro mount skipped
-        from grover.types import ReconcileResult
+        from grover.results import ReconcileResult
 
         assert isinstance(stats, ReconcileResult)

@@ -6,13 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from grover.fs.content import (
+from grover.results import ReadResult
+from grover.util.content import (
     format_read_output,
     guess_mime_type,
     is_binary_file,
     is_text_file,
 )
-from grover.fs.paths import (
+from grover.util.paths import (
     from_trash_path,
     is_shared_path,
     is_trash_path,
@@ -21,7 +22,7 @@ from grover.fs.paths import (
     to_trash_path,
     validate_path,
 )
-from grover.fs.replace import (
+from grover.util.replace import (
     block_anchor_replacer,
     get_line_number,
     levenshtein,
@@ -30,7 +31,6 @@ from grover.fs.replace import (
     replace,
     simple_replacer,
 )
-from grover.types import ReadResult
 
 # ---------------------------------------------------------------------------
 # Path Utilities

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from grover.types import (
+from grover.results import (
     Evidence,
     FileSearchCandidate,
     FileSearchResult,

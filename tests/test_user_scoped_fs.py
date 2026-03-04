@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlmodel import select
 
-from grover.fs.exceptions import AuthenticationRequiredError
-from grover.fs.user_scoped_fs import UserScopedFileSystem
+from grover.backends.user_scoped import UserScopedFileSystem
+from grover.exceptions import AuthenticationRequiredError
 from grover.models.file import File
 from grover.models.share import FileShare
-from grover.types import ShareEvidence, ShareResult
+from grover.results import ShareEvidence, ShareResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -1188,13 +1188,13 @@ class TestShareCRUD:
 
 class TestProtocolCompliance:
     def test_supports_rebac_protocol(self):
-        from grover.fs.protocol import SupportsReBAC
+        from grover.backends.protocol import SupportsReBAC
 
         usfs = UserScopedFileSystem(share_model=FileShare)
         assert isinstance(usfs, SupportsReBAC)
 
     def test_supports_storage_backend_protocol(self):
-        from grover.fs.protocol import GroverFileSystem
+        from grover.backends.protocol import GroverFileSystem
 
         usfs = UserScopedFileSystem()
         assert isinstance(usfs, GroverFileSystem)

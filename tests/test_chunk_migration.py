@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from _helpers import FAKE_DIM, FakeProvider
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.protocol import GroverFileSystem
-from grover.fs.providers.search.local import LocalVectorStore
-from grover.grover_async import GroverAsync
+from grover.backends.local import LocalFileSystem
+from grover.backends.protocol import GroverFileSystem
+from grover.client import GroverAsync
+from grover.providers.search.local import LocalVectorStore
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from _helpers import FAKE_DIM, FakeProvider
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.providers.search.local import LocalVectorStore
-from grover.grover import Grover
-from grover.grover_async import GroverAsync
+from grover.backends.local import LocalFileSystem
+from grover.client import Grover, GroverAsync
+from grover.providers.search.local import LocalVectorStore
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:

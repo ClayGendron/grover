@@ -8,11 +8,10 @@ import pytest
 from sqlmodel import select
 
 from _helpers import FakeProvider
-from grover.fs.local_fs import LocalFileSystem
-from grover.grover import Grover
-from grover.grover_async import GroverAsync
+from grover.backends.local import LocalFileSystem
+from grover.client import Grover, GroverAsync
 from grover.models.version import FileVersion
-from grover.types.operations import VerifyVersionResult
+from grover.results.operations import VerifyVersionResult
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:

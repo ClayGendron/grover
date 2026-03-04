@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from grover.fs.providers.search.databricks import DatabricksVectorStore
-from grover.fs.providers.search.filters import and_, eq, gt
-from grover.fs.providers.search.types import IndexConfig, VectorEntry, VectorHit
+from grover.providers.search.databricks import DatabricksVectorStore
+from grover.providers.search.filters import and_, eq, gt
+from grover.providers.search.types import IndexConfig, VectorEntry, VectorHit
 
 # ------------------------------------------------------------------
 # Helpers
@@ -64,7 +64,7 @@ def mock_client(mock_index):
 async def store(mock_client, mock_index):
     """A connected DatabricksVectorStore with mocked SDK."""
     with patch(
-        "grover.fs.providers.search.databricks.VectorSearchClient",
+        "grover.providers.search.databricks.VectorSearchClient",
         return_value=mock_client,
     ):
         s = DatabricksVectorStore(
@@ -87,7 +87,7 @@ class TestLifecycle:
     @pytest.mark.asyncio
     async def test_connect_creates_client_and_index(self, mock_client, mock_index):
         with patch(
-            "grover.fs.providers.search.databricks.VectorSearchClient",
+            "grover.providers.search.databricks.VectorSearchClient",
             return_value=mock_client,
         ):
             s = DatabricksVectorStore(
@@ -404,7 +404,7 @@ class TestImportGuard:
     def test_import_guard_message(self):
         with (
             patch.dict("sys.modules", {"databricks": None, "databricks.vector_search": None}),
-            patch("grover.fs.providers.search.databricks._HAS_DATABRICKS", False),
+            patch("grover.providers.search.databricks._HAS_DATABRICKS", False),
             pytest.raises(ImportError, match="databricks-vectorsearch is required"),
         ):
             DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
@@ -417,37 +417,37 @@ class TestImportGuard:
 
 class TestProtocolConformance:
     def test_satisfies_search_provider(self):
-        from grover.fs.providers.search.protocol import SearchProvider
+        from grover.providers.search.protocol import SearchProvider
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SearchProvider)
 
     def test_satisfies_supports_metadata_filter(self):
-        from grover.fs.providers.search.protocol import SupportsMetadataFilter
+        from grover.providers.search.protocol import SupportsMetadataFilter
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsMetadataFilter)
 
     def test_satisfies_supports_index_lifecycle(self):
-        from grover.fs.providers.search.protocol import SupportsIndexLifecycle
+        from grover.providers.search.protocol import SupportsIndexLifecycle
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsIndexLifecycle)
 
     def test_satisfies_supports_hybrid_search(self):
-        from grover.fs.providers.search.protocol import SupportsHybridSearch
+        from grover.providers.search.protocol import SupportsHybridSearch
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert isinstance(s, SupportsHybridSearch)
 
     def test_does_not_satisfy_supports_namespaces(self):
-        from grover.fs.providers.search.protocol import SupportsNamespaces
+        from grover.providers.search.protocol import SupportsNamespaces
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert not isinstance(s, SupportsNamespaces)
 
     def test_does_not_satisfy_supports_reranking(self):
-        from grover.fs.providers.search.protocol import SupportsReranking
+        from grover.providers.search.protocol import SupportsReranking
 
         s = DatabricksVectorStore(index_name="x", endpoint_name="e", token="t")
         assert not isinstance(s, SupportsReranking)

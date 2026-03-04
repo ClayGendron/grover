@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from grover.fs.database_fs import DatabaseFileSystem
+from grover.backends.database import DatabaseFileSystem
 
 # =========================================================================
 # Helpers
@@ -67,7 +67,7 @@ class TestSessionInjection:
     async def test_write_without_session_raises(self):
         import pytest
 
-        from grover.fs.exceptions import GroverError
+        from grover.exceptions import GroverError
 
         db, _factory, engine = await _make_db_fs()
         with pytest.raises(GroverError, match="requires a session"):
@@ -77,7 +77,7 @@ class TestSessionInjection:
     async def test_read_without_session_raises(self):
         import pytest
 
-        from grover.fs.exceptions import GroverError
+        from grover.exceptions import GroverError
 
         db, _factory, engine = await _make_db_fs()
         with pytest.raises(GroverError, match="requires a session"):

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from grover.fs.providers.chunks.protocol import ChunkProvider
-from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.graph.protocol import GraphProvider
-from grover.fs.providers.storage.disk import DiskStorageProvider
-from grover.fs.providers.storage.protocol import StorageProvider
-from grover.fs.providers.versioning.protocol import VersionProvider
+from grover.providers.chunks.protocol import ChunkProvider
+from grover.providers.graph import RustworkxGraph
+from grover.providers.graph.protocol import GraphProvider
+from grover.providers.storage.disk import DiskStorageProvider
+from grover.providers.storage.protocol import StorageProvider
+from grover.providers.versioning.protocol import VersionProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -328,13 +328,11 @@ class TestDiskStorageListDir:
 
 class TestDefaultProviderExports:
     def test_default_version_provider_is_accessible(self) -> None:
-        from grover.fs import providers as prov
-        from grover.fs.providers import versioning
+        from grover.providers import versioning
 
-        assert prov.DefaultVersionProvider is versioning.DefaultVersionProvider
+        assert versioning.DefaultVersionProvider is not None
 
     def test_default_chunk_provider_is_accessible(self) -> None:
-        from grover.fs import providers as prov
-        from grover.fs.providers import chunks
+        from grover.providers import chunks
 
-        assert prov.DefaultChunkProvider is chunks.DefaultChunkProvider
+        assert chunks.DefaultChunkProvider is not None

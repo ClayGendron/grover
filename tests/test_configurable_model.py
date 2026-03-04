@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.dialect import upsert_file
-from grover.fs.providers.graph import RustworkxGraph
+from grover.backends.database import DatabaseFileSystem
 from grover.models.connection import FileConnection
 from grover.models.file import File, FileBase
 from grover.models.version import FileVersionBase
+from grover.providers.graph import RustworkxGraph
+from grover.util.dialect import upsert_file
 
 # ---------------------------------------------------------------------------
 # Custom model definitions (what a developer would write)

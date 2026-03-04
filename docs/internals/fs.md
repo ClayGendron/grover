@@ -360,7 +360,7 @@ v1 (snapshot) → v2 (diff) → v3 (diff) → ... → v20 (snapshot) → v21 (di
 
 To reconstruct v23: start from v20 (nearest snapshot), apply diffs for v21, v22, v23.
 
-### Diff Utilities (`fs/diff.py`)
+### Diff Utilities (`providers/versioning/diff.py`)
 
 - `compute_diff(old, new)` — Generates a unified diff via `difflib.unified_diff`. Handles missing-newline-at-EOF markers required by the `unidiff` parser.
 - `apply_diff(base, diff)` — Parses a unified diff with `unidiff.PatchSet` and applies hunks in reverse order. Returns the base unchanged if the diff is empty.

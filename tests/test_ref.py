@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from grover.fs.paths import normalize_path, split_path
 from grover.ref import Ref
+from grover.util.paths import normalize_path, split_path
 
 # ==================================================================
 # Construction

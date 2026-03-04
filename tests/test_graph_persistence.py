@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from grover.fs.providers.graph import RustworkxGraph
 from grover.models.connection import FileConnection
 from grover.models.file import File
+from grover.providers.graph import RustworkxGraph
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

@@ -18,12 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from _helpers import FakeProvider
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.providers.graph import RustworkxGraph
-from grover.grover_async import GroverAsync
+from grover.backends.database import DatabaseFileSystem
+from grover.backends.local import LocalFileSystem
+from grover.client import GroverAsync
 from grover.models.connection import FileConnection
-from grover.types import ConnectionResult
+from grover.providers.graph import RustworkxGraph
+from grover.results import ConnectionResult
 
 if TYPE_CHECKING:
     from pathlib import Path

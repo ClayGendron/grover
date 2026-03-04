@@ -84,7 +84,7 @@ uv run pytest --cov
 
 Tests live in `tests/` and use pytest with `pytest-asyncio` (async mode is set to `auto`). A few conventions:
 
-- Test files mirror the source structure: `src/grover/fs/vfs.py` is tested in `tests/test_vfs.py`.
+- Test files mirror the source structure: `src/grover/backends/local.py` is tested in `tests/test_local_fs.py`.
 - Shared fixtures are in `tests/conftest.py` (in-memory SQLite engines, async sessions, etc.).
 - Use the `@pytest.mark.slow` and `@pytest.mark.integration` markers when appropriate.
 - Prefer in-memory SQLite and fake backends for unit tests; use temp directories for LocalFileSystem tests.
@@ -104,24 +104,36 @@ to miss the boundary snapshot and fall back to a stale one.
 
 ```
 src/grover/
-├── _grover.py            # Sync wrapper (Grover)
-├── _grover_async.py      # Async core (GroverAsync)
+├── client.py             # Async core (GroverAsync)
+├── sync_client.py        # Sync wrapper (Grover)
 ├── ref.py                # Ref frozen dataclass
-├── events.py             # EventBus and event types
-├── fs/                   # Filesystem layer
-│   ├── vfs.py            # Mount router
-│   ├── local_fs.py       # Disk + SQLite backend
-│   ├── database_fs.py    # Pure-database backend
-│   ├── protocol.py       # StorageBackend + capability protocols
-│   ├── operations.py     # Shared orchestration functions
+├── worker.py             # BackgroundWorker for async indexing
+├── exceptions.py         # Error hierarchy
+├── permissions.py        # Permission enum
+├── mount.py              # Mount dataclass + MountRegistry
+├── api/                  # GroverAsync mixin implementations
+│   ├── context.py        # GroverContext shared state
+│   ├── mounting.py       # Mount lifecycle
+│   ├── file_ops.py       # File CRUD
+│   ├── search_ops.py     # Search and query operations
 │   └── ...
-├── graph/                # Knowledge graph
-│   ├── _graph.py         # rustworkx wrapper
-│   └── analyzers/        # Language-specific code analyzers
-├── search/               # Vector search
-│   ├── _index.py         # usearch HNSW wrapper
-│   └── providers/        # Embedding providers
-└── models/               # SQLModel database models
+├── backends/             # Filesystem implementations
+│   ├── protocol.py       # GroverFileSystem + capability protocols
+│   ├── database.py       # Pure-database backend
+│   ├── local.py          # Disk + SQLite backend
+│   └── user_scoped.py    # User-scoped multi-tenant backend
+├── providers/            # Pluggable provider families
+│   ├── graph/            # rustworkx graph provider
+│   ├── search/           # Vector stores (local, Pinecone, Databricks)
+│   ├── embedding/        # Embedding providers (OpenAI, LangChain)
+│   ├── storage/          # Disk storage provider
+│   ├── versioning/       # Version + diff providers
+│   └── chunks/           # Code chunk provider
+├── results/              # Result types (operations + search)
+├── models/               # SQLModel database models
+├── analyzers/            # Language-specific code analyzers
+├── util/                 # Shared utilities (paths, content, patterns)
+└── integrations/         # Framework integrations (deepagents, langchain)
 ```
 
 For a deeper dive into patterns and design principles, see [docs/architecture.md](docs/architecture.md).

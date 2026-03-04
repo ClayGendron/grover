@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, SQLModel, select
 
-from grover.fs.providers.versioning import apply_diff, compute_diff, reconstruct_version
 from grover.models import (
     File,
     FileConnection,
@@ -13,6 +12,7 @@ from grover.models import (
     FileShareBase,
     FileVersion,
 )
+from grover.providers.versioning import apply_diff, compute_diff, reconstruct_version
 
 # ---------------------------------------------------------------------------
 # Table creation & basic CRUD

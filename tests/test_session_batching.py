@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from _helpers import FakeProvider
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.grover_async import GroverAsync
+from grover.backends.database import DatabaseFileSystem
+from grover.client import GroverAsync
 from grover.models.chunk import FileChunk
 from grover.models.connection import FileConnection
 
@@ -371,7 +371,7 @@ class TestAnalyzeEdgeCases:
 
     async def test_analyze_read_only_mount_skips_connections(self, tmp_path: Path) -> None:
         """Connection writes should be skipped for read-only mounts."""
-        from grover.fs.permissions import Permission
+        from grover.permissions import Permission
 
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:
@@ -411,7 +411,7 @@ class TestAnalyzeEdgeCases:
 
     async def test_analyze_fallback_readonly_mount(self, tmp_path: Path) -> None:
         """Read-only mount should add edges directly to graph, skipping DB."""
-        from grover.fs.permissions import Permission
+        from grover.permissions import Permission
 
         engine = create_async_engine("sqlite+aiosqlite://", echo=False)
         async with engine.begin() as conn:

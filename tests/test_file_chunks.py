@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, SQLModel, select
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.protocol import GroverFileSystem
-from grover.fs.providers.chunks import DefaultChunkProvider
+from grover.backends.database import DatabaseFileSystem
+from grover.backends.local import LocalFileSystem
+from grover.backends.protocol import GroverFileSystem
 from grover.models.chunk import FileChunk, FileChunkBase
+from grover.providers.chunks import DefaultChunkProvider
 
 # ---------------------------------------------------------------------------
 # Model tests (sync — same pattern as test_models.py)

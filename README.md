@@ -46,7 +46,7 @@ Requires Python 3.12+.
 
 ```python
 from grover import Grover
-from grover.fs import LocalFileSystem
+from grover.backends.local import LocalFileSystem
 
 # Create a Grover instance (state is stored in .grover/)
 g = Grover()
@@ -80,8 +80,8 @@ sub = g.meeting_subgraph(["/project/a.py", "/project/b.py"])  # connecting subgr
 nodes = g.find_nodes(lang="python")                       # filter by attributes
 
 # Semantic search (requires embedding + search providers)
-from grover.fs.providers.search import LocalVectorStore
-from grover.fs.providers.embedding import OpenAIEmbedding
+from grover.providers.search import LocalVectorStore
+from grover.providers.embedding import OpenAIEmbedding
 
 g2 = Grover()
 g2.add_mount("/project", backend,
@@ -178,7 +178,7 @@ Grover supports two storage backends through a common protocol:
 Both backends support versioning and trash. You can mount them side by side:
 
 ```python
-from grover.fs import LocalFileSystem, DatabaseFileSystem
+from grover.backends import LocalFileSystem, DatabaseFileSystem
 
 g = Grover()
 
@@ -194,12 +194,10 @@ g.add_mount("/docs", DatabaseFileSystem(dialect="postgresql"))
 For multi-tenant deployments, mount a `UserScopedFileSystem` to enable per-user namespacing:
 
 ```python
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.fs.sharing import SharingService
-from grover.models.share import FileShare
+from grover.backends.user_scoped import UserScopedFileSystem
 
 g = GroverAsync()
-backend = UserScopedFileSystem(sharing=SharingService(FileShare))
+backend = UserScopedFileSystem()
 await g.add_mount("/ws", backend, engine=engine)
 
 # Each user has their own namespace
@@ -322,7 +320,7 @@ Grover is in its first release cycle. Here's what's coming:
 - **More language analyzers** — Rust, Java, C#
 - **More embedding providers** — Cohere, Voyage (OpenAI and LangChain adapters are already available)
 
-See the [implementation plan](grover_implementation_plan.md) for the full roadmap.
+See the [implementation plan](docs/plans/grover_implementation_plan.md) for the full roadmap.
 
 ## Contributing
 

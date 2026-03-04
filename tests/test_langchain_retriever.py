@@ -13,11 +13,13 @@ lc = pytest.importorskip("langchain_core")
 
 from langchain_core.documents import Document  # noqa: E402
 
-from grover.fs.local_fs import LocalFileSystem  # noqa: E402
-from grover.fs.providers.search.local import LocalVectorStore  # noqa: E402
-from grover.grover import Grover  # noqa: E402
-from grover.grover_async import GroverAsync  # noqa: E402
-from grover.integrations.langchain._retriever import GroverRetriever  # noqa: E402
+from grover.backends.local import LocalFileSystem  # noqa: E402
+from grover.client import (  # noqa: E402
+    Grover,
+    GroverAsync,
+)
+from grover.integrations.langchain.retriever import GroverRetriever  # noqa: E402
+from grover.providers.search.local import LocalVectorStore  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

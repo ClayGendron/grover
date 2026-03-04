@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.graph.protocol import (
+from grover.providers.graph import RustworkxGraph
+from grover.providers.graph.protocol import (
     SupportsCentrality,
     SupportsConnectivity,
     SupportsTraversal,

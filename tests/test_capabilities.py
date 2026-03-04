@@ -8,16 +8,16 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.exceptions import GroverError
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.protocol import (
+from grover.backends.database import DatabaseFileSystem
+from grover.backends.local import LocalFileSystem
+from grover.backends.protocol import (
     GroverFileSystem,
     SupportsReBAC,
     SupportsReconcile,
 )
-from grover.fs.user_scoped_fs import UserScopedFileSystem
-from grover.grover_async import GroverAsync
+from grover.backends.user_scoped import UserScopedFileSystem
+from grover.client import GroverAsync
+from grover.exceptions import GroverError
 
 if TYPE_CHECKING:
     from pathlib import Path

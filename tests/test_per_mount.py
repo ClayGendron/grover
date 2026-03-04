@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from _helpers import FAKE_DIM, FakeProvider
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.search.local import LocalVectorStore
-from grover.grover_async import GroverAsync
-from grover.types import GraphResult
+from grover.backends.local import LocalFileSystem
+from grover.client import GroverAsync
+from grover.providers.graph import RustworkxGraph
+from grover.providers.search.local import LocalVectorStore
+from grover.results import GraphResult
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.patterns import glob_to_sql_like, match_glob
-from grover.grover_async import GroverAsync
+from grover.backends.database import DatabaseFileSystem
+from grover.backends.local import LocalFileSystem
+from grover.client import GroverAsync
+from grover.util.patterns import glob_to_sql_like, match_glob
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

@@ -6,8 +6,8 @@ from types import MappingProxyType
 
 import pytest
 
-from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.graph.protocol import SupportsSubgraph
+from grover.providers.graph import RustworkxGraph
+from grover.providers.graph.protocol import SupportsSubgraph
 
 # ======================================================================
 # Subgraph

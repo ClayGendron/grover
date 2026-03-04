@@ -7,14 +7,14 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from _helpers import FakeProvider
-from grover.analyzers._base import ChunkFile
-from grover.fs.providers.embedding.protocol import EmbeddingProvider
-from grover.fs.providers.search.extractors import (
+from grover.analyzers.base import ChunkFile
+from grover.providers.embedding.protocol import EmbeddingProvider
+from grover.providers.search.extractors import (
     EmbeddableChunk,
     extract_from_chunks,
     extract_from_file,
 )
-from grover.fs.providers.search.types import SearchResult
+from grover.providers.search.types import SearchResult
 from grover.ref import Ref
 
 # ==================================================================

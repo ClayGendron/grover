@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.providers.versioning import SNAPSHOT_INTERVAL
+from grover.backends.database import DatabaseFileSystem
 from grover.models.version import FileVersion
-from grover.types.operations import VerifyVersionResult, VersionChainError
+from grover.providers.versioning import SNAPSHOT_INTERVAL
+from grover.results.operations import VerifyVersionResult, VersionChainError
 
 
 async def _make_fs():
@@ -388,7 +388,7 @@ class TestVerifyVersionResultFields:
 
     def test_verify_version_result_inherits_file_operation_result(self):
         """VerifyVersionResult is a FileOperationResult subclass."""
-        from grover.types.operations import FileOperationResult
+        from grover.results.operations import FileOperationResult
 
         result = VerifyVersionResult()
         assert isinstance(result, FileOperationResult)

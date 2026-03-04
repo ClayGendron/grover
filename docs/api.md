@@ -396,7 +396,7 @@ g = Grover(indexing_mode=IndexingMode.MANUAL)
 ### SearchResult (internal)
 
 ```python
-from grover.fs.providers.search.types import SearchResult
+from grover.providers.search.types import SearchResult
 ```
 
 Internal type used by the filesystem's `SearchMethodsMixin` and vector store backends. The public `Grover.search()` API returns `FileSearchResult` (see [Result Types](#result-types) below), which wraps these into `FileSearchCandidate` objects with `VectorEvidence`.
@@ -417,7 +417,7 @@ Grover has two result families:
 - **`FileOperationResult`** — base for content operations (read, write, edit, delete, etc.). Enriched base with `path`, `content`, `message`, `success`, `line_start`, `line_offset`, `version`.
 - **`FileSearchResult`** — base for search/query results. Contains `candidates: list[FileSearchCandidate]` where each candidate has a `path` and `evidence` list. Supports set algebra (`&`, `|`, `-`, `>>`), `rebase()`, `remap_paths()`.
 
-All result types live in `grover.types` (canonical location).
+All result types live in `grover.results` (canonical location).
 
 ```python
 from grover import (
@@ -508,15 +508,15 @@ Each search result contains `candidates: list[FileSearchCandidate]`, where each 
 ## Filesystem Layer
 
 ```python
-from grover.fs import (
+from grover.backends import (
     LocalFileSystem,
     DatabaseFileSystem,
-    MountRegistry,
-    Permission,
     GroverFileSystem,
     SupportsReBAC,
     SupportsReconcile,
 )
+from grover.mount import MountRegistry
+from grover.permissions import Permission
 ```
 
 ### LocalFileSystem
@@ -543,7 +543,7 @@ Implements: `GroverFileSystem`.
 ### Permission
 
 ```python
-from grover.fs import Permission
+from grover.permissions import Permission
 
 Permission.READ_WRITE  # Full access (default)
 Permission.READ_ONLY   # Reads and listings only
@@ -564,7 +564,7 @@ All protocols are `runtime_checkable`. Every backend must implement `GroverFileS
 ### Exceptions
 
 ```python
-from grover.fs import (
+from grover.exceptions import (
     GroverError,                    # Base exception
     PathNotFoundError,              # File or directory not found
     MountNotFoundError,             # No mount matches the path
@@ -580,7 +580,7 @@ from grover.fs import (
 ## RustworkxGraph
 
 ```python
-from grover.fs.providers.graph import RustworkxGraph
+from grover.providers.graph import RustworkxGraph
 ```
 
 In-memory directed graph backed by `rustworkx.PyDiGraph`. Nodes are file paths (strings), edges have a free-form type string. Implements the `GraphProvider` protocol plus all capability protocols.
@@ -709,11 +709,11 @@ Built-in analyzers:
 
 ### Graph Protocols
 
-The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` and all opt-in capability protocols live in `fs/providers/graph/protocol.py`. Check support with `isinstance()`:
+The graph API uses the same protocol pattern as the filesystem layer. `GraphProvider` and all opt-in capability protocols live in `providers/graph/protocol.py`. Check support with `isinstance()`:
 
 ```python
 from grover import GraphProvider
-from grover.fs.providers.graph.protocol import (
+from grover.providers.graph.protocol import (
     SupportsCentrality,      # PageRank, betweenness, closeness, katz, degree
     SupportsConnectivity,    # Weakly/strongly connected components
     SupportsTraversal,       # Ancestors, descendants, topological sort, shortest paths
@@ -732,7 +732,7 @@ if isinstance(g.get_graph(), SupportsCentrality):
 ### SubgraphResult
 
 ```python
-from grover.fs.providers.graph.types import SubgraphResult
+from grover.providers.graph.types import SubgraphResult
 ```
 
 Frozen dataclass returned by subgraph extraction methods. Deeply immutable — `tuple` for sequences, `MappingProxyType` for scores.
@@ -755,7 +755,7 @@ from grover import (
     VectorEntry, IndexConfig, IndexInfo,
     FilterExpression, FilterValue, eq, gt, and_, or_,
 )
-from grover.fs.providers.search.types import SearchResult, VectorHit  # internal types
+from grover.providers.search.types import SearchResult, VectorHit  # internal types
 ```
 
 ### SearchProvider Protocol
@@ -801,14 +801,14 @@ class EmbeddingProvider(Protocol):
 **OpenAIEmbedding** — OpenAI API. Requires the `openai` extra.
 
 ```python
-from grover.fs.providers.embedding import OpenAIEmbedding
+from grover.providers.embedding import OpenAIEmbedding
 provider = OpenAIEmbedding(model="text-embedding-3-small", dimensions=384)
 ```
 
 **LangChainEmbedding** — wraps any LangChain `Embeddings` instance. Requires the `langchain` extra.
 
 ```python
-from grover.fs.providers.embedding import LangChainEmbedding
+from grover.providers.embedding import LangChainEmbedding
 provider = LangChainEmbedding(embeddings=langchain_embeddings, dimensions=384)
 ```
 
@@ -833,7 +833,7 @@ All built-in stores implement `SearchProvider`. Pass them to `add_mount(..., sea
 **LocalVectorStore** — in-process usearch HNSW index for local development.
 
 ```python
-from grover.fs.providers.search import LocalVectorStore
+from grover.providers.search import LocalVectorStore
 store = LocalVectorStore(dimension=384, metric="cosine")
 store.dimension  # 384
 ```
@@ -841,7 +841,7 @@ store.dimension  # 384
 **PineconeVectorStore** — Pinecone cloud vector database. Requires the `pinecone` extra.
 
 ```python
-from grover.fs.providers.search import PineconeVectorStore
+from grover.providers.search import PineconeVectorStore
 store = PineconeVectorStore(index_name="my-index", api_key="...", namespace="")
 await store.connect()
 ```
@@ -849,7 +849,7 @@ await store.connect()
 **DatabricksVectorStore** — Databricks Vector Search (Direct Vector Access). Requires the `databricks` extra.
 
 ```python
-from grover.fs.providers.search import DatabricksVectorStore
+from grover.providers.search import DatabricksVectorStore
 store = DatabricksVectorStore(
     index_name="catalog.schema.my_index",
     endpoint_name="my_endpoint",

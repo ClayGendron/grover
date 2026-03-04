@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from grover.fs.permissions import Permission
 from grover.mount import Mount
+from grover.permissions import Permission
 
 # ------------------------------------------------------------------
 # Fake components for testing

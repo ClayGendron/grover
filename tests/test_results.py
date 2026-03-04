@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from grover.ref import Ref
-from grover.types import (
+from grover.results import (
     DeleteResult,
     EditResult,
     Evidence,

@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.providers.search.local import LocalVectorStore
-from grover.grover_async import GroverAsync
-from grover.types import GlobResult, GrepResult, LineMatch, VectorSearchResult
+from grover.backends.local import LocalFileSystem
+from grover.client import GroverAsync
+from grover.providers.search.local import LocalVectorStore
+from grover.results import GlobResult, GrepResult, LineMatch, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path

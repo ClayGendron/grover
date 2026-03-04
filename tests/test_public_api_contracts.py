@@ -9,9 +9,8 @@ import pytest
 
 import grover
 from _helpers import FakeProvider
-from grover.grover import Grover
-from grover.grover_async import GroverAsync
-from grover.types import (
+from grover.client import Grover, GroverAsync
+from grover.results import (
     DeleteResult,
     EditResult,
     ExistsResult,
@@ -293,7 +292,7 @@ def test_version_matches_pyproject() -> None:
 @pytest.mark.asyncio
 async def test_grover_async_capability_check(tmp_path: Path) -> None:
     """Convenience wrappers raise CapabilityNotSupportedError for unsupported backends."""
-    from grover.fs.exceptions import CapabilityNotSupportedError
+    from grover.exceptions import CapabilityNotSupportedError
 
     class MinimalGraph:
         """Graph that satisfies GraphStore but no capability protocols."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from grover.types import (
+from grover.results import (
     DeleteResult,
     EditResult,
     FileInfoResult,

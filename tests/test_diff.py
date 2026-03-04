@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from grover.fs.providers.versioning import apply_diff, compute_diff, reconstruct_version
+from grover.providers.versioning import apply_diff, compute_diff, reconstruct_version
 
 
 class TestComputeDiff:

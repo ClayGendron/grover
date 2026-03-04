@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from _helpers import FAKE_DIM, FakeProvider
-from grover.fs.local_fs import LocalFileSystem
-from grover.fs.providers.graph import RustworkxGraph
-from grover.fs.providers.search.local import LocalVectorStore
-from grover.grover_async import GroverAsync
-from grover.types import GraphResult, VectorSearchResult
+from grover.backends.local import LocalFileSystem
+from grover.client import GroverAsync
+from grover.providers.graph import RustworkxGraph
+from grover.providers.search.local import LocalVectorStore
+from grover.results import GraphResult, VectorSearchResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -622,7 +622,7 @@ async def auth_grover(tmp_path: Path) -> GroverAsync:
     """GroverAsync with a UserScopedFileSystem backend."""
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    from grover.fs.user_scoped_fs import UserScopedFileSystem
+    from grover.backends.user_scoped import UserScopedFileSystem
     from grover.models.share import FileShare
 
     g = GroverAsync()
@@ -685,7 +685,7 @@ class TestGroverAsyncSharing:
 
     @pytest.mark.asyncio
     async def test_list_shares(self, auth_grover: GroverAsync):
-        from grover.types import ShareEvidence
+        from grover.results import ShareEvidence
 
         await auth_grover.write("/ws/notes.md", "data", user_id="alice")
         await auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")

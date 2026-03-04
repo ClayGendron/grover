@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from grover.fs.providers.graph import RustworkxGraph
 from grover.models.connection import FileConnection
 from grover.models.file import File
+from grover.providers.graph import RustworkxGraph
 from grover.ref import Ref
 
 if TYPE_CHECKING:

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from grover.fs.providers.embedding.protocol import EmbeddingProvider
+from grover.providers.embedding.protocol import EmbeddingProvider
 
 # ==================================================================
 # OpenAI provider
@@ -15,7 +15,7 @@ from grover.fs.providers.embedding.protocol import EmbeddingProvider
 
 class TestOpenAIEmbedding:
     def _make_provider(self, **kwargs):
-        from grover.fs.providers.embedding.openai import OpenAIEmbedding
+        from grover.providers.embedding.openai import OpenAIEmbedding
 
         return OpenAIEmbedding(api_key="sk-test-key", **kwargs)
 
@@ -149,7 +149,7 @@ class TestOpenAIEmbedding:
         assert "dimensions" not in call_kwargs
 
     def test_api_key_required(self):
-        from grover.fs.providers.embedding.openai import OpenAIEmbedding
+        from grover.providers.embedding.openai import OpenAIEmbedding
 
         with patch.dict("os.environ", {}, clear=True):
             # Remove any OPENAI_API_KEY from env
@@ -164,7 +164,7 @@ class TestOpenAIEmbedding:
                     os.environ["OPENAI_API_KEY"] = env_backup
 
     def test_api_key_from_env(self):
-        from grover.fs.providers.embedding.openai import OpenAIEmbedding
+        from grover.providers.embedding.openai import OpenAIEmbedding
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-from-env"}):
             provider = OpenAIEmbedding()
@@ -216,7 +216,7 @@ class TestLangChainEmbedding:
         return mock
 
     def _make_provider(self, *, mock_embeddings=None, **kwargs):
-        from grover.fs.providers.embedding.langchain import LangChainEmbedding
+        from grover.providers.embedding.langchain import LangChainEmbedding
 
         embeddings = mock_embeddings or self._make_mock_embeddings()
         return LangChainEmbedding(embeddings, **kwargs)
@@ -299,7 +299,7 @@ class TestLangChainEmbedding:
         assert provider.model_name == "MagicMock"
 
     def test_rejects_non_embeddings_instance(self):
-        from grover.fs.providers.embedding.langchain import LangChainEmbedding
+        from grover.providers.embedding.langchain import LangChainEmbedding
 
         with pytest.raises(TypeError, match="must be a langchain_core"):
             LangChainEmbedding("not an embeddings object")

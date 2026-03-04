@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from grover.fs.database_fs import DatabaseFileSystem
-from grover.fs.providers.chunks import DefaultChunkProvider
-from grover.fs.providers.versioning import DefaultVersionProvider
-from grover.types.search import FileSearchCandidate, VectorEvidence, VectorSearchResult
+from grover.backends.database import DatabaseFileSystem
+from grover.providers.chunks import DefaultChunkProvider
+from grover.providers.versioning import DefaultVersionProvider
+from grover.results.search import FileSearchCandidate, VectorEvidence, VectorSearchResult
 
 # ------------------------------------------------------------------
 # Helpers
@@ -208,7 +208,7 @@ class TestStorageProviderExistsGetInfo:
         await engine.dispose()
 
     async def test_get_info_delegates_to_storage(self):
-        from grover.types.operations import FileInfoResult
+        from grover.results.operations import FileInfoResult
 
         mock_sp = AsyncMock()
         mock_info = FileInfoResult(success=True, message="OK", path="/file.py")
@@ -230,7 +230,7 @@ class TestStorageProviderQueryDelegation:
     """Query methods delegate to SupportsStorageQueries when available."""
 
     async def test_glob_delegates_to_storage(self):
-        from grover.types.search import GlobResult
+        from grover.results.search import GlobResult
 
         mock_sp = _mock_storage_provider()
         mock_result = GlobResult(success=True, message="1 match", pattern="*.py")
@@ -453,7 +453,7 @@ class TestSearchWithProviders:
 
     async def test_search_has_delegates_to_local_store(self):
         """search_has delegates to LocalVectorStore when available."""
-        from grover.fs.providers.search.local import LocalVectorStore
+        from grover.providers.search.local import LocalVectorStore
 
         store = LocalVectorStore(dimension=384)
         fs = DatabaseFileSystem(search_provider=store)
@@ -603,21 +603,21 @@ class TestUserScopedProviderForwarding:
     """UserScopedFileSystem forwards provider kwargs to super()."""
 
     def test_forwards_graph_provider(self):
-        from grover.fs.user_scoped_fs import UserScopedFileSystem
+        from grover.backends.user_scoped import UserScopedFileSystem
 
         mock_graph = MagicMock()
         fs = UserScopedFileSystem(graph_provider=mock_graph)
         assert fs.graph_provider is mock_graph
 
     def test_forwards_search_provider(self):
-        from grover.fs.user_scoped_fs import UserScopedFileSystem
+        from grover.backends.user_scoped import UserScopedFileSystem
 
         mock_search = AsyncMock()
         fs = UserScopedFileSystem(search_provider=mock_search)
         assert fs.search_provider is mock_search
 
     def test_forwards_storage_provider(self):
-        from grover.fs.user_scoped_fs import UserScopedFileSystem
+        from grover.backends.user_scoped import UserScopedFileSystem
 
         mock_storage = AsyncMock()
         fs = UserScopedFileSystem(storage_provider=mock_storage)

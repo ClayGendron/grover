@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from grover.fs.exceptions import MountNotFoundError
-from grover.fs.permissions import Permission
-from grover.mount import Mount
-from grover.mount.mounts import MountRegistry
+from grover.exceptions import MountNotFoundError
+from grover.mount import Mount, MountRegistry
+from grover.permissions import Permission
 
 
 class FakeBackend:
