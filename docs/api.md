@@ -117,15 +117,15 @@ g.move("/project/old.py", "/project/new.py", follow=True)
 ### Search / Query
 
 ```python
-g.glob(pattern, path="/") -> GlobResult
-g.grep(pattern, path="/", *, ...) -> GrepResult
+g.glob(pattern, path="/", *, candidates=None) -> GlobResult
+g.grep(pattern, path="/", *, candidates=None, ...) -> GrepResult
 g.tree(path="/", *, max_depth=None) -> TreeResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `glob(pattern, path)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `file_candidates` (list of `FileCandidate`). |
-| `grep(pattern, path, ...)` | Search file contents with regex. Returns `GrepResult` with `file_candidates` (list of `FileCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. |
+| `glob(pattern, path, *, candidates)` | Find files matching a glob pattern. Supports `*` (single segment), `**` (recursive), `?` (single char), `[seq]` (character class), `[!seq]` (negated). Returns `GlobResult` with `file_candidates` (list of `FileCandidate`). If `candidates` is provided, results are filtered to the intersection. |
+| `grep(pattern, path, *, candidates, ...)` | Search file contents with regex. Returns `GrepResult` with `file_candidates` (list of `FileCandidate`). Each candidate's evidence includes `GrepEvidence` with `line_matches`. If `candidates` is provided, results are filtered to the intersection. |
 | `tree(path, max_depth)` | List all entries recursively. Returns `TreeResult` with `entries`, `total_files`, `total_dirs`. |
 
 **grep options:**
@@ -280,17 +280,17 @@ g.find_nodes(*, path=None, **attrs) -> GraphResult
 ### Search
 
 ```python
-g.vector_search(query, k=10, *, path="/", user_id=None) -> VectorSearchResult
-g.lexical_search(query, k=10, *, path="/", user_id=None) -> LexicalSearchResult
-g.hybrid_search(query, k=10, *, alpha=0.5, path="/", user_id=None) -> FileSearchResult
+g.vector_search(query, k=10, *, path="/", candidates=None, user_id=None) -> VectorSearchResult
+g.lexical_search(query, k=10, *, path="/", candidates=None, user_id=None) -> LexicalSearchResult
+g.hybrid_search(query, k=10, *, alpha=0.5, path="/", candidates=None, user_id=None) -> FileSearchResult
 g.search(query, *, path="/", glob=None, grep=None, k=10, user_id=None) -> FileSearchResult
 ```
 
 | Method | Description |
 |--------|-------------|
-| `vector_search(query, k)` | Semantic search using embedding + vector store. Requires `embedding_provider` and `search_provider` on the mount. Returns `VectorSearchResult`. |
-| `lexical_search(query, k)` | BM25/full-text keyword search via the filesystem's DB-backed lexical search. Returns `LexicalSearchResult`. |
-| `hybrid_search(query, k, alpha)` | Combines vector and lexical results. `alpha` controls the blend: 1.0 = pure vector, 0.0 = pure lexical. Falls back to whichever is available. |
+| `vector_search(query, k, *, candidates)` | Semantic search using embedding + vector store. Requires `embedding_provider` and `search_provider` on the mount. Returns `VectorSearchResult`. If `candidates` is provided, results are filtered to the intersection. |
+| `lexical_search(query, k, *, candidates)` | BM25/full-text keyword search via the filesystem's DB-backed lexical search. Returns `LexicalSearchResult`. If `candidates` is provided, results are filtered to the intersection. |
+| `hybrid_search(query, k, alpha, *, candidates)` | Combines vector and lexical results. `alpha` controls the blend: 1.0 = pure vector, 0.0 = pure lexical. Falls back to whichever is available. If `candidates` is provided, results are filtered to the intersection. |
 | `search(query, ...)` | Composable search pipeline: optional glob/grep filters followed by vector search. Use `glob` and `grep` to pre-filter before vector search. |
 
 Search is routed through per-mount filesystem providers. When `path="/"`, results are aggregated across all mounts. When `path` targets a specific mount, search is scoped to that mount.

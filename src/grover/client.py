@@ -302,9 +302,16 @@ class Grover:
     # Search / Query wrappers (sync)
     # ------------------------------------------------------------------
 
-    def glob(self, pattern: str, path: str = "/", *, user_id: str | None = None) -> GlobResult:
+    def glob(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        candidates: FileSearchResult | None = None,
+        user_id: str | None = None,
+    ) -> GlobResult:
         """Find files matching a glob *pattern* under *path*."""
-        return self._run(self._async.glob(pattern, path, user_id=user_id))
+        return self._run(self._async.glob(pattern, path, candidates=candidates, user_id=user_id))
 
     def grep(
         self,
@@ -321,6 +328,7 @@ class Grover:
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> GrepResult:
         """Search file contents for *pattern* under *path*."""
@@ -338,6 +346,7 @@ class Grover:
                 max_results_per_file=max_results_per_file,
                 count_only=count_only,
                 files_only=files_only,
+                candidates=candidates,
                 user_id=user_id,
             )
         )
@@ -613,10 +622,13 @@ class Grover:
         k: int = 10,
         *,
         path: str = "/",
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> VectorSearchResult:
         """Semantic (vector) search over indexed content."""
-        return self._run(self._async.vector_search(query, k, path=path, user_id=user_id))
+        return self._run(
+            self._async.vector_search(query, k, path=path, candidates=candidates, user_id=user_id)
+        )
 
     def lexical_search(
         self,
@@ -624,10 +636,13 @@ class Grover:
         k: int = 10,
         *,
         path: str = "/",
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> LexicalSearchResult:
         """BM25/full-text search over indexed content."""
-        return self._run(self._async.lexical_search(query, k, path=path, user_id=user_id))
+        return self._run(
+            self._async.lexical_search(query, k, path=path, candidates=candidates, user_id=user_id)
+        )
 
     def hybrid_search(
         self,
@@ -636,11 +651,14 @@ class Grover:
         *,
         alpha: float = 0.5,
         path: str = "/",
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Hybrid search combining vector and lexical results."""
         return self._run(
-            self._async.hybrid_search(query, k, alpha=alpha, path=path, user_id=user_id)
+            self._async.hybrid_search(
+                query, k, alpha=alpha, path=path, candidates=candidates, user_id=user_id
+            )
         )
 
     def search(

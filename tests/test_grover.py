@@ -21,6 +21,8 @@ from grover.results import (
     DegreeResult,
     DescendantsResult,
     EgoGraphResult,
+    GlobResult,
+    GrepResult,
     HasPathResult,
     HitsResult,
     PageRankResult,
@@ -597,3 +599,44 @@ class TestGroverGraphAlgorithms:
         assert result.success is True
         grover.flush()
         assert not grover.get_graph().has_edge("/project/dconn_a.py", "/project/dconn_b.py")
+
+
+# ------------------------------------------------------------------
+# Phase 4 - candidates filtering on search methods (sync)
+# ------------------------------------------------------------------
+
+
+class TestGroverSearchCandidates:
+    """Tests for candidates filtering on glob/grep (sync wrapper)."""
+
+    def test_glob_with_candidates_filter(self, grover: Grover):
+        grover.write("/project/alpha.py", "HELLO = 1\n")
+        grover.write("/project/beta.py", "WORLD = 2\n")
+        grover.write("/project/gamma.py", "HELLO = 3\n")
+        grover.flush()
+
+        candidates = grover.glob("alpha*", "/project")
+        filtered = grover.glob("*.py", "/project", candidates=candidates)
+        assert isinstance(filtered, GlobResult)
+        paths = {c.path for c in filtered.file_candidates}
+        assert "/project/alpha.py" in paths
+        assert "/project/beta.py" not in paths
+
+    def test_grep_with_candidates_filter(self, grover: Grover):
+        grover.write("/project/alpha.py", "HELLO = 1\n")
+        grover.write("/project/gamma.py", "HELLO = 3\n")
+        grover.flush()
+
+        candidates = grover.glob("alpha*", "/project")
+        filtered = grover.grep("HELLO", "/project", candidates=candidates)
+        assert isinstance(filtered, GrepResult)
+        paths = {c.path for c in filtered.file_candidates}
+        assert "/project/alpha.py" in paths
+        assert "/project/gamma.py" not in paths
+
+    def test_candidates_preserves_result_type(self, grover: Grover):
+        grover.write("/project/alpha.py", "X = 1\n")
+        grover.flush()
+        candidates = grover.glob("alpha*", "/project")
+        result = grover.glob("*.py", "/project", candidates=candidates)
+        assert type(result) is GlobResult

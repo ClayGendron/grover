@@ -19,6 +19,8 @@ from grover.results import (
     DegreeResult,
     DescendantsResult,
     EgoGraphResult,
+    GlobResult,
+    GrepResult,
     HarmonicResult,
     HasPathResult,
     HitsResult,
@@ -1061,3 +1063,71 @@ class TestGroverAsyncGraphAlgorithms:
             cc = result.connection_candidates[0]
             assert cc.source_path
             assert cc.target_path
+
+
+# ------------------------------------------------------------------
+# Phase 4 - candidates filtering on search methods
+# ------------------------------------------------------------------
+
+
+class TestGroverAsyncSearchCandidates:
+    """Tests for candidates filtering on glob, grep, vector_search, etc."""
+
+    @pytest.fixture(autouse=True)
+    async def _setup(self, grover: GroverAsync):
+        """Write three files so glob/grep have something to match."""
+        await grover.write("/project/alpha.py", "HELLO = 1\n")
+        await grover.write("/project/beta.py", "WORLD = 2\n")
+        await grover.write("/project/gamma.py", "HELLO = 3\n")
+        await grover.flush()
+        self.grover = grover
+
+    @pytest.mark.asyncio
+    async def test_glob_with_candidates_filter(self):
+        """glob with candidates returns only files in the candidate set."""
+        # Build a candidate set with only alpha.py
+        full = await self.grover.glob("*.py", "/project")
+        assert len(full) >= 3
+        candidates = await self.grover.glob("alpha*", "/project")
+        assert len(candidates) >= 1
+
+        filtered = await self.grover.glob("*.py", "/project", candidates=candidates)
+        assert isinstance(filtered, GlobResult)
+        paths = {c.path for c in filtered.file_candidates}
+        assert "/project/alpha.py" in paths
+        assert "/project/beta.py" not in paths
+        assert "/project/gamma.py" not in paths
+
+    @pytest.mark.asyncio
+    async def test_glob_without_candidates(self):
+        """glob without candidates returns all matches (backward compat)."""
+        result = await self.grover.glob("*.py", "/project")
+        assert isinstance(result, GlobResult)
+        assert len(result) >= 3
+
+    @pytest.mark.asyncio
+    async def test_grep_with_candidates_filter(self):
+        """grep with candidates filters results to candidate paths."""
+        # HELLO appears in alpha.py and gamma.py
+        full = await self.grover.grep("HELLO", "/project")
+        full_paths = {c.path for c in full.file_candidates}
+        assert "/project/alpha.py" in full_paths
+        assert "/project/gamma.py" in full_paths
+
+        # Filter to only alpha.py
+        candidates = await self.grover.glob("alpha*", "/project")
+        filtered = await self.grover.grep("HELLO", "/project", candidates=candidates)
+        assert isinstance(filtered, GrepResult)
+        filtered_paths = {c.path for c in filtered.file_candidates}
+        assert "/project/alpha.py" in filtered_paths
+        assert "/project/gamma.py" not in filtered_paths
+
+    @pytest.mark.asyncio
+    async def test_candidates_preserves_result_type(self):
+        """Filtered GlobResult is still a GlobResult instance."""
+        candidates = await self.grover.glob("alpha*", "/project")
+        result = await self.grover.glob("*.py", "/project", candidates=candidates)
+        assert type(result) is GlobResult
+        # GrepResult type preserved too
+        grep_result = await self.grover.grep("HELLO", "/project", candidates=candidates)
+        assert type(grep_result) is GrepResult

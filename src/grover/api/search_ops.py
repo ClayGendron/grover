@@ -28,7 +28,12 @@ class SearchOpsMixin:
     # ------------------------------------------------------------------
 
     async def glob(
-        self, pattern: str, path: str = "/", *, user_id: str | None = None
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        candidates: FileSearchResult | None = None,
+        user_id: str | None = None,
     ) -> GlobResult:
         path = normalize_path(path)
         try:
@@ -44,17 +49,23 @@ class SearchOpsMixin:
                         combined = combined | result.rebase(mount.path)
                 combined.message = f"Found {len(combined)} match(es)"
                 combined.pattern = pattern
-                return combined
-
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.glob(
-                    pattern, rel_path, session=sess, user_id=user_id
-                )
-            return result.rebase(mount.path)
+                final = combined
+            else:
+                mount, rel_path = self._ctx.registry.resolve(path)
+                assert mount.filesystem is not None
+                async with self._ctx.session_for(mount) as sess:
+                    result = await mount.filesystem.glob(
+                        pattern, rel_path, session=sess, user_id=user_id
+                    )
+                final = result.rebase(mount.path)
         except Exception as e:
             return GlobResult(success=False, message=f"Glob failed: {e}", pattern=pattern)
+
+        if candidates is not None:
+            candidate_paths = set(candidates.paths)
+            final.file_candidates = [c for c in final.file_candidates if c.path in candidate_paths]
+            final.message = f"Found {len(final)} match(es) (filtered)"
+        return final
 
     async def grep(
         self,
@@ -71,6 +82,7 @@ class SearchOpsMixin:
         max_results_per_file: int = 0,
         count_only: bool = False,
         files_only: bool = False,
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> GrepResult:
         path = normalize_path(path)
@@ -121,7 +133,7 @@ class SearchOpsMixin:
 
                 if count_only:
                     total = total_matched if files_only else total_matches
-                    return GrepResult(
+                    final = GrepResult(
                         success=True,
                         message=f"Count: {total}",
                         pattern=pattern,
@@ -129,39 +141,45 @@ class SearchOpsMixin:
                         files_matched=total_matched,
                         truncated=truncated,
                     )
-
-                return GrepResult(
-                    success=True,
-                    message=f"Found {total_matches} match(es) in {total_matched} file(s)",
-                    file_candidates=FileSearchResult._dict_to_candidates(combined_entries),
-                    pattern=pattern,
-                    files_searched=total_searched,
-                    files_matched=total_matched,
-                    truncated=truncated,
-                )
-
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.grep(
-                    pattern,
-                    rel_path,
-                    session=sess,
-                    glob_filter=glob_filter,
-                    case_sensitive=case_sensitive,
-                    fixed_string=fixed_string,
-                    invert=invert,
-                    word_match=word_match,
-                    context_lines=context_lines,
-                    max_results=max_results,
-                    max_results_per_file=max_results_per_file,
-                    count_only=count_only,
-                    files_only=files_only,
-                    user_id=user_id,
-                )
-            return result.rebase(mount.path)
+                else:
+                    final = GrepResult(
+                        success=True,
+                        message=f"Found {total_matches} match(es) in {total_matched} file(s)",
+                        file_candidates=FileSearchResult._dict_to_candidates(combined_entries),
+                        pattern=pattern,
+                        files_searched=total_searched,
+                        files_matched=total_matched,
+                        truncated=truncated,
+                    )
+            else:
+                mount, rel_path = self._ctx.registry.resolve(path)
+                assert mount.filesystem is not None
+                async with self._ctx.session_for(mount) as sess:
+                    result = await mount.filesystem.grep(
+                        pattern,
+                        rel_path,
+                        session=sess,
+                        glob_filter=glob_filter,
+                        case_sensitive=case_sensitive,
+                        fixed_string=fixed_string,
+                        invert=invert,
+                        word_match=word_match,
+                        context_lines=context_lines,
+                        max_results=max_results,
+                        max_results_per_file=max_results_per_file,
+                        count_only=count_only,
+                        files_only=files_only,
+                        user_id=user_id,
+                    )
+                final = result.rebase(mount.path)
         except Exception as e:
             return GrepResult(success=False, message=f"Grep failed: {e}", pattern=pattern)
+
+        if candidates is not None:
+            candidate_paths = set(candidates.paths)
+            final.file_candidates = [c for c in final.file_candidates if c.path in candidate_paths]
+            final.message = f"Found {len(final)} match(es) (filtered)"
+        return final
 
     # ------------------------------------------------------------------
     # Search
@@ -173,6 +191,7 @@ class SearchOpsMixin:
         k: int = 10,
         *,
         path: str = "/",
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> VectorSearchResult:
         """Semantic (vector) search, routed to per-mount filesystem providers."""
@@ -195,7 +214,7 @@ class SearchOpsMixin:
 
         try:
             if path == "/":
-                combined = VectorSearchResult(success=True, message="")
+                final = VectorSearchResult(success=True, message="")
                 for mount in self._ctx.registry.list_visible_mounts():
                     assert mount.filesystem is not None
                     if getattr(mount.filesystem, "search_provider", None) is None:
@@ -204,9 +223,8 @@ class SearchOpsMixin:
                         continue
                     result = await mount.filesystem.vector_search(query, k)
                     if result.success:
-                        combined = combined | result.rebase(mount.path)
-                combined.message = f"Found matches in {len(combined)} file(s)"
-                return combined
+                        final = final | result.rebase(mount.path)
+                final.message = f"Found matches in {len(final)} file(s)"
             else:
                 mount, _rel_path = self._ctx.registry.resolve(path)
                 assert mount.filesystem is not None
@@ -217,12 +235,18 @@ class SearchOpsMixin:
                         success=False, message="No embedding_provider on mount"
                     )
                 result = await mount.filesystem.vector_search(query, k)
-                return result.rebase(mount.path)
+                final = result.rebase(mount.path)
         except Exception as e:
             return VectorSearchResult(
                 success=False,
                 message=f"Vector search failed: {e}",
             )
+
+        if candidates is not None:
+            candidate_paths = set(candidates.paths)
+            final.file_candidates = [c for c in final.file_candidates if c.path in candidate_paths]
+            final.message = f"Found {len(final)} match(es) (filtered)"
+        return final
 
     async def lexical_search(
         self,
@@ -230,6 +254,7 @@ class SearchOpsMixin:
         k: int = 10,
         *,
         path: str = "/",
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> LexicalSearchResult:
         """BM25/full-text search, routed to per-mount filesystem providers."""
@@ -259,7 +284,7 @@ class SearchOpsMixin:
                     )
                     combined = combined | mount_result
                 combined.message = f"Found matches in {len(combined)} file(s)"
-                return combined
+                final_lex = combined
             else:
                 mount, _rel_path = self._ctx.registry.resolve(path)
                 assert mount.filesystem is not None
@@ -273,7 +298,7 @@ class SearchOpsMixin:
                         snippet=sr.content[:200] if sr.content else "",
                     )
                     entries.setdefault(fp, []).append(ev)
-                return LexicalSearchResult(
+                final_lex = LexicalSearchResult(
                     success=True,
                     message=f"Found matches in {len(entries)} file(s)",
                     file_candidates=FileSearchResult._dict_to_candidates(entries),
@@ -284,6 +309,14 @@ class SearchOpsMixin:
                 message=f"Lexical search failed: {e}",
             )
 
+        if candidates is not None:
+            candidate_paths = set(candidates.paths)
+            final_lex.file_candidates = [
+                c for c in final_lex.file_candidates if c.path in candidate_paths
+            ]
+            final_lex.message = f"Found {len(final_lex)} match(es) (filtered)"
+        return final_lex
+
     async def hybrid_search(
         self,
         query: str,
@@ -291,6 +324,7 @@ class SearchOpsMixin:
         *,
         alpha: float = 0.5,
         path: str = "/",
+        candidates: FileSearchResult | None = None,
         user_id: str | None = None,
     ) -> FileSearchResult:
         """Hybrid search combining vector and lexical results.
@@ -318,16 +352,24 @@ class SearchOpsMixin:
             lex_result = await self.lexical_search(query, k=k, path=path, user_id=user_id)
 
         if vec_result is not None and lex_result is not None:
-            return vec_result | lex_result
-        if vec_result is not None:
-            return vec_result
-        if lex_result is not None:
-            return lex_result
+            final_hybrid = vec_result | lex_result
+        elif vec_result is not None:
+            final_hybrid = vec_result
+        elif lex_result is not None:
+            final_hybrid = lex_result
+        else:
+            return FileSearchResult(
+                success=False,
+                message="Hybrid search not available: no vector or lexical search configured",
+            )
 
-        return FileSearchResult(
-            success=False,
-            message="Hybrid search not available: no vector or lexical search configured",
-        )
+        if candidates is not None:
+            candidate_paths = set(candidates.paths)
+            final_hybrid.file_candidates = [
+                c for c in final_hybrid.file_candidates if c.path in candidate_paths
+            ]
+            final_hybrid.message = f"Found {len(final_hybrid)} match(es) (filtered)"
+        return final_hybrid
 
     async def search(
         self,
