@@ -103,15 +103,9 @@ class TestAnalyzeCreatesGraphState:
         graph = grover.get_graph("/project/funcs.py")
         assert graph.has_node("/project/funcs.py")
 
-        # Find chunk nodes
-        chunk_nodes = graph.find_nodes(parent_path="/project/funcs.py")
-        assert len(chunk_nodes) >= 2
-
-        for node_path in chunk_nodes:
-            data = graph.get_node(node_path)
-            assert data["parent_path"] == "/project/funcs.py"
-            assert "line_start" in data
-            assert "line_end" in data
+        # Find chunk nodes via contains edges
+        chunk_refs = graph.contains("/project/funcs.py")
+        assert len(chunk_refs) >= 2
 
     @pytest.mark.asyncio
     async def test_analyze_creates_contains_edges(self, grover: GroverAsync):
@@ -255,41 +249,21 @@ class TestHardenedGraphCleanup:
         assert not graph.has_node("/test/child1")
 
     @pytest.mark.asyncio
-    async def test_removes_children_by_parent_path_attr(self, grover: GroverAsync):
-        """remove_file_subgraph should find children via parent_path attribute."""
-        graph = grover.get_graph()
-
-        # Create nodes with parent_path attr but no contains edge
-        graph.add_node("/test/parent.py")
-        graph.add_node("/test/child2", parent_path="/test/parent.py")
-
-        removed = graph.remove_file_subgraph("/test/parent.py")
-        assert "/test/parent.py" in removed
-        assert "/test/child2" in removed
-        assert not graph.has_node("/test/child2")
-
-    @pytest.mark.asyncio
-    async def test_removes_children_by_both_methods(self, grover: GroverAsync):
-        """Children found by either method should be removed (union)."""
+    async def test_removes_children_by_multiple_edge_types(self, grover: GroverAsync):
+        """Children connected by any edge type should be removed."""
         graph = grover.get_graph()
 
         graph.add_node("/test/parent.py")
-        # child_a: only via contains edge
         graph.add_node("/test/child_a")
         graph.add_edge("/test/parent.py", "/test/child_a", edge_type="contains")
-        # child_b: only via parent_path attr
-        graph.add_node("/test/child_b", parent_path="/test/parent.py")
-        # child_c: via both
-        graph.add_node("/test/child_c", parent_path="/test/parent.py")
-        graph.add_edge("/test/parent.py", "/test/child_c", edge_type="contains")
+        graph.add_node("/test/child_b")
+        graph.add_edge("/test/parent.py", "/test/child_b", edge_type="imports")
 
         removed = graph.remove_file_subgraph("/test/parent.py")
         assert "/test/child_a" in removed
         assert "/test/child_b" in removed
-        assert "/test/child_c" in removed
         assert not graph.has_node("/test/child_a")
         assert not graph.has_node("/test/child_b")
-        assert not graph.has_node("/test/child_c")
 
 
 # ==================================================================

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from types import MappingProxyType
-
 import pytest
 
 from grover.providers.graph import RustworkxGraph
-from grover.providers.graph.protocol import SupportsSubgraph
+from grover.providers.graph.protocol import GraphProvider
 
 # ======================================================================
 # Subgraph
@@ -22,9 +20,9 @@ class TestSubgraph:
         g.add_edge("/c.py", "/d.py", "imports")
         g.add_edge("/d.py", "/e.py", "imports")
         sub = g.subgraph(["/a.py", "/b.py", "/c.py"])
-        assert set(sub.nodes) == {"/a.py", "/b.py", "/c.py"}
+        assert set(sub.paths) == {"/a.py", "/b.py", "/c.py"}
         # Only edges with both endpoints in the subgraph
-        edge_pairs = {(s, t) for s, t, _ in sub.edges}
+        edge_pairs = {(cc.source_path, cc.target_path) for cc in sub.connection_candidates}
         assert ("/a.py", "/b.py") in edge_pairs
         assert ("/b.py", "/c.py") in edge_pairs
         assert ("/c.py", "/d.py") not in edge_pairs
@@ -33,35 +31,28 @@ class TestSubgraph:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         sub = g.subgraph([])
-        assert sub.nodes == ()
-        assert sub.edges == ()
+        assert sub.paths == ()
+        assert sub.connection_candidates == []
 
     def test_missing_paths_skipped(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         sub = g.subgraph(["/a.py", "/missing.py"])
-        assert set(sub.nodes) == {"/a.py"}
+        assert set(sub.paths) == {"/a.py"}
 
     def test_all_nodes(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = g.subgraph(["/a.py", "/b.py", "/c.py"])
-        assert len(sub.edges) == 2
+        assert len(sub.connection_candidates) == 2
 
-    def test_result_is_frozen(self) -> None:
+    def test_result_is_file_search_result(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         sub = g.subgraph(["/a.py"])
-        with pytest.raises(AttributeError):
-            sub.nodes = ("/b.py",)  # type: ignore[misc]
-
-    def test_result_nodes_are_tuples(self) -> None:
-        g = RustworkxGraph()
-        g.add_node("/a.py")
-        sub = g.subgraph(["/a.py"])
-        assert isinstance(sub.nodes, tuple)
-        assert isinstance(sub.edges, tuple)
+        assert sub.success is True
+        assert len(sub) == 1
 
 
 # ======================================================================
@@ -75,28 +66,28 @@ class TestNeighborhood:
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = g.neighborhood("/a.py", max_depth=1, direction="out")
-        assert set(sub.nodes) == {"/a.py", "/b.py"}
+        assert set(sub.paths) == {"/a.py", "/b.py"}
 
     def test_out_depth_2(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = g.neighborhood("/a.py", max_depth=2, direction="out")
-        assert set(sub.nodes) == {"/a.py", "/b.py", "/c.py"}
+        assert set(sub.paths) == {"/a.py", "/b.py", "/c.py"}
 
     def test_in_direction(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = g.neighborhood("/c.py", max_depth=1, direction="in")
-        assert set(sub.nodes) == {"/b.py", "/c.py"}
+        assert set(sub.paths) == {"/b.py", "/c.py"}
 
     def test_both_direction(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = g.neighborhood("/b.py", max_depth=1, direction="both")
-        assert set(sub.nodes) == {"/a.py", "/b.py", "/c.py"}
+        assert set(sub.paths) == {"/a.py", "/b.py", "/c.py"}
 
     def test_edge_type_filter_ignored_with_minimal_storage(self) -> None:
         # Minimal storage does not store edge types — filter is a no-op
@@ -105,8 +96,8 @@ class TestNeighborhood:
         g.add_edge("/a.py", "/c.py", "contains")
         sub = g.neighborhood("/a.py", max_depth=1, direction="out", edge_types=["imports"])
         # Both neighbors included since edge types aren't stored
-        assert "/b.py" in sub.nodes
-        assert "/c.py" in sub.nodes
+        assert "/b.py" in sub.paths
+        assert "/c.py" in sub.paths
 
     def test_missing_node(self) -> None:
         g = RustworkxGraph()
@@ -117,7 +108,7 @@ class TestNeighborhood:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         sub = g.neighborhood("/a.py", max_depth=0)
-        assert set(sub.nodes) == {"/a.py"}
+        assert set(sub.paths) == {"/a.py"}
 
 
 # ======================================================================
@@ -133,8 +124,8 @@ class TestMeetingSubgraph:
         g.add_edge("/c.py", "/d.py", "imports")
         sub = g.meeting_subgraph(["/a.py", "/d.py"])
         # Should include intermediate nodes B and C
-        assert "/b.py" in sub.nodes
-        assert "/c.py" in sub.nodes
+        assert "/b.py" in sub.paths
+        assert "/c.py" in sub.paths
 
     def test_diamond(self) -> None:
         g = RustworkxGraph()
@@ -143,8 +134,8 @@ class TestMeetingSubgraph:
         g.add_edge("/b.py", "/d.py", "imports")
         g.add_edge("/c.py", "/d.py", "imports")
         sub = g.meeting_subgraph(["/a.py", "/d.py"])
-        assert "/a.py" in sub.nodes
-        assert "/d.py" in sub.nodes
+        assert "/a.py" in sub.paths
+        assert "/d.py" in sub.paths
 
     def test_disconnected(self) -> None:
         g = RustworkxGraph()
@@ -152,15 +143,15 @@ class TestMeetingSubgraph:
         g.add_node("/b.py")
         sub = g.meeting_subgraph(["/a.py", "/b.py"])
         # No connection — should at least contain start nodes
-        assert "/a.py" in sub.nodes
-        assert "/b.py" in sub.nodes
+        assert "/a.py" in sub.paths
+        assert "/b.py" in sub.paths
 
     def test_single_start(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         sub = g.meeting_subgraph(["/a.py"])
-        assert set(sub.nodes) == {"/a.py"}
-        assert sub.edges == ()
+        assert set(sub.paths) == {"/a.py"}
+        assert sub.connection_candidates == []
 
     def test_three_starts(self) -> None:
         g = RustworkxGraph()
@@ -169,7 +160,7 @@ class TestMeetingSubgraph:
         g.add_edge("/c.py", "/hub.py", "imports")
         sub = g.meeting_subgraph(["/a.py", "/b.py", "/c.py"])
         # Hub should be found via common descendants
-        assert len(sub.nodes) >= 3
+        assert len(sub) >= 3
 
     def test_pruning_at_max_size(self) -> None:
         # Build a large graph
@@ -177,24 +168,26 @@ class TestMeetingSubgraph:
         for i in range(20):
             g.add_edge(f"/node{i}.py", f"/node{i + 1}.py", "imports")
         sub = g.meeting_subgraph(["/node0.py", "/node20.py"], max_size=5)
-        assert len(sub.nodes) <= 5
+        assert len(sub) <= 5
 
     def test_start_nodes_never_pruned(self) -> None:
         g = RustworkxGraph()
         for i in range(10):
             g.add_edge(f"/node{i}.py", f"/node{i + 1}.py", "imports")
         sub = g.meeting_subgraph(["/node0.py", "/node10.py"], max_size=3)
-        assert "/node0.py" in sub.nodes
-        assert "/node10.py" in sub.nodes
+        assert "/node0.py" in sub.paths
+        assert "/node10.py" in sub.paths
 
     def test_scores_populated(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         sub = g.meeting_subgraph(["/a.py", "/c.py"])
-        assert isinstance(sub.scores, MappingProxyType)
-        assert len(sub.scores) > 0
-        assert all(isinstance(v, float) for v in sub.scores.values())
+        # Every file candidate should have a score from the enrichment
+        assert len(sub) > 0
+        for c in sub.file_candidates:
+            assert len(c.evidence) > 0
+            assert isinstance(c.evidence[0].score, float)
 
 
 # ======================================================================
@@ -240,6 +233,6 @@ class TestCommonReachable:
 
 
 class TestProtocolSatisfaction:
-    def test_supports_subgraph(self) -> None:
+    def test_supports_graph_provider(self) -> None:
         g = RustworkxGraph()
-        assert isinstance(g, SupportsSubgraph)
+        assert isinstance(g, GraphProvider)

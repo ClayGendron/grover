@@ -45,6 +45,9 @@ from grover.results.search import (
     GrepEvidence,
     GrepResult,
     ListDirResult,
+    PredecessorsResult,
+    ShortestPathResult,
+    SuccessorsResult,
     TrashEvidence,
     TrashResult,
     TreeEvidence,
@@ -1253,19 +1256,19 @@ class DatabaseFileSystem:
             return False
         return self.graph_provider.has_edge(source, target)
 
-    def graph_predecessors(self, path: str) -> list[Ref]:
+    def graph_predecessors(self, path: str) -> PredecessorsResult:
         if self.graph_provider is None:
-            return []
+            return PredecessorsResult(success=True, message="No graph provider")
         return self.graph_provider.predecessors(path)
 
-    def graph_successors(self, path: str) -> list[Ref]:
+    def graph_successors(self, path: str) -> SuccessorsResult:
         if self.graph_provider is None:
-            return []
+            return SuccessorsResult(success=True, message="No graph provider")
         return self.graph_provider.successors(path)
 
-    def graph_path_between(self, source: str, target: str) -> list[Ref] | None:
+    def graph_path_between(self, source: str, target: str) -> ShortestPathResult:
         if self.graph_provider is None:
-            return None
+            return ShortestPathResult(success=True, message="No path found")
         return self.graph_provider.path_between(source, target)
 
     def graph_contains(self, path: str) -> list[Ref]:

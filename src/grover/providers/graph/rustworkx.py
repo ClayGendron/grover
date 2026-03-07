@@ -8,8 +8,29 @@ from typing import TYPE_CHECKING, Any
 
 import rustworkx
 
-from grover.providers.graph.types import SubgraphResult, subgraph_result
 from grover.ref import Ref
+from grover.results.search import (
+    AncestorsResult,
+    BetweennessResult,
+    ClosenessResult,
+    CommonNeighborsResult,
+    ConnectionCandidate,
+    DegreeResult,
+    DescendantsResult,
+    EgoGraphResult,
+    FileCandidate,
+    GraphEvidence,
+    HarmonicResult,
+    HasPathResult,
+    HitsResult,
+    KatzResult,
+    MeetingSubgraphResult,
+    PageRankResult,
+    PredecessorsResult,
+    ShortestPathResult,
+    SubgraphSearchResult,
+    SuccessorsResult,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -162,33 +183,60 @@ class RustworkxGraph:
         ]
 
     # ------------------------------------------------------------------
-    # Query methods
+    # Public property: access the underlying rustworkx graph
     # ------------------------------------------------------------------
 
-    def predecessors(self, path: str) -> list[Ref]:
+    @property
+    def graph(self) -> rustworkx.PyDiGraph:
+        """Access the underlying rustworkx directed graph."""
+        g, _, _ = self._build_graph()
+        return g
+
+    # ------------------------------------------------------------------
+    # Query methods — return typed FileSearchResult subclasses
+    # ------------------------------------------------------------------
+
+    def predecessors(self, path: str) -> PredecessorsResult:
         """Nodes with edges pointing *to* this node."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
-        return [Ref(path=s) for s, t in self._edges if t == path]
+        self._require_node(path)
+        preds = sorted({s for s, t in self._edges if t == path})
+        return PredecessorsResult(
+            success=True,
+            message=f"{len(preds)} predecessor(s)",
+            file_candidates=[
+                FileCandidate(path=p, evidence=[GraphEvidence(operation="predecessors")])
+                for p in preds
+            ],
+        )
 
-    def successors(self, path: str) -> list[Ref]:
+    def successors(self, path: str) -> SuccessorsResult:
         """Nodes this node points *to*."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
-        return [Ref(path=t) for s, t in self._edges if s == path]
+        self._require_node(path)
+        succs = sorted({t for s, t in self._edges if s == path})
+        return SuccessorsResult(
+            success=True,
+            message=f"{len(succs)} successor(s)",
+            file_candidates=[
+                FileCandidate(path=p, evidence=[GraphEvidence(operation="successors")])
+                for p in succs
+            ],
+        )
 
-    def path_between(self, source: str, target: str) -> list[Ref] | None:
-        """Shortest path (Dijkstra) from *source* to *target*, or ``None``."""
-        if source not in self._nodes:
-            msg = f"Node not found: {source!r}"
-            raise KeyError(msg)
-        if target not in self._nodes:
-            msg = f"Node not found: {target!r}"
-            raise KeyError(msg)
+    def path_between(self, source: str, target: str) -> ShortestPathResult:
+        """Shortest path (Dijkstra) from *source* to *target*."""
+        self._require_node(source)
+        self._require_node(target)
         if source == target:
-            return [Ref(path=source)]
+            return ShortestPathResult(
+                success=True,
+                message="Path of 1 node(s)",
+                file_candidates=[
+                    FileCandidate(
+                        path=source,
+                        evidence=[GraphEvidence(operation="shortest_path")],
+                    )
+                ],
+            )
         graph, path_to_idx, idx_to_path = self._build_graph()
         src_idx = path_to_idx[source]
         tgt_idx = path_to_idx[target]
@@ -198,12 +246,21 @@ class RustworkxGraph:
             )
             indices = paths[tgt_idx]
         except (KeyError, IndexError, rustworkx.NoPathFound):
-            return None
-        return [Ref(path=idx_to_path[i]) for i in indices]
+            return ShortestPathResult(success=True, message="No path found")
+        node_paths = [idx_to_path[i] for i in indices]
+        return ShortestPathResult(
+            success=True,
+            message=f"Path of {len(node_paths)} node(s)",
+            file_candidates=[
+                FileCandidate(path=p, evidence=[GraphEvidence(operation="shortest_path")])
+                for p in node_paths
+            ],
+        )
 
     def contains(self, path: str) -> list[Ref]:
-        """Successors (all direct successors since edge types are not stored)."""
-        return self.successors(path)
+        """Successors as Refs (internal use — not part of typed-result API)."""
+        self._require_node(path)
+        return [Ref(path=t) for s, t in self._edges if s == path]
 
     def by_parent(self, parent_path: str) -> list[Ref]:
         """Not supported with minimal storage — returns empty list."""
@@ -244,8 +301,21 @@ class RustworkxGraph:
         return f"RustworkxGraph(nodes={self.node_count}, edges={self.edge_count})"
 
     # ------------------------------------------------------------------
-    # Centrality algorithms — accept candidates, return FileSearchResult
+    # Centrality algorithms — return typed FileSearchResult subclasses
     # ------------------------------------------------------------------
+
+    def _scores_to_candidates(
+        self, scores: dict[str, float], operation: str, algorithm: str
+    ) -> list[FileCandidate]:
+        """Convert a {path: score} dict to sorted FileCandidate list."""
+        sorted_items = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        return [
+            FileCandidate(
+                path=path,
+                evidence=[GraphEvidence(operation=operation, algorithm=algorithm, score=score)],
+            )
+            for path, score in sorted_items
+        ]
 
     def pagerank(
         self,
@@ -255,61 +325,80 @@ class RustworkxGraph:
         personalization: dict[str, float] | None = None,
         max_iter: int = 100,
         tol: float = 1e-6,
-    ) -> dict[str, float]:
+    ) -> PageRankResult:
         """PageRank centrality scores."""
         graph, path_to_idx, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return PageRankResult(success=True, message="0 node(s)")
         pers = None
         if personalization:
-            pers = {
-                path_to_idx[p]: w for p, w in personalization.items() if p in path_to_idx
-            }
+            pers = {path_to_idx[p]: w for p, w in personalization.items() if p in path_to_idx}
             if not pers:
                 pers = None
         scores = rustworkx.pagerank(
             graph, alpha=alpha, personalization=pers, max_iter=max_iter, tol=tol
         )
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "pagerank", "pagerank")
+        return PageRankResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def betweenness_centrality(
         self,
         candidates: FileSearchResult | None = None,
         *,
         normalized: bool = True,
-    ) -> dict[str, float]:
+    ) -> BetweennessResult:
         """Betweenness centrality scores."""
         graph, _, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return BetweennessResult(success=True, message="0 node(s)")
         scores = rustworkx.digraph_betweenness_centrality(graph, normalized=normalized)
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "betweenness_centrality", "betweenness_centrality")
+        return BetweennessResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def closeness_centrality(
         self,
         candidates: FileSearchResult | None = None,
-    ) -> dict[str, float]:
+    ) -> ClosenessResult:
         """Closeness centrality scores."""
         graph, _, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return ClosenessResult(success=True, message="0 node(s)")
         scores = rustworkx.closeness_centrality(graph)
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "closeness_centrality", "closeness_centrality")
+        return ClosenessResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def harmonic_centrality(
         self,
         candidates: FileSearchResult | None = None,
-    ) -> dict[str, float]:
+    ) -> HarmonicResult:
         """Harmonic centrality scores."""
         graph, path_to_idx, _idx_to_path = self._resolve_graph(candidates)
-        result: dict[str, float] = {}
+        raw: dict[str, float] = {}
         for path, idx in path_to_idx.items():
-            lengths = rustworkx.dijkstra_shortest_path_lengths(
-                graph, idx, lambda _e: 1.0
-            )
+            lengths = rustworkx.dijkstra_shortest_path_lengths(graph, idx, lambda _e: 1.0)
             score = sum(1.0 / d for d in dict(lengths).values() if d > 0)
-            result[path] = score
-        return result
+            raw[path] = score
+        fcs = self._scores_to_candidates(raw, "harmonic_centrality", "harmonic_centrality")
+        return HarmonicResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def hits(
         self,
@@ -317,17 +406,47 @@ class RustworkxGraph:
         *,
         max_iter: int = 100,
         tol: float = 1e-8,
-    ) -> tuple[dict[str, float], dict[str, float]]:
+    ) -> HitsResult:
         """HITS hub and authority scores."""
         graph, path_to_idx, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0 or graph.num_edges() == 0:
-            return dict.fromkeys(path_to_idx, 0.0), dict.fromkeys(path_to_idx, 0.0)
+            all_paths = sorted(path_to_idx)
+            return HitsResult(
+                success=True,
+                message=f"HITS computed for {len(all_paths)} node(s)",
+                file_candidates=[
+                    FileCandidate(
+                        path=p,
+                        evidence=[
+                            GraphEvidence(operation="hits_authority", algorithm="hits", score=0.0),
+                            GraphEvidence(operation="hits_hub", algorithm="hits", score=0.0),
+                        ],
+                    )
+                    for p in all_paths
+                ],
+            )
         hubs_raw, auths_raw = rustworkx.hits(graph, max_iter=max_iter, tol=tol)
         hubs = {idx_to_path[idx]: score for idx, score in hubs_raw.items() if idx in idx_to_path}
-        auths = {
-            idx_to_path[idx]: score for idx, score in auths_raw.items() if idx in idx_to_path
-        }
-        return hubs, auths
+        auths = {idx_to_path[idx]: score for idx, score in auths_raw.items() if idx in idx_to_path}
+        all_paths = sorted(set(hubs) | set(auths), key=lambda p: auths.get(p, 0.0), reverse=True)
+        return HitsResult(
+            success=True,
+            message=f"HITS computed for {len(all_paths)} node(s)",
+            file_candidates=[
+                FileCandidate(
+                    path=p,
+                    evidence=[
+                        GraphEvidence(
+                            operation="hits_authority", algorithm="hits", score=auths.get(p, 0.0)
+                        ),
+                        GraphEvidence(
+                            operation="hits_hub", algorithm="hits", score=hubs.get(p, 0.0)
+                        ),
+                    ],
+                )
+                for p in all_paths
+            ],
+        )
 
     def katz_centrality(
         self,
@@ -337,48 +456,72 @@ class RustworkxGraph:
         beta: float = 1.0,
         max_iter: int = 1000,
         tol: float = 1e-6,
-    ) -> dict[str, float]:
+    ) -> KatzResult:
         """Katz centrality scores."""
         graph, _, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return KatzResult(success=True, message="0 node(s)")
         scores = rustworkx.katz_centrality(
             graph, alpha=alpha, beta=beta, max_iter=max_iter, tol=tol
         )
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "katz_centrality", "katz_centrality")
+        return KatzResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
-    ) -> dict[str, float]:
+    ) -> DegreeResult:
         """Degree centrality (in + out) scores."""
         graph, _, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return DegreeResult(success=True, message="0 node(s)")
         scores = rustworkx.digraph_degree_centrality(graph)
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "degree_centrality", "degree_centrality")
+        return DegreeResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def in_degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
-    ) -> dict[str, float]:
+    ) -> DegreeResult:
         """In-degree centrality scores."""
         graph, _, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return DegreeResult(success=True, message="0 node(s)")
         scores = rustworkx.in_degree_centrality(graph)
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "in_degree_centrality", "in_degree_centrality")
+        return DegreeResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     def out_degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
-    ) -> dict[str, float]:
+    ) -> DegreeResult:
         """Out-degree centrality scores."""
         graph, _, idx_to_path = self._resolve_graph(candidates)
         if graph.num_nodes() == 0:
-            return {}
+            return DegreeResult(success=True, message="0 node(s)")
         scores = rustworkx.out_degree_centrality(graph)
-        return {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = self._scores_to_candidates(raw, "out_degree_centrality", "out_degree_centrality")
+        return DegreeResult(
+            success=True,
+            message=f"{len(fcs)} node(s)",
+            file_candidates=fcs,
+        )
 
     # ------------------------------------------------------------------
     # Connectivity algorithms
@@ -387,16 +530,12 @@ class RustworkxGraph:
     def weakly_connected_components(self) -> list[set[str]]:
         graph, _, idx_to_path = self._build_graph()
         components = rustworkx.weakly_connected_components(graph)
-        return [
-            {idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components
-        ]
+        return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
 
     def strongly_connected_components(self) -> list[set[str]]:
         graph, _, idx_to_path = self._build_graph()
         components = rustworkx.strongly_connected_components(graph)
-        return [
-            {idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components
-        ]
+        return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
 
     def is_weakly_connected(self) -> bool:
         graph, _, _ = self._build_graph()
@@ -406,24 +545,38 @@ class RustworkxGraph:
             return True
 
     # ------------------------------------------------------------------
-    # Traversal algorithms
+    # Traversal algorithms — return typed results
     # ------------------------------------------------------------------
 
-    def ancestors(self, path: str) -> set[str]:
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+    def ancestors(self, path: str) -> AncestorsResult:
+        self._require_node(path)
         graph, path_to_idx, idx_to_path = self._build_graph()
         idx = path_to_idx[path]
-        return {idx_to_path[i] for i in rustworkx.ancestors(graph, idx) if i in idx_to_path}
+        result = sorted(idx_to_path[i] for i in rustworkx.ancestors(graph, idx) if i in idx_to_path)
+        return AncestorsResult(
+            success=True,
+            message=f"{len(result)} ancestor(s)",
+            file_candidates=[
+                FileCandidate(path=p, evidence=[GraphEvidence(operation="ancestors")])
+                for p in result
+            ],
+        )
 
-    def descendants(self, path: str) -> set[str]:
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+    def descendants(self, path: str) -> DescendantsResult:
+        self._require_node(path)
         graph, path_to_idx, idx_to_path = self._build_graph()
         idx = path_to_idx[path]
-        return {idx_to_path[i] for i in rustworkx.descendants(graph, idx) if i in idx_to_path}
+        result = sorted(
+            idx_to_path[i] for i in rustworkx.descendants(graph, idx) if i in idx_to_path
+        )
+        return DescendantsResult(
+            success=True,
+            message=f"{len(result)} descendant(s)",
+            file_candidates=[
+                FileCandidate(path=p, evidence=[GraphEvidence(operation="descendants")])
+                for p in result
+            ],
+        )
 
     def all_simple_paths(
         self,
@@ -469,21 +622,46 @@ class RustworkxGraph:
         result = dict(lengths)
         return result.get(tgt_idx)
 
-    def has_path(self, source: str, target: str) -> bool:
-        return self.path_between(source, target) is not None
+    def has_path(self, source: str, target: str) -> HasPathResult:
+        result = self.path_between(source, target)
+        if not result:
+            return HasPathResult(success=True, message="No path exists")
+        return HasPathResult(
+            success=True,
+            message=f"Path exists ({len(result)} node(s))",
+            file_candidates=result.file_candidates,
+        )
 
     # ------------------------------------------------------------------
-    # Subgraph extraction
+    # Subgraph extraction — return typed results
     # ------------------------------------------------------------------
 
-    def subgraph(self, paths: list[str]) -> SubgraphResult:
+    def subgraph(self, paths: list[str]) -> SubgraphSearchResult:
         """Extract the induced subgraph for the given *paths*."""
         valid = {p for p in paths if p in self._nodes}
-        edges: list[tuple[str, str, dict[str, Any]]] = []
+        edge_list: list[tuple[str, str, dict[str, Any]]] = []
         for s, t in self._edges:
             if s in valid and t in valid:
-                edges.append((s, t, {"type": "", "weight": 1.0}))
-        return subgraph_result(sorted(valid), edges)
+                edge_list.append((s, t, {"type": "", "weight": 1.0}))
+        nodes_sorted = sorted(valid)
+        return SubgraphSearchResult(
+            success=True,
+            message=f"{len(nodes_sorted)} node(s), {len(edge_list)} edge(s)",
+            file_candidates=[
+                FileCandidate(path=n, evidence=[GraphEvidence(operation="subgraph")])
+                for n in nodes_sorted
+            ],
+            connection_candidates=[
+                ConnectionCandidate(
+                    source_path=s,
+                    target_path=t,
+                    connection_type=data.get("type", ""),
+                    weight=data.get("weight", 1.0),
+                    evidence=[GraphEvidence(operation="subgraph")],
+                )
+                for s, t, data in edge_list
+            ],
+        )
 
     def neighborhood(
         self,
@@ -492,11 +670,9 @@ class RustworkxGraph:
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
-    ) -> SubgraphResult:
+    ) -> EgoGraphResult:
         """BFS neighborhood around *path* up to *max_depth* hops."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+        self._require_node(path)
         # Build adjacency for BFS
         out_adj: dict[str, set[str]] = {}
         in_adj: dict[str, set[str]] = {}
@@ -523,34 +699,46 @@ class RustworkxGraph:
             if not frontier:
                 break
 
-        return self.subgraph(sorted(visited))
+        sub = self.subgraph(sorted(visited))
+        return EgoGraphResult(
+            success=sub.success,
+            message=sub.message,
+            file_candidates=sub.file_candidates,
+            connection_candidates=sub.connection_candidates,
+        )
 
     def meeting_subgraph(
         self,
         start_paths: list[str],
         *,
         max_size: int = 50,
-    ) -> SubgraphResult:
+    ) -> MeetingSubgraphResult:
         """Find the subgraph connecting *start_paths* via shortest paths."""
         valid_starts = [p for p in start_paths if p in self._nodes]
         if len(valid_starts) <= 1:
-            return self.subgraph(valid_starts)
+            sub = self.subgraph(valid_starts)
+            return MeetingSubgraphResult(
+                success=sub.success,
+                message=sub.message,
+                file_candidates=sub.file_candidates,
+                connection_candidates=sub.connection_candidates,
+            )
 
         # Collect all nodes on pairwise shortest paths
         all_nodes: set[str] = set(valid_starts)
         found_connection = False
         for i, src in enumerate(valid_starts):
-            for tgt in valid_starts[i + 1:]:
+            for tgt in valid_starts[i + 1 :]:
                 path_fwd = self.path_between(src, tgt)
-                if path_fwd is not None:
+                if path_fwd:
                     found_connection = True
-                    for ref in path_fwd:
-                        all_nodes.add(ref.path)
+                    for p in path_fwd.paths:
+                        all_nodes.add(p)
                 path_rev = self.path_between(tgt, src)
-                if path_rev is not None:
+                if path_rev:
                     found_connection = True
-                    for ref in path_rev:
-                        all_nodes.add(ref.path)
+                    for p in path_rev.paths:
+                        all_nodes.add(p)
 
         if not found_connection:
             common = self.common_reachable(valid_starts, direction="forward")
@@ -559,7 +747,8 @@ class RustworkxGraph:
 
         # Score with personalized PageRank
         pers = dict.fromkeys(valid_starts, 1.0)
-        scores = self.pagerank(personalization=pers)
+        pr_result = self.pagerank(personalization=pers)
+        scores = {c.path: c.evidence[0].score for c in pr_result.file_candidates}
 
         # Prune to max_size
         start_set = set(valid_starts)
@@ -579,8 +768,26 @@ class RustworkxGraph:
             node_list.remove(worst)
 
         sub = self.subgraph(node_list)
-        sub_scores = {n: scores.get(n, 0.0) for n in sub.nodes}
-        return subgraph_result(list(sub.nodes), list(sub.edges), sub_scores)
+        # Enrich file_candidates with PageRank scores
+        enriched_fcs = [
+            FileCandidate(
+                path=c.path,
+                evidence=[
+                    GraphEvidence(
+                        operation="min_meeting_subgraph",
+                        algorithm="min_meeting_subgraph",
+                        score=scores.get(c.path, 0.0),
+                    )
+                ],
+            )
+            for c in sub.file_candidates
+        ]
+        return MeetingSubgraphResult(
+            success=True,
+            message=sub.message,
+            file_candidates=enriched_fcs,
+            connection_candidates=sub.connection_candidates,
+        )
 
     def common_reachable(
         self,
@@ -593,19 +800,25 @@ class RustworkxGraph:
         if not valid:
             return set()
         if direction == "forward":
-            sets = [self.descendants(p) for p in valid]
+            sets = [set(self.descendants(p).paths) for p in valid]
         else:
-            sets = [self.ancestors(p) for p in valid]
+            sets = [set(self.ancestors(p).paths) for p in valid]
         result = sets[0]
         for s in sets[1:]:
             result = result & s
         return result
 
-    def common_neighbors(self, path1: str, path2: str) -> set[str]:
+    def common_neighbors(self, path1: str, path2: str) -> CommonNeighborsResult:
         """Intersection of undirected neighbors of both nodes."""
-        n1 = self._undirected_neighbors(path1)
-        n2 = self._undirected_neighbors(path2)
-        return n1 & n2
+        neighbors = sorted(self._undirected_neighbors(path1) & self._undirected_neighbors(path2))
+        return CommonNeighborsResult(
+            success=True,
+            message=f"{len(neighbors)} common neighbor(s)",
+            file_candidates=[
+                FileCandidate(path=p, evidence=[GraphEvidence(operation="common_neighbors")])
+                for p in neighbors
+            ],
+        )
 
     # ------------------------------------------------------------------
     # Connecting subgraph — multi-source BFS + Union-Find
@@ -705,9 +918,7 @@ class RustworkxGraph:
         """Build a RustworkxGraph from explicit file_candidates + connection_candidates."""
         sub = RustworkxGraph()
         sub._nodes = {c.path for c in candidates.file_candidates}
-        sub._edges = {
-            (cc.source_path, cc.target_path) for cc in candidates.connection_candidates
-        }
+        sub._edges = {(cc.source_path, cc.target_path) for cc in candidates.connection_candidates}
         return sub
 
     # ------------------------------------------------------------------
@@ -735,63 +946,6 @@ class RustworkxGraph:
             return self._build_graph()
         sub = self.connecting_subgraph(paths)
         return sub._build_graph()
-
-    # ------------------------------------------------------------------
-    # Filtering (kept for backward compat)
-    # ------------------------------------------------------------------
-
-    def find_nodes(self, **attrs: object) -> list[str]:
-        """Find nodes matching attrs. With minimal storage, only 'path' is queryable."""
-        if not attrs:
-            return list(self._nodes)
-        if "path" in attrs:
-            p = attrs["path"]
-            if callable(p):
-                return [n for n in self._nodes if p(n)]  # type: ignore[operator]
-            return [n for n in self._nodes if n == p]
-        return []
-
-    def find_edges(
-        self,
-        *,
-        edge_type: str | None = None,
-        source: str | None = None,
-        target: str | None = None,
-    ) -> list[tuple[str, str, dict[str, Any]]]:
-        """Filter edges by source and/or target."""
-        result: list[tuple[str, str, dict[str, Any]]] = []
-        for s, t in self._edges:
-            if source is not None and s != source:
-                continue
-            if target is not None and t != target:
-                continue
-            result.append((s, t, {"type": "", "weight": 1.0}))
-        return result
-
-    def edges_of(
-        self,
-        path: str,
-        *,
-        direction: str = "both",
-        edge_types: list[str] | None = None,
-    ) -> list[tuple[str, str, dict[str, Any]]]:
-        """Return edges incident to *path*."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
-        seen: set[tuple[str, str]] = set()
-        result: list[tuple[str, str, dict[str, Any]]] = []
-        if direction in ("out", "both"):
-            for s, t in self._edges:
-                if s == path and (s, t) not in seen:
-                    seen.add((s, t))
-                    result.append((s, t, {"type": "", "weight": 1.0}))
-        if direction in ("in", "both"):
-            for s, t in self._edges:
-                if t == path and (s, t) not in seen:
-                    seen.add((s, t))
-                    result.append((s, t, {"type": "", "weight": 1.0}))
-        return result
 
     # ------------------------------------------------------------------
     # Node similarity

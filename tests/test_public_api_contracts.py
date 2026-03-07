@@ -291,11 +291,10 @@ def test_version_matches_pyproject() -> None:
 
 @pytest.mark.asyncio
 async def test_grover_async_capability_check(tmp_path: Path) -> None:
-    """Convenience wrappers raise CapabilityNotSupportedError for unsupported backends."""
-    from grover.exceptions import CapabilityNotSupportedError
+    """Calling algorithm methods on a minimal graph raises AttributeError."""
 
     class MinimalGraph:
-        """Graph that satisfies GraphStore but no capability protocols."""
+        """Graph with only CRUD methods — no algorithm methods."""
 
         def add_node(self, path: str, **attrs: object) -> None: ...
         def remove_node(self, path: str) -> None: ...
@@ -354,11 +353,11 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
         # Inject MinimalGraph onto the mounted backend
         mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
         mount.filesystem.graph_provider = MinimalGraph()
-        with pytest.raises(CapabilityNotSupportedError):
+        with pytest.raises(AttributeError):
             ga.pagerank(path="/app")
-        with pytest.raises(CapabilityNotSupportedError):
+        with pytest.raises(AttributeError):
             ga.betweenness_centrality(path="/app")
-        with pytest.raises(CapabilityNotSupportedError):
+        with pytest.raises(AttributeError):
             ga.hits(path="/app")
     finally:
         await ga.close()

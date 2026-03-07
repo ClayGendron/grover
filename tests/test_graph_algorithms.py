@@ -5,11 +5,7 @@ from __future__ import annotations
 import pytest
 
 from grover.providers.graph import RustworkxGraph
-from grover.providers.graph.protocol import (
-    SupportsCentrality,
-    SupportsConnectivity,
-    SupportsTraversal,
-)
+from grover.providers.graph.protocol import GraphProvider
 
 # ======================================================================
 # Centrality — PageRank
@@ -21,46 +17,46 @@ class TestPageRank:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        scores = g.pagerank()
-        assert len(scores) == 3
-        total = sum(scores.values())
+        result = g.pagerank()
+        assert len(result) == 3
+        total = sum(c.evidence[0].score for c in result.file_candidates)
         assert abs(total - 1.0) < 0.01
         # Sink node (c) should have highest score in a chain
-        assert scores["/c.py"] > scores["/a.py"]
+        assert result.explain("/c.py")[0].score > result.explain("/a.py")[0].score
 
     def test_personalized(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        scores = g.pagerank(personalization={"/a.py": 1.0})
-        assert len(scores) == 3
+        result = g.pagerank(personalization={"/a.py": 1.0})
+        assert len(result) == 3
         # Personalization biases toward /a.py's neighborhood
-        assert scores["/a.py"] > 0
+        assert result.explain("/a.py")[0].score > 0
 
     def test_empty_graph(self) -> None:
         g = RustworkxGraph()
-        assert g.pagerank() == {}
+        assert len(g.pagerank()) == 0
 
     def test_single_node(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        scores = g.pagerank()
-        assert len(scores) == 1
-        assert abs(scores["/a.py"] - 1.0) < 0.01
+        result = g.pagerank()
+        assert len(result) == 1
+        assert abs(result.explain("/a.py")[0].score - 1.0) < 0.01
 
     def test_nonexistent_personalization_key_ignored(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         # /missing.py is not in the graph — should be silently skipped
-        scores = g.pagerank(personalization={"/missing.py": 1.0, "/a.py": 0.5})
-        assert len(scores) == 2
+        result = g.pagerank(personalization={"/missing.py": 1.0, "/a.py": 0.5})
+        assert len(result) == 2
 
     def test_all_personalization_keys_missing(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         # All keys missing — falls back to uniform personalization
-        scores = g.pagerank(personalization={"/missing.py": 1.0})
-        assert len(scores) == 2
+        result = g.pagerank(personalization={"/missing.py": 1.0})
+        assert len(result) == 2
 
 
 # ======================================================================
@@ -73,17 +69,17 @@ class TestBetweennessCentrality:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        scores = g.betweenness_centrality()
-        assert scores["/b.py"] >= scores["/a.py"]
-        assert scores["/b.py"] >= scores["/c.py"]
+        result = g.betweenness_centrality()
+        assert result.explain("/b.py")[0].score >= result.explain("/a.py")[0].score
+        assert result.explain("/b.py")[0].score >= result.explain("/c.py")[0].score
 
     def test_no_edges(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.py")
-        scores = g.betweenness_centrality()
-        assert scores["/a.py"] == 0.0
-        assert scores["/b.py"] == 0.0
+        result = g.betweenness_centrality()
+        assert result.explain("/a.py")[0].score == 0.0
+        assert result.explain("/b.py")[0].score == 0.0
 
 
 # ======================================================================
@@ -101,8 +97,8 @@ class TestClosenessCentrality:
         g.add_edge("/b.py", "/center.py", "imports")
         g.add_edge("/center.py", "/c.py", "imports")
         g.add_edge("/c.py", "/center.py", "imports")
-        scores = g.closeness_centrality()
-        assert scores["/center.py"] >= scores["/a.py"]
+        result = g.closeness_centrality()
+        assert result.explain("/center.py")[0].score >= result.explain("/a.py")[0].score
 
 
 # ======================================================================
@@ -115,13 +111,13 @@ class TestKatzCentrality:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        scores = g.katz_centrality()
-        assert len(scores) == 3
-        assert all(v > 0 for v in scores.values())
+        result = g.katz_centrality()
+        assert len(result) == 3
+        assert all(c.evidence[0].score > 0 for c in result.file_candidates)
 
     def test_empty_graph(self) -> None:
         g = RustworkxGraph()
-        assert g.katz_centrality() == {}
+        assert len(g.katz_centrality()) == 0
 
 
 # ======================================================================
@@ -135,8 +131,8 @@ class TestDegreeCentrality:
         g.add_edge("/hub.py", "/a.py", "imports")
         g.add_edge("/hub.py", "/b.py", "imports")
         g.add_edge("/c.py", "/hub.py", "imports")
-        scores = g.degree_centrality()
-        assert scores["/hub.py"] >= scores["/a.py"]
+        result = g.degree_centrality()
+        assert result.explain("/hub.py")[0].score >= result.explain("/a.py")[0].score
 
     def test_in_vs_out(self) -> None:
         # Asymmetric: /a.py has 2 outgoing, /b.py has 2 incoming
@@ -144,12 +140,12 @@ class TestDegreeCentrality:
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "imports")
         g.add_edge("/d.py", "/b.py", "calls")
-        in_scores = g.in_degree_centrality()
-        out_scores = g.out_degree_centrality()
+        in_result = g.in_degree_centrality()
+        out_result = g.out_degree_centrality()
         # /b.py has 2 incoming edges
-        assert in_scores["/b.py"] > in_scores["/a.py"]
+        assert in_result.explain("/b.py")[0].score > in_result.explain("/a.py")[0].score
         # /a.py has 2 outgoing edges
-        assert out_scores["/a.py"] > out_scores["/b.py"]
+        assert out_result.explain("/a.py")[0].score > out_result.explain("/b.py")[0].score
 
 
 # ======================================================================
@@ -218,12 +214,12 @@ class TestTraversal:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        assert g.ancestors("/c.py") == {"/a.py", "/b.py"}
+        assert set(g.ancestors("/c.py").paths) == {"/a.py", "/b.py"}
 
     def test_ancestors_no_parents(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        assert g.ancestors("/a.py") == set()
+        assert set(g.ancestors("/a.py").paths) == set()
 
     def test_ancestors_missing_node(self) -> None:
         g = RustworkxGraph()
@@ -234,12 +230,12 @@ class TestTraversal:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
-        assert g.descendants("/a.py") == {"/b.py", "/c.py"}
+        assert set(g.descendants("/a.py").paths) == {"/b.py", "/c.py"}
 
     def test_descendants_leaf(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        assert g.descendants("/b.py") == set()
+        assert set(g.descendants("/b.py").paths) == set()
 
     def test_all_simple_paths_diamond(self) -> None:
         # A->B->D and A->C->D: 2 distinct paths
@@ -320,14 +316,6 @@ class TestTraversal:
 
 
 class TestProtocolSatisfaction:
-    def test_supports_centrality(self) -> None:
+    def test_supports_graph_provider(self) -> None:
         g = RustworkxGraph()
-        assert isinstance(g, SupportsCentrality)
-
-    def test_supports_connectivity(self) -> None:
-        g = RustworkxGraph()
-        assert isinstance(g, SupportsConnectivity)
-
-    def test_supports_traversal(self) -> None:
-        g = RustworkxGraph()
-        assert isinstance(g, SupportsTraversal)
+        assert isinstance(g, GraphProvider)

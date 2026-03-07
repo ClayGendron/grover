@@ -7,28 +7,12 @@ from types import MappingProxyType
 import pytest
 
 from grover.providers.graph import RustworkxGraph
-from grover.providers.graph.protocol import (
-    GraphProvider,
-    GraphStore,
-)
+from grover.providers.graph.protocol import GraphProvider
 from grover.providers.graph.types import SubgraphResult, subgraph_result
 
 # ======================================================================
-# GraphStore protocol
+# GraphProvider protocol
 # ======================================================================
-
-
-class TestGraphStoreProtocol:
-    def test_rustworkx_satisfies_graph_store(self) -> None:
-        g = RustworkxGraph()
-        assert isinstance(g, GraphStore)
-
-    def test_graph_store_is_runtime_checkable(self) -> None:
-        """Can use isinstance() check on GraphStore."""
-        assert isinstance(RustworkxGraph(), GraphStore)
-
-        # A plain object should NOT satisfy it
-        assert not isinstance(object(), GraphStore)
 
 
 class TestGraphProviderProtocol:
@@ -39,10 +23,6 @@ class TestGraphProviderProtocol:
     def test_graph_provider_is_runtime_checkable(self) -> None:
         assert isinstance(RustworkxGraph(), GraphProvider)
         assert not isinstance(object(), GraphProvider)
-
-    def test_graph_provider_is_graph_store(self) -> None:
-        """GraphStore is an alias for GraphProvider."""
-        assert GraphStore is GraphProvider
 
 
 # ======================================================================
@@ -58,11 +38,6 @@ class TestGraphProviderIncludesPersistence:
     def test_to_sql_removed(self) -> None:
         g = RustworkxGraph()
         assert not hasattr(g, "to_sql")
-
-
-# ======================================================================
-# Capability protocols NOT yet satisfied (Phase 2-4)
-# ======================================================================
 
 
 # ======================================================================

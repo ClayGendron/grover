@@ -974,94 +974,44 @@ class TestDiffVersionsResult:
 
 
 # =====================================================================
-# GraphResult factory methods
+# GraphResult set algebra with connection candidates
 # =====================================================================
 
 
-class TestGraphResultFactories:
-    def test_graph_result_from_subgraph_nodes_and_edges(self):
-        from grover.providers.graph.types import subgraph_result
-
-        sub = subgraph_result(
-            nodes=["/a.py", "/b.py"],
-            edges=[("/a.py", "/b.py", {"type": "imports", "weight": 2.0})],
-            scores={"/a.py": 0.9, "/b.py": 0.5},
-        )
-        r = GraphResult.from_subgraph(sub, operation="test_op")
-        assert len(r.file_candidates) == 2
-        assert r.file_candidates[0].path == "/a.py"
-        assert r.file_candidates[1].path == "/b.py"
-        # Scores propagate to GraphEvidence
-        ev_a = r.file_candidates[0].evidence[0]
-        assert isinstance(ev_a, GraphEvidence)
-        assert ev_a.score == 0.9
-        assert ev_a.operation == "test_op"
-        # Connection candidates populated
-        assert len(r.connection_candidates) == 1
-        cc = r.connection_candidates[0]
-        assert cc.source_path == "/a.py"
-        assert cc.target_path == "/b.py"
-        assert cc.connection_type == "imports"
-        assert cc.weight == 2.0
-
-    def test_graph_result_from_subgraph_with_scores(self):
-        from grover.providers.graph.types import subgraph_result
-
-        sub = subgraph_result(
-            nodes=["/x.py", "/y.py"],
-            edges=[],
-            scores={"/x.py": 0.8, "/y.py": 0.3},
-        )
-        r = GraphResult.from_subgraph(sub, operation="pagerank")
-        for c in r.file_candidates:
-            ev = c.evidence[0]
-            assert isinstance(ev, GraphEvidence)
-            if c.path == "/x.py":
-                assert ev.score == 0.8
-            elif c.path == "/y.py":
-                assert ev.score == 0.3
-
-    def test_graph_result_from_subgraph_empty(self):
-        from grover.providers.graph.types import subgraph_result
-
-        sub = subgraph_result(nodes=[], edges=[])
-        r = GraphResult.from_subgraph(sub, operation="test")
-        assert len(r.file_candidates) == 0
-        assert len(r.connection_candidates) == 0
-        assert r.success is True
-
-    def test_graph_result_from_scored(self):
-        scores = {"/a.py": 0.9, "/b.py": 0.3, "/c.py": 0.7}
-        r = GraphResult.from_scored(scores, operation="pagerank", algorithm="pagerank")
-        assert len(r.file_candidates) == 3
-        # Sorted descending by score
-        assert r.file_candidates[0].path == "/a.py"
-        assert r.file_candidates[1].path == "/c.py"
-        assert r.file_candidates[2].path == "/b.py"
-        # Scores in evidence
-        ev = r.file_candidates[0].evidence[0]
-        assert isinstance(ev, GraphEvidence)
-        assert ev.score == 0.9
-        assert ev.algorithm == "pagerank"
-
-    def test_graph_result_from_scored_empty(self):
-        r = GraphResult.from_scored({}, operation="test")
-        assert len(r.file_candidates) == 0
-        assert r.success is True
-
+class TestGraphResultSetAlgebra:
     def test_graph_result_set_algebra_preserves_connections(self):
-        from grover.providers.graph.types import subgraph_result
-
-        sub1 = subgraph_result(
-            nodes=["/a.py", "/b.py"],
-            edges=[("/a.py", "/b.py", {"type": "imports"})],
+        r1 = GraphResult(
+            success=True,
+            message="2 node(s)",
+            file_candidates=[
+                FileCandidate(path="/a.py", evidence=[GraphEvidence(operation="op1")]),
+                FileCandidate(path="/b.py", evidence=[GraphEvidence(operation="op1")]),
+            ],
+            connection_candidates=[
+                ConnectionCandidate(
+                    source_path="/a.py",
+                    target_path="/b.py",
+                    connection_type="imports",
+                    evidence=[GraphEvidence(operation="op1")],
+                )
+            ],
         )
-        sub2 = subgraph_result(
-            nodes=["/b.py", "/c.py"],
-            edges=[("/b.py", "/c.py", {"type": "calls"})],
+        r2 = GraphResult(
+            success=True,
+            message="2 node(s)",
+            file_candidates=[
+                FileCandidate(path="/b.py", evidence=[GraphEvidence(operation="op2")]),
+                FileCandidate(path="/c.py", evidence=[GraphEvidence(operation="op2")]),
+            ],
+            connection_candidates=[
+                ConnectionCandidate(
+                    source_path="/b.py",
+                    target_path="/c.py",
+                    connection_type="calls",
+                    evidence=[GraphEvidence(operation="op2")],
+                )
+            ],
         )
-        r1 = GraphResult.from_subgraph(sub1, operation="op1")
-        r2 = GraphResult.from_subgraph(sub2, operation="op2")
         union = r1 | r2
         assert len(union.connection_candidates) == 2
         conn_paths = {cc.path for cc in union.connection_candidates}
@@ -1135,17 +1085,3 @@ class TestTypedGraphResultSubclasses:
             instance = cls(success=True, message="test")
             assert isinstance(instance, GraphResult), f"{cls.__name__} not a GraphResult"
             assert isinstance(instance, FileSearchResult), f"{cls.__name__} not a FileSearchResult"
-
-    def test_typed_subclass_from_scored(self):
-        r = PageRankResult.from_scored({"/a.py": 0.5, "/b.py": 0.8}, operation="pagerank")
-        assert isinstance(r, PageRankResult)
-        assert isinstance(r, GraphResult)
-        assert r.file_candidates[0].path == "/b.py"  # highest score first
-
-    def test_typed_subclass_from_subgraph(self):
-        from grover.providers.graph.types import subgraph_result
-
-        sub = subgraph_result(nodes=["/a.py"], edges=[])
-        r = EgoGraphResult.from_subgraph(sub, operation="ego_graph")
-        assert isinstance(r, EgoGraphResult)
-        assert isinstance(r, GraphResult)

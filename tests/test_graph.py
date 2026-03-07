@@ -10,10 +10,11 @@ import pytest
 from grover.models.connection import FileConnection
 from grover.models.file import File
 from grover.providers.graph import RustworkxGraph
-from grover.ref import Ref
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from grover.ref import Ref
 
 
 # ======================================================================
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 
 def _ref_paths(refs: list[Ref]) -> set[str]:
-    """Extract paths from a list of Refs as a set for order-independent comparison."""
+    """Extract paths from a list of Refs for order-independent comparison."""
     return {r.path for r in refs}
 
 
@@ -201,25 +202,25 @@ class TestPredecessorsAndSuccessors:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/c.py", "/b.py", "imports")
-        refs = g.predecessors("/b.py")
-        assert _ref_paths(refs) == {"/a.py", "/c.py"}
+        result = g.predecessors("/b.py")
+        assert set(result.paths) == {"/a.py", "/c.py"}
 
     def test_successors_outgoing(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/a.py", "/c.py", "imports")
-        refs = g.successors("/a.py")
-        assert _ref_paths(refs) == {"/b.py", "/c.py"}
+        result = g.successors("/a.py")
+        assert set(result.paths) == {"/b.py", "/c.py"}
 
     def test_predecessors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert g.predecessors("/a.py") == []
+        assert len(g.predecessors("/a.py")) == 0
 
     def test_successors_empty(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
-        assert g.successors("/a.py") == []
+        assert len(g.successors("/a.py")) == 0
 
     def test_predecessors_not_found(self) -> None:
         g = RustworkxGraph()
@@ -231,13 +232,12 @@ class TestPredecessorsAndSuccessors:
         with pytest.raises(KeyError):
             g.successors("/missing.py")
 
-    def test_returns_ref_instances(self) -> None:
+    def test_returns_typed_result(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
-        refs = g.predecessors("/b.py")
-        assert len(refs) == 1
-        assert isinstance(refs[0], Ref)
-        assert refs[0].path == "/a.py"
+        result = g.predecessors("/b.py")
+        assert len(result) == 1
+        assert result.paths[0] == "/a.py"
 
 
 # ======================================================================
@@ -250,31 +250,29 @@ class TestPathBetween:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         result = g.path_between("/a.py", "/b.py")
-        assert result is not None
-        paths = [r.path for r in result]
-        assert paths == ["/a.py", "/b.py"]
+        assert result
+        assert list(result.paths) == ["/a.py", "/b.py"]
 
     def test_multi_hop(self) -> None:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         g.add_edge("/b.py", "/c.py", "imports")
         result = g.path_between("/a.py", "/c.py")
-        assert result is not None
-        paths = [r.path for r in result]
-        assert paths == ["/a.py", "/b.py", "/c.py"]
+        assert result
+        assert list(result.paths) == ["/a.py", "/b.py", "/c.py"]
 
     def test_no_path(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         g.add_node("/b.py")
-        assert g.path_between("/a.py", "/b.py") is None
+        assert not g.path_between("/a.py", "/b.py")
 
     def test_same_node(self) -> None:
         g = RustworkxGraph()
         g.add_node("/a.py")
         result = g.path_between("/a.py", "/a.py")
-        assert result is not None
-        assert [r.path for r in result] == ["/a.py"]
+        assert result
+        assert list(result.paths) == ["/a.py"]
 
     def test_source_missing(self) -> None:
         g = RustworkxGraph()

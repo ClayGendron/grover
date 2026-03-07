@@ -304,11 +304,15 @@ class TestGraphMethodsNoop:
 
     def test_graph_predecessors_returns_empty(self):
         fs = DatabaseFileSystem()
-        assert fs.graph_predecessors("/a.py") == []
+        result = fs.graph_predecessors("/a.py")
+        assert len(result) == 0
+        assert result.success is True
 
     def test_graph_successors_returns_empty(self):
         fs = DatabaseFileSystem()
-        assert fs.graph_successors("/a.py") == []
+        result = fs.graph_successors("/a.py")
+        assert len(result) == 0
+        assert result.success is True
 
     def test_graph_node_count_returns_zero(self):
         fs = DatabaseFileSystem()
@@ -326,9 +330,11 @@ class TestGraphMethodsNoop:
         fs = DatabaseFileSystem()
         assert fs.graph_nodes() == []
 
-    def test_graph_path_between_returns_none(self):
+    def test_graph_path_between_returns_empty(self):
         fs = DatabaseFileSystem()
-        assert fs.graph_path_between("/a.py", "/b.py") is None
+        result = fs.graph_path_between("/a.py", "/b.py")
+        assert not result
+        assert result.success is True
 
 
 class TestGraphMethodsWithProvider:

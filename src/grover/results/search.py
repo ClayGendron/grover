@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
     from datetime import datetime
 
-    from grover.providers.graph.types import SubgraphResult
     from grover.ref import Ref
 
 
@@ -667,93 +666,6 @@ class GraphResult(FileSearchResult):
                     if isinstance(e, GraphEvidence) and e.relationship
                 )
         return ()
-
-    # -----------------------------------------------------------------
-    # Factory methods
-    # -----------------------------------------------------------------
-
-    @classmethod
-    def from_subgraph(cls, sub: SubgraphResult, *, operation: str) -> Self:
-        """Create a result from a ``SubgraphResult``.
-
-        ``file_candidates`` from ``sub.nodes`` with ``GraphEvidence``.
-        ``connection_candidates`` from ``sub.edges`` as ``ConnectionCandidate``.
-        """
-        file_candidates = [
-            FileCandidate(
-                path=node,
-                evidence=[
-                    GraphEvidence(
-                        operation=operation,
-                        algorithm=operation,
-                        score=sub.scores.get(node, 0.0),
-                    )
-                ],
-            )
-            for node in sub.nodes
-        ]
-        connection_candidates = [
-            ConnectionCandidate(
-                source_path=src,
-                target_path=tgt,
-                connection_type=data.get("type", ""),
-                weight=data.get("weight", 1.0),
-                evidence=[GraphEvidence(operation=operation, algorithm=operation)],
-            )
-            for src, tgt, data in sub.edges
-        ]
-        return cls(
-            success=True,
-            message=f"{len(file_candidates)} node(s), {len(connection_candidates)} edge(s)",
-            file_candidates=file_candidates,
-            connection_candidates=connection_candidates,
-        )
-
-    @classmethod
-    def from_scored(
-        cls,
-        scores: dict[str, float],
-        *,
-        operation: str,
-        algorithm: str = "",
-        edges: list[tuple[str, str]] | None = None,
-    ) -> Self:
-        """Create a result from a ``{path: score}`` dict, sorted descending.
-
-        If *edges* is provided, ``connection_candidates`` are populated from
-        the topology used in the computation.
-        """
-        sorted_items = sorted(scores.items(), key=lambda item: item[1], reverse=True)
-        file_candidates = [
-            FileCandidate(
-                path=path,
-                evidence=[
-                    GraphEvidence(
-                        operation=operation,
-                        algorithm=algorithm or operation,
-                        score=score,
-                    )
-                ],
-            )
-            for path, score in sorted_items
-        ]
-        connection_candidates: list[ConnectionCandidate] = []
-        if edges:
-            connection_candidates = [
-                ConnectionCandidate(
-                    source_path=src,
-                    target_path=tgt,
-                    connection_type="",
-                    evidence=[GraphEvidence(operation=operation, algorithm=algorithm or operation)],
-                )
-                for src, tgt in edges
-            ]
-        return cls(
-            success=True,
-            message=f"{len(file_candidates)} node(s)",
-            file_candidates=file_candidates,
-            connection_candidates=connection_candidates,
-        )
 
 
 # =====================================================================

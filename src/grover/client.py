@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from grover.models.version import FileVersionBase
     from grover.mount import Mount
     from grover.providers.embedding.protocol import EmbeddingProvider
-    from grover.providers.graph.protocol import GraphStore
+    from grover.providers.graph.protocol import GraphProvider
     from grover.providers.search.protocol import SearchProvider
     from grover.results import (
         AncestorsResult,
@@ -696,6 +696,6 @@ class Grover:
     # Properties
     # ------------------------------------------------------------------
 
-    def get_graph(self, path: str | None = None) -> GraphStore:
+    def get_graph(self, path: str | None = None) -> GraphProvider:
         """Return the graph for the mount owning *path*, or the first available."""
         return self._async.get_graph(path)
