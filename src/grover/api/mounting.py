@@ -171,6 +171,13 @@ class MountMixin:
             if hasattr(fs, "_validate_search_dimensions"):
                 fs._validate_search_dimensions()  # type: ignore[union-attr]
 
+        # Configure graph provider for self-refresh from DB
+        if fs is not None and not new_mount.hidden and new_mount.session_factory is not None:
+            gp = getattr(fs, "graph_provider", None)
+            if gp is not None and hasattr(gp, "configure_refresh"):
+                fm = getattr(fs, "file_model", None)
+                gp.configure_refresh(fm, new_mount.path)
+
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
             new_mount.filesystem, "open"

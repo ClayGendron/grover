@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections import deque
 from typing import TYPE_CHECKING, Any
@@ -52,9 +53,70 @@ class RustworkxGraph:
     Implements the ``GraphProvider`` protocol.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, stale_after: float | None = None) -> None:
         self._nodes: set[str] = set()
         self._edges: set[tuple[str, str]] = set()
+        # Staleness tracking
+        self._loaded_at: float | None = None
+        self._stale_after: float | None = stale_after
+        # Refresh config (set via configure_refresh)
+        self._refresh_file_model: type | None = None
+        self._refresh_path_prefix: str = ""
+
+    # ------------------------------------------------------------------
+    # Staleness tracking and self-refresh
+    # ------------------------------------------------------------------
+
+    @property
+    def needs_refresh(self) -> bool:
+        """True if the graph has never been loaded or its TTL has expired.
+
+        A graph that has been populated through mutations (add_node/add_edge)
+        is considered initialized even without ``from_sql()``, so it won't
+        trigger an unwanted reload that would wipe in-memory-only edges.
+        """
+        if self._loaded_at is None:
+            # Never loaded from SQL — only refresh if the graph is also empty.
+            # A non-empty graph was populated via writes (warm from mutations).
+            return not self._nodes
+        if self._stale_after is None:
+            return False  # No TTL — manual only
+        return (time.monotonic() - self._loaded_at) > self._stale_after
+
+    @property
+    def stale_after(self) -> float | None:
+        """TTL in seconds, or ``None`` for no automatic refresh."""
+        return self._stale_after
+
+    @stale_after.setter
+    def stale_after(self, value: float | None) -> None:
+        self._stale_after = value
+
+    @property
+    def loaded_at(self) -> float | None:
+        """Monotonic timestamp of the last ``from_sql()`` load, or ``None``."""
+        return self._loaded_at
+
+    def configure_refresh(
+        self,
+        file_model: type | None = None,
+        path_prefix: str = "",
+    ) -> None:
+        """Store refresh parameters so ``_ensure_fresh`` can call ``from_sql``."""
+        self._refresh_file_model = file_model
+        self._refresh_path_prefix = path_prefix
+
+    async def _ensure_fresh(self, session: AsyncSession | None) -> None:
+        """Load from DB if never loaded or TTL exceeded."""
+        if not self.needs_refresh:
+            return
+        if session is None:
+            return  # No session available — serve from memory as-is
+        await self.from_sql(
+            session,
+            self._refresh_file_model,
+            path_prefix=self._refresh_path_prefix,
+        )
 
     # ------------------------------------------------------------------
     # Graph construction
@@ -192,8 +254,11 @@ class RustworkxGraph:
     # Light reads — async inline (no thread overhead)
     # ------------------------------------------------------------------
 
-    async def predecessors(self, path: str) -> PredecessorsResult:
+    async def predecessors(
+        self, path: str, *, session: AsyncSession | None = None
+    ) -> PredecessorsResult:
         """Nodes with edges pointing *to* this node."""
+        await self._ensure_fresh(session)
         self._require_node(path)
         preds = sorted({s for s, t in self._edges if t == path})
         return PredecessorsResult(
@@ -205,8 +270,11 @@ class RustworkxGraph:
             ],
         )
 
-    async def successors(self, path: str) -> SuccessorsResult:
+    async def successors(
+        self, path: str, *, session: AsyncSession | None = None
+    ) -> SuccessorsResult:
         """Nodes this node points *to*."""
+        await self._ensure_fresh(session)
         self._require_node(path)
         succs = sorted({t for s, t in self._edges if s == path})
         return SuccessorsResult(
@@ -227,8 +295,11 @@ class RustworkxGraph:
         """Not supported with minimal storage — returns empty list."""
         return []
 
-    async def subgraph(self, paths: list[str]) -> SubgraphSearchResult:
+    async def subgraph(
+        self, paths: list[str], *, session: AsyncSession | None = None
+    ) -> SubgraphSearchResult:
         """Extract the induced subgraph for the given *paths*."""
+        await self._ensure_fresh(session)
         valid = {p for p in paths if p in self._nodes}
         edge_list: list[tuple[str, str, dict[str, Any]]] = []
         for s, t in self._edges:
@@ -261,8 +332,10 @@ class RustworkxGraph:
         max_depth: int = 2,
         direction: str = "both",
         edge_types: list[str] | None = None,
+        session: AsyncSession | None = None,
     ) -> EgoGraphResult:
         """BFS neighborhood around *path* up to *max_depth* hops."""
+        await self._ensure_fresh(session)
         self._require_node(path)
         out_adj: dict[str, set[str]] = {}
         in_adj: dict[str, set[str]] = {}
@@ -289,7 +362,7 @@ class RustworkxGraph:
             if not frontier:
                 break
 
-        sub = await self.subgraph(sorted(visited))
+        sub = await self.subgraph(sorted(visited), session=session)
         return EgoGraphResult(
             success=sub.success,
             message=sub.message,
@@ -297,8 +370,11 @@ class RustworkxGraph:
             connection_candidates=sub.connection_candidates,
         )
 
-    async def common_neighbors(self, path1: str, path2: str) -> CommonNeighborsResult:
+    async def common_neighbors(
+        self, path1: str, path2: str, *, session: AsyncSession | None = None
+    ) -> CommonNeighborsResult:
         """Intersection of undirected neighbors of both nodes."""
+        await self._ensure_fresh(session)
         neighbors = sorted(self._undirected_neighbors(path1) & self._undirected_neighbors(path2))
         return CommonNeighborsResult(
             success=True,
@@ -309,8 +385,11 @@ class RustworkxGraph:
             ],
         )
 
-    async def connecting_subgraph(self, paths: list[str]) -> RustworkxGraph:
+    async def connecting_subgraph(
+        self, paths: list[str], *, session: AsyncSession | None = None
+    ) -> RustworkxGraph:
         """Return a new RustworkxGraph containing all nodes needed to connect *paths*."""
+        await self._ensure_fresh(session)
         valid = [p for p in paths if p in self._nodes]
         if len(valid) <= 1:
             sub = RustworkxGraph()
@@ -334,7 +413,9 @@ class RustworkxGraph:
         path2: str,
         *,
         method: str = "jaccard",
+        session: AsyncSession | None = None,
     ) -> float:
+        await self._ensure_fresh(session)
         n1 = self._undirected_neighbors(path1)
         n2 = self._undirected_neighbors(path2)
         union = n1 | n2
@@ -348,12 +429,14 @@ class RustworkxGraph:
         *,
         method: str = "jaccard",
         k: int = 10,
+        session: AsyncSession | None = None,
     ) -> list[tuple[str, float]]:
+        await self._ensure_fresh(session)
         scores: list[tuple[str, float]] = []
         for other in self._nodes:
             if other == path:
                 continue
-            s = await self.node_similarity(path, other, method=method)
+            s = await self.node_similarity(path, other, method=method, session=session)
             scores.append((other, s))
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:k]
@@ -456,8 +539,10 @@ class RustworkxGraph:
         personalization: dict[str, float] | None = None,
         max_iter: int = 100,
         tol: float = 1e-6,
+        session: AsyncSession | None = None,
     ) -> PageRankResult:
         """PageRank centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(
             self._pagerank_impl, nodes, edges, candidates, alpha, personalization, max_iter, tol
@@ -501,8 +586,10 @@ class RustworkxGraph:
         candidates: FileSearchResult | None = None,
         *,
         normalized: bool = True,
+        session: AsyncSession | None = None,
     ) -> BetweennessResult:
         """Betweenness centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._betweenness_impl, nodes, edges, candidates, normalized)
 
@@ -532,8 +619,11 @@ class RustworkxGraph:
     async def closeness_centrality(
         self,
         candidates: FileSearchResult | None = None,
+        *,
+        session: AsyncSession | None = None,
     ) -> ClosenessResult:
         """Closeness centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._closeness_impl, nodes, edges, candidates)
 
@@ -562,8 +652,11 @@ class RustworkxGraph:
     async def harmonic_centrality(
         self,
         candidates: FileSearchResult | None = None,
+        *,
+        session: AsyncSession | None = None,
     ) -> HarmonicResult:
         """Harmonic centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._harmonic_impl, nodes, edges, candidates)
 
@@ -596,8 +689,10 @@ class RustworkxGraph:
         *,
         max_iter: int = 100,
         tol: float = 1e-8,
+        session: AsyncSession | None = None,
     ) -> HitsResult:
         """HITS hub and authority scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._hits_impl, nodes, edges, candidates, max_iter, tol)
 
@@ -661,8 +756,10 @@ class RustworkxGraph:
         beta: float = 1.0,
         max_iter: int = 1000,
         tol: float = 1e-6,
+        session: AsyncSession | None = None,
     ) -> KatzResult:
         """Katz centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(
             self._katz_impl, nodes, edges, candidates, alpha, beta, max_iter, tol
@@ -697,8 +794,11 @@ class RustworkxGraph:
     async def degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
+        *,
+        session: AsyncSession | None = None,
     ) -> DegreeResult:
         """Degree centrality (in + out) scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._degree_impl, nodes, edges, candidates)
 
@@ -723,8 +823,11 @@ class RustworkxGraph:
     async def in_degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
+        *,
+        session: AsyncSession | None = None,
     ) -> DegreeResult:
         """In-degree centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._in_degree_impl, nodes, edges, candidates)
 
@@ -751,8 +854,11 @@ class RustworkxGraph:
     async def out_degree_centrality(
         self,
         candidates: FileSearchResult | None = None,
+        *,
+        session: AsyncSession | None = None,
     ) -> DegreeResult:
         """Out-degree centrality scores."""
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._out_degree_impl, nodes, edges, candidates)
 
@@ -778,7 +884,10 @@ class RustworkxGraph:
 
     # --- Connectivity ---
 
-    async def weakly_connected_components(self) -> list[set[str]]:
+    async def weakly_connected_components(
+        self, *, session: AsyncSession | None = None
+    ) -> list[set[str]]:
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._weakly_connected_impl, nodes, edges)
 
@@ -791,7 +900,10 @@ class RustworkxGraph:
         components = rustworkx.weakly_connected_components(graph)
         return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
 
-    async def strongly_connected_components(self) -> list[set[str]]:
+    async def strongly_connected_components(
+        self, *, session: AsyncSession | None = None
+    ) -> list[set[str]]:
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._strongly_connected_impl, nodes, edges)
 
@@ -804,7 +916,8 @@ class RustworkxGraph:
         components = rustworkx.strongly_connected_components(graph)
         return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
 
-    async def is_weakly_connected(self) -> bool:
+    async def is_weakly_connected(self, *, session: AsyncSession | None = None) -> bool:
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._is_weakly_connected_impl, nodes, edges)
 
@@ -821,7 +934,8 @@ class RustworkxGraph:
 
     # --- Traversal ---
 
-    async def ancestors(self, path: str) -> AncestorsResult:
+    async def ancestors(self, path: str, *, session: AsyncSession | None = None) -> AncestorsResult:
+        await self._ensure_fresh(session)
         self._require_node(path)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._ancestors_impl, nodes, edges, path)
@@ -844,7 +958,10 @@ class RustworkxGraph:
             ],
         )
 
-    async def descendants(self, path: str) -> DescendantsResult:
+    async def descendants(
+        self, path: str, *, session: AsyncSession | None = None
+    ) -> DescendantsResult:
+        await self._ensure_fresh(session)
         self._require_node(path)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._descendants_impl, nodes, edges, path)
@@ -869,8 +986,11 @@ class RustworkxGraph:
             ],
         )
 
-    async def path_between(self, source: str, target: str) -> ShortestPathResult:
+    async def path_between(
+        self, source: str, target: str, *, session: AsyncSession | None = None
+    ) -> ShortestPathResult:
         """Shortest path (Dijkstra) from *source* to *target*."""
+        await self._ensure_fresh(session)
         self._require_node(source)
         self._require_node(target)
         if source == target:
@@ -914,8 +1034,10 @@ class RustworkxGraph:
             ],
         )
 
-    async def has_path(self, source: str, target: str) -> HasPathResult:
-        result = await self.path_between(source, target)
+    async def has_path(
+        self, source: str, target: str, *, session: AsyncSession | None = None
+    ) -> HasPathResult:
+        result = await self.path_between(source, target, session=session)
         if not result:
             return HasPathResult(success=True, message="No path exists")
         return HasPathResult(
@@ -930,7 +1052,9 @@ class RustworkxGraph:
         target: str,
         *,
         cutoff: int | None = None,
+        session: AsyncSession | None = None,
     ) -> list[list[str]]:
+        await self._ensure_fresh(session)
         if source not in self._nodes:
             msg = f"Node not found: {source!r}"
             raise KeyError(msg)
@@ -956,7 +1080,8 @@ class RustworkxGraph:
         raw = rustworkx.digraph_all_simple_paths(graph, src_idx, tgt_idx, cutoff=cutoff or 0)
         return [[idx_to_path[i] for i in path] for path in raw]
 
-    async def topological_sort(self) -> list[str]:
+    async def topological_sort(self, *, session: AsyncSession | None = None) -> list[str]:
+        await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
         return await asyncio.to_thread(self._topological_sort_impl, nodes, edges)
 
@@ -973,7 +1098,10 @@ class RustworkxGraph:
             raise ValueError(msg) from None
         return [idx_to_path[i] for i in indices if i in idx_to_path]
 
-    async def shortest_path_length(self, source: str, target: str) -> float | None:
+    async def shortest_path_length(
+        self, source: str, target: str, *, session: AsyncSession | None = None
+    ) -> float | None:
+        await self._ensure_fresh(session)
         if source not in self._nodes:
             msg = f"Node not found: {source!r}"
             raise KeyError(msg)
@@ -1008,11 +1136,13 @@ class RustworkxGraph:
         start_paths: list[str],
         *,
         max_size: int = 50,
+        session: AsyncSession | None = None,
     ) -> MeetingSubgraphResult:
         """Find the subgraph connecting *start_paths* via shortest paths."""
+        await self._ensure_fresh(session)
         valid_starts = [p for p in start_paths if p in self._nodes]
         if len(valid_starts) <= 1:
-            sub = await self.subgraph(valid_starts)
+            sub = await self.subgraph(valid_starts, session=session)
             return MeetingSubgraphResult(
                 success=sub.success,
                 message=sub.message,
@@ -1125,8 +1255,10 @@ class RustworkxGraph:
         paths: list[str],
         *,
         direction: str = "forward",
+        session: AsyncSession | None = None,
     ) -> set[str]:
         """Intersection of descendants (forward) or ancestors (reverse)."""
+        await self._ensure_fresh(session)
         valid = [p for p in paths if p in self._nodes]
         if not valid:
             return set()
@@ -1257,7 +1389,11 @@ class RustworkxGraph:
         *,
         path_prefix: str = "",
     ) -> None:
-        """Load graph state from the database, replacing in-memory state."""
+        """Load graph state from the database, replacing in-memory state.
+
+        Build-then-swap: new state is assembled in local variables and assigned
+        atomically at the end, so concurrent readers never see an empty graph.
+        """
         from sqlalchemy import select
 
         from grover.models.connection import FileConnection
@@ -1274,9 +1410,9 @@ class RustworkxGraph:
                 return path_prefix
             return path_prefix + p
 
-        # Reset
-        self._nodes = set()
-        self._edges = set()
+        # Build new state in local variables (no mutation of self yet)
+        new_nodes: set[str] = set()
+        new_edges: set[tuple[str, str]] = set()
 
         # Load non-deleted files as nodes
         result = await session.execute(
@@ -1284,16 +1420,21 @@ class RustworkxGraph:
         )
         for file_row in result.scalars().all():
             raw_path: str = file_row.path  # type: ignore[unresolved-attribute]
-            self._nodes.add(_prefix(raw_path))
+            new_nodes.add(_prefix(raw_path))
 
         # Load all edges (topology only)
         result = await session.execute(select(FileConnection))
         for edge_row in result.scalars().all():
             src = _prefix(edge_row.source_path)
             tgt = _prefix(edge_row.target_path)
-            self._nodes.add(src)
-            self._nodes.add(tgt)
-            self._edges.add((src, tgt))
+            new_nodes.add(src)
+            new_nodes.add(tgt)
+            new_edges.add((src, tgt))
+
+        # Atomic swap
+        self._nodes = new_nodes
+        self._edges = new_edges
+        self._loaded_at = time.monotonic()
 
     # ------------------------------------------------------------------
     # Internal helpers

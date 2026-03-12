@@ -102,8 +102,8 @@ class GroverContext:
     # Per-mount graph resolution
     # ------------------------------------------------------------------
 
-    def resolve_graph(self, path: str) -> GraphProvider:
-        """Return the graph provider for the mount owning *path*."""
+    def resolve_graph_with_mount(self, path: str) -> tuple[GraphProvider, Mount]:
+        """Return ``(graph_provider, mount)`` for the mount owning *path*."""
         try:
             mount, _rel = self.registry.resolve(path)
         except MountNotFoundError:
@@ -113,15 +113,25 @@ class GroverContext:
         if gp is None:
             msg = f"No graph on mount at {mount.path}"
             raise RuntimeError(msg)
+        return gp, mount
+
+    def resolve_graph(self, path: str) -> GraphProvider:
+        """Return the graph provider for the mount owning *path*."""
+        gp, _mount = self.resolve_graph_with_mount(path)
         return gp
 
-    def resolve_graph_any(self, path: str | None = None) -> GraphProvider:
-        """Get graph for a specific path, or first available mount's graph."""
+    def resolve_graph_any_with_mount(self, path: str | None = None) -> tuple[GraphProvider, Mount]:
+        """Get ``(graph_provider, mount)`` for a path, or first available."""
         if path is not None:
-            return self.resolve_graph(path)
+            return self.resolve_graph_with_mount(path)
         for mount in self.registry.list_visible_mounts():
             gp = getattr(mount.filesystem, "graph_provider", None)
             if gp is not None:
-                return gp
+                return gp, mount
         msg = "No graph available on any mount"
         raise RuntimeError(msg)
+
+    def resolve_graph_any(self, path: str | None = None) -> GraphProvider:
+        """Get graph for a specific path, or first available mount's graph."""
+        gp, _mount = self.resolve_graph_any_with_mount(path)
+        return gp
