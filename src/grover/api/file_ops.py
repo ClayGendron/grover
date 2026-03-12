@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 from grover.backends.protocol import SupportsReconcile
 from grover.exceptions import MountNotFoundError
 from grover.permissions import Permission
+from grover.ref import Ref
 from grover.results import (
+    BatchChunkResult,
+    BatchWriteResult,
+    ChunkResult,
     DeleteResult,
     DiffVersionsResult,
     EditResult,
@@ -32,6 +36,8 @@ from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
     from grover.api.context import GroverContext
+    from grover.models.chunk import FileChunkBase
+    from grover.models.file import FileBase
 
 
 class FileOpsMixin:
@@ -603,3 +609,244 @@ class FileOpsMixin:
             total.chain_errors += stats.chain_errors
 
         return total
+
+    # ------------------------------------------------------------------
+    # Chunk write operations
+    # ------------------------------------------------------------------
+
+    async def write_chunk(
+        self,
+        chunk: FileChunkBase,
+        *,
+        user_id: str | None = None,
+    ) -> ChunkResult:
+        """Write (upsert) a single chunk. Parent file must exist."""
+        result = await self.write_chunks([chunk], user_id=user_id)
+        if result.results:
+            return result.results[0]
+        return ChunkResult(success=result.success, message=result.message, path=chunk.path)
+
+    async def write_chunks(
+        self,
+        chunks: list[FileChunkBase],
+        *,
+        user_id: str | None = None,
+    ) -> BatchChunkResult:
+        """Batch write (upsert) chunks. Parent files must exist."""
+        if not chunks:
+            return BatchChunkResult(success=True, message="No chunks to write")
+
+        # Validate all chunk refs upfront
+        for chunk in chunks:
+            ref = Ref(chunk.path)
+            if not ref.is_chunk:
+                return BatchChunkResult(
+                    success=False,
+                    message=f"Invalid chunk ref (must contain '#'): {chunk.path}",
+                )
+            if chunk.file_path != ref.base_path:
+                return BatchChunkResult(
+                    success=False,
+                    message=(
+                        f"file_path mismatch: {chunk.file_path} != {ref.base_path} "
+                        f"for chunk {chunk.path}"
+                    ),
+                )
+
+        # Track results by original index to preserve input order
+        results_by_idx: dict[int, ChunkResult] = {}
+
+        # Group chunks by mount, keeping original indices
+        from collections import defaultdict
+
+        mount_groups: dict[str, list[tuple[int, FileChunkBase]]] = defaultdict(list)
+        for idx, chunk in enumerate(chunks):
+            path = normalize_path(chunk.file_path)
+            mount, _rel = self._ctx.registry.resolve(path)
+            mount_groups[mount.path].append((idx, chunk))
+
+        for mount_path, group in mount_groups.items():
+            mount, _ = self._ctx.registry.resolve(mount_path + "/dummy")
+
+            # Check writable
+            if err := self._ctx.check_writable(mount_path + "/dummy"):
+                for idx, c in group:
+                    results_by_idx[idx] = ChunkResult(success=False, message=err, path=c.path)
+                continue
+
+            assert mount.filesystem is not None
+            async with self._ctx.session_for(mount) as sess:
+                # Validate parent files exist (one exists() per unique parent)
+                unique_parents = {normalize_path(c.file_path) for _, c in group}
+                parent_exists: dict[str, bool] = {}
+                for parent in unique_parents:
+                    _, rel_parent = self._ctx.registry.resolve(parent)
+                    ex = await mount.filesystem.exists(rel_parent, session=sess)
+                    parent_exists[parent] = ex.exists
+
+                valid_items: list[tuple[int, FileChunkBase]] = []
+                for idx, c in group:
+                    if not parent_exists.get(normalize_path(c.file_path), False):
+                        results_by_idx[idx] = ChunkResult(
+                            success=False,
+                            message=f"Parent file not found: {c.file_path}",
+                            path=c.path,
+                        )
+                    else:
+                        valid_items.append((idx, c))
+
+                if valid_items:
+                    # Strip mount prefix from paths for backend
+                    backend_chunks = []
+                    idx_order: list[int] = []
+                    for idx, c in valid_items:
+                        rel_file = normalize_path(c.file_path).removeprefix(mount.path) or "/"
+                        rel_chunk_path = normalize_path(c.path).removeprefix(mount.path) or "/"
+                        bc = type(c).model_validate(
+                            {
+                                "file_path": rel_file,
+                                "path": rel_chunk_path,
+                                "content": c.content,
+                                "line_start": c.line_start,
+                                "line_end": c.line_end,
+                            }
+                        )
+                        backend_chunks.append(bc)
+                        idx_order.append(idx)
+
+                    batch_result = await mount.filesystem.write_chunks(backend_chunks, session=sess)
+                    # Re-prefix paths and map back to original indices
+                    for i, r in enumerate(batch_result.results):
+                        r.path = self._ctx.prefix_path(r.path, mount.path) or r.path
+                        results_by_idx[idx_order[i]] = r
+
+        # Build ordered results list
+        all_results = [results_by_idx[i] for i in range(len(chunks))]
+
+        # Schedule background processing for successful chunks
+        for chunk, result in zip(chunks, all_results, strict=True):
+            if result.success:
+                self._ctx.worker.schedule_immediate(
+                    self._process_chunk_write(chunk)  # type: ignore[attr-defined]
+                )
+
+        succeeded = sum(1 for r in all_results if r.success)
+        failed = len(all_results) - succeeded
+        return BatchChunkResult(
+            success=failed == 0,
+            message=f"Wrote {succeeded} chunk(s)" + (f", {failed} failed" if failed else ""),
+            results=all_results,
+            succeeded=succeeded,
+            failed=failed,
+        )
+
+    # ------------------------------------------------------------------
+    # File write from model (write_file / write_files)
+    # ------------------------------------------------------------------
+
+    async def write_file(
+        self,
+        file: FileBase,
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> WriteResult:
+        """Write a single file from a model instance."""
+        result = await self.write_files([file], overwrite=overwrite, user_id=user_id)
+        if result.results:
+            return result.results[0]
+        return WriteResult(success=result.success, message=result.message, path=file.path)
+
+    async def write_files(
+        self,
+        files: list[FileBase],
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> BatchWriteResult:
+        """Batch write files from model instances (max 100)."""
+        if not files:
+            return BatchWriteResult(success=True, message="No files to write")
+
+        if len(files) > 100:
+            return BatchWriteResult(
+                success=False, message="Batch size exceeds maximum of 100 files"
+            )
+
+        try:
+            # Track results by original index
+            results_by_idx: dict[int, WriteResult] = {}
+
+            # Group files by mount, keeping original indices
+            from collections import defaultdict
+
+            mount_groups: dict[str, list[tuple[int, FileBase]]] = defaultdict(list)
+            for idx, f in enumerate(files):
+                path = normalize_path(f.path)
+                try:
+                    mount, _rel = self._ctx.registry.resolve(path)
+                    mount_groups[mount.path].append((idx, f))
+                except Exception as e:
+                    results_by_idx[idx] = WriteResult(success=False, message=str(e), path=f.path)
+
+            for mount_path, group in mount_groups.items():
+                mount, _ = self._ctx.registry.resolve(mount_path + "/dummy")
+
+                # Check writable
+                if err := self._ctx.check_writable(mount_path + "/dummy"):
+                    for idx, f in group:
+                        results_by_idx[idx] = WriteResult(success=False, message=err, path=f.path)
+                    continue
+
+                assert mount.filesystem is not None
+                async with self._ctx.session_for(mount) as sess:
+                    # Strip mount prefix from paths for backend
+                    backend_files = []
+                    idx_order: list[int] = []
+                    for idx, f in group:
+                        rel_path = normalize_path(f.path).removeprefix(mount.path) or "/"
+                        bf = type(f).model_validate(
+                            {
+                                "path": rel_path,
+                                "content": f.content if f.content else "",
+                            }
+                        )
+                        backend_files.append(bf)
+                        idx_order.append(idx)
+
+                    batch_result = await mount.filesystem.write_files(
+                        backend_files,
+                        overwrite=overwrite,
+                        session=sess,
+                        user_id=user_id,
+                    )
+
+                    # Re-prefix paths and map back to original indices
+                    for i, r in enumerate(batch_result.results):
+                        r.path = self._ctx.prefix_path(r.path, mount.path) or r.path
+                        results_by_idx[idx_order[i]] = r
+
+            # Build ordered results list
+            all_results = [results_by_idx[i] for i in range(len(files))]
+
+            # Schedule background processing for successful writes
+            for f, result in zip(files, all_results, strict=True):
+                if result.success:
+                    path = normalize_path(f.path)
+                    content = f.content if f.content else ""
+                    self._ctx.worker.schedule(
+                        path,
+                        lambda p=path, c=content, u=user_id: self._process_write(p, c, u),  # type: ignore[attr-defined]
+                    )
+
+            succeeded = sum(1 for r in all_results if r.success)
+            failed = len(all_results) - succeeded
+            return BatchWriteResult(
+                success=failed == 0,
+                message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
+                results=all_results,
+                succeeded=succeeded,
+                failed=failed,
+            )
+        except Exception as e:
+            return BatchWriteResult(success=False, message=f"Batch write failed: {e}")

@@ -22,6 +22,8 @@ from grover.providers.search.types import SearchResult, VectorEntry
 from grover.providers.versioning import DefaultVersionProvider
 from grover.ref import Ref
 from grover.results.operations import (
+    BatchChunkResult,
+    BatchWriteResult,
     ChunkListResult,
     ChunkResult,
     ConnectionListResult,
@@ -59,9 +61,15 @@ from grover.results.search import (
 from grover.results.search import (
     LineMatch as SearchLineMatch,
 )
-from grover.util.content import compute_content_hash, has_binary_extension
+from grover.util.content import (
+    compute_content_hash,
+    guess_mime_type,
+    has_binary_extension,
+    is_text_file,
+)
 from grover.util.dialect import upsert_file
 from grover.util.operations import (
+    check_external_edit,
     copy_file,
     delete_file,
     edit_file,
@@ -177,6 +185,28 @@ class DatabaseFileSystem:
             )
         result = await session.execute(select(model).where(*conditions))
         return result.scalar_one_or_none()
+
+    async def _batch_get_file_records(
+        self,
+        session: AsyncSession,
+        paths: list[str],
+        include_deleted: bool = False,
+    ) -> dict[str, FileBase]:
+        """Look up multiple file records by path in a single query.
+
+        Returns a dict mapping path -> record for all found files.
+        """
+        if not paths:
+            return {}
+        model = self.file_model
+        normalized = [normalize_path(p) for p in paths]
+        conditions = [model.path.in_(normalized)]  # type: ignore[arg-type]
+        if not include_deleted:
+            conditions.append(
+                model.deleted_at.is_(None)  # type: ignore[unresolved-attribute]
+            )
+        result = await session.execute(select(model).where(*conditions))
+        return {row.path: row for row in result.scalars().all()}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -1324,6 +1354,229 @@ class DatabaseFileSystem:
     ) -> ChunkListResult:
         sess = self._require_session(session)
         return await self.chunk_provider.list_file_chunks(sess, file_path)
+
+    async def write_chunk(
+        self,
+        chunk: FileChunkBase,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkResult:
+        sess = self._require_session(session)
+        return await self.chunk_provider.write_chunk(sess, chunk)
+
+    async def write_chunks(
+        self,
+        chunks: list[FileChunkBase],
+        *,
+        session: AsyncSession | None = None,
+    ) -> BatchChunkResult:
+        sess = self._require_session(session)
+        return await self.chunk_provider.write_chunks(sess, chunks)
+
+    # ------------------------------------------------------------------
+    # Batch file write (write_file / write_files)
+    # ------------------------------------------------------------------
+
+    async def write_file(
+        self,
+        file: FileBase,
+        *,
+        overwrite: bool = True,
+        created_by: str = "agent",
+        session: AsyncSession | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
+    ) -> WriteResult:
+        """Write a single file from a model instance. Delegates to write_files."""
+        sess = self._require_session(session)
+        result = await self.write_files(
+            [file],
+            overwrite=overwrite,
+            created_by=created_by,
+            session=sess,
+            owner_id=owner_id,
+        )
+        if result.results:
+            return result.results[0]
+        return WriteResult(success=result.success, message=result.message, path=file.path)
+
+    async def write_files(
+        self,
+        files: list[FileBase],
+        *,
+        overwrite: bool = True,
+        created_by: str = "agent",
+        session: AsyncSession | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
+    ) -> BatchWriteResult:
+        """Batch write files from model instances with minimized DB queries.
+
+        One SELECT IN for existing records, per-file versioning, one flush.
+        System manages hashes, sizes, versions, and timestamps.
+        """
+        sess = self._require_session(session)
+        now = datetime.now(UTC)
+        results_by_idx: dict[int, WriteResult] = {}
+
+        if not files:
+            return BatchWriteResult(success=True, message="No files to write")
+
+        # Extract and validate paths, tracking original index
+        valid_items: list[tuple[int, str, str]] = []  # (idx, path, content)
+        for i, f in enumerate(files):
+            valid, error = validate_path(f.path)
+            if not valid:
+                results_by_idx[i] = WriteResult(success=False, message=error, path=f.path)
+                continue
+
+            path = normalize_path(f.path)
+            _, name = split_path(path)
+            if not is_text_file(name):
+                results_by_idx[i] = WriteResult(
+                    success=False,
+                    message=f"Cannot write non-text file: {name}",
+                    path=path,
+                )
+                continue
+
+            valid_items.append((i, path, f.content if f.content else ""))
+
+        # Deduplicate paths: last-write-wins for same path in batch
+        seen_paths: dict[str, int] = {}  # path -> index in valid_items
+        deduped_items: list[tuple[int, str, str]] = []
+        for item in valid_items:
+            idx, path, content = item
+            if path in seen_paths:
+                # Supersede earlier entry
+                prev_idx = valid_items[seen_paths[path]][0]
+                results_by_idx[prev_idx] = WriteResult(
+                    success=False,
+                    message=f"Superseded by later entry in batch: {path}",
+                    path=path,
+                )
+            seen_paths[path] = len(deduped_items)
+            deduped_items.append(item)
+        valid_items = deduped_items
+
+        if not valid_items:
+            # All failed validation
+            results = [results_by_idx[i] for i in range(len(files))]
+            succeeded = sum(1 for r in results if r.success)
+            failed = len(results) - succeeded
+            return BatchWriteResult(
+                success=failed == 0,
+                message=f"Wrote {succeeded} file(s), {failed} failed",
+                results=results,
+                succeeded=succeeded,
+                failed=failed,
+            )
+
+        # ONE query: batch lookup existing records
+        paths = [path for _, path, _ in valid_items]
+        existing_map = await self._batch_get_file_records(sess, paths, include_deleted=True)
+
+        # Per-file processing
+        for idx, path, content in valid_items:
+            try:
+                content_hash, size_bytes = compute_content_hash(content)
+                existing = existing_map.get(path)
+
+                if existing:
+                    if existing.is_directory:
+                        results_by_idx[idx] = WriteResult(
+                            success=False,
+                            message=f"Path is a directory: {path}",
+                            path=path,
+                        )
+                        continue
+
+                    if not overwrite and not existing.deleted_at:
+                        results_by_idx[idx] = WriteResult(
+                            success=False,
+                            message=f"File already exists: {path}",
+                            path=path,
+                        )
+                        continue
+
+                    # Handle soft-deleted files
+                    if existing.deleted_at:
+                        existing.deleted_at = None
+                        existing.path = existing.original_path or path
+                        existing.original_path = None
+
+                    # Read current content for external edit check + versioning
+                    old_content = await self._read_content(path, sess)
+
+                    if old_content is not None:
+                        await check_external_edit(
+                            existing,
+                            old_content,
+                            sess,
+                            versioning=self.version_provider,
+                        )
+
+                    existing.current_version += 1
+                    existing.content_hash = content_hash
+                    existing.size_bytes = size_bytes
+                    existing.updated_at = now
+
+                    if old_content is not None:
+                        await self.version_provider.save_version(
+                            sess, existing, old_content, content, created_by
+                        )
+
+                    await self._write_content(path, content, sess)
+                    results_by_idx[idx] = WriteResult(
+                        success=True,
+                        message=f"Updated: {path} (v{existing.current_version})",
+                        path=path,
+                        created=False,
+                        version=existing.current_version,
+                    )
+                else:
+                    # New file
+                    await self._ensure_parent_dirs(sess, path, owner_id)
+
+                    _, name = split_path(path)
+                    new_file = self.file_model(
+                        path=path,
+                        parent_path=split_path(path)[0],
+                        owner_id=owner_id,
+                        content_hash=content_hash,
+                        size_bytes=size_bytes,
+                        mime_type=guess_mime_type(name),
+                    )
+                    sess.add(new_file)
+
+                    await self.version_provider.save_version(
+                        sess, new_file, "", content, created_by
+                    )
+                    await self._write_content(path, content, sess)
+                    results_by_idx[idx] = WriteResult(
+                        success=True,
+                        message=f"Created: {path} (v1)",
+                        path=path,
+                        created=True,
+                        version=1,
+                    )
+            except Exception as e:
+                results_by_idx[idx] = WriteResult(
+                    success=False, message=f"Write failed: {e}", path=path
+                )
+
+        await sess.flush()
+
+        results = [results_by_idx[i] for i in range(len(files))]
+        succeeded = sum(1 for r in results if r.success)
+        failed = len(results) - succeeded
+        return BatchWriteResult(
+            success=failed == 0,
+            message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
+            results=results,
+            succeeded=succeeded,
+            failed=failed,
+        )
 
     # ------------------------------------------------------------------
     # Version methods (inlined from VersionMethodsMixin)

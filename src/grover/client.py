@@ -34,7 +34,10 @@ if TYPE_CHECKING:
     from grover.providers.search.protocol import SearchProvider
     from grover.results import (
         AncestorsResult,
+        BatchChunkResult,
+        BatchWriteResult,
         BetweennessResult,
+        ChunkResult,
         ClosenessResult,
         CommonNeighborsResult,
         ConnectionResult,
@@ -462,6 +465,52 @@ class Grover:
                 connection_type=connection_type,
             )
         )
+
+    # ------------------------------------------------------------------
+    # Chunk write wrappers (sync)
+    # ------------------------------------------------------------------
+
+    def write_chunk(
+        self,
+        chunk: FileChunkBase,
+        *,
+        user_id: str | None = None,
+    ) -> ChunkResult:
+        """Write (upsert) a single chunk."""
+        return self._run(self._async.write_chunk(chunk, user_id=user_id))
+
+    def write_chunks(
+        self,
+        chunks: list[FileChunkBase],
+        *,
+        user_id: str | None = None,
+    ) -> BatchChunkResult:
+        """Batch write (upsert) chunks."""
+        return self._run(self._async.write_chunks(chunks, user_id=user_id))
+
+    # ------------------------------------------------------------------
+    # File write from model wrappers (sync)
+    # ------------------------------------------------------------------
+
+    def write_file(
+        self,
+        file: FileBase,
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> WriteResult:
+        """Write a single file from a model instance."""
+        return self._run(self._async.write_file(file, overwrite=overwrite, user_id=user_id))
+
+    def write_files(
+        self,
+        files: list[FileBase],
+        *,
+        overwrite: bool = True,
+        user_id: str | None = None,
+    ) -> BatchWriteResult:
+        """Batch write files from model instances."""
+        return self._run(self._async.write_files(files, overwrite=overwrite, user_id=user_id))
 
     # ------------------------------------------------------------------
     # Graph traversal wrappers (sync)

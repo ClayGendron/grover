@@ -5,6 +5,8 @@ Import from ``grover.results`` (or the top-level ``grover`` package).
 """
 
 from grover.results.operations import (
+    BatchChunkResult,
+    BatchWriteResult,
     ChunkListResult,
     ChunkResult,
     ConnectionListResult,
@@ -75,6 +77,8 @@ from grover.results.search import (
 
 __all__ = [
     "AncestorsResult",
+    "BatchChunkResult",
+    "BatchWriteResult",
     "BetweennessResult",
     "ChunkListResult",
     "ChunkResult",

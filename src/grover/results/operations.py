@@ -162,6 +162,24 @@ class ConnectionListResult(FileOperationResult):
 
 
 @dataclass
+class BatchChunkResult(FileOperationResult):
+    """Result of a batch chunk write operation."""
+
+    results: list[ChunkResult] = field(default_factory=list)
+    succeeded: int = 0
+    failed: int = 0
+
+
+@dataclass
+class BatchWriteResult(FileOperationResult):
+    """Result of a batch file write operation."""
+
+    results: list[WriteResult] = field(default_factory=list)
+    succeeded: int = 0
+    failed: int = 0
+
+
+@dataclass
 class ReconcileResult(FileOperationResult):
     """Result of a disk/DB reconciliation."""
 

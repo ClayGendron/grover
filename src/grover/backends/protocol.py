@@ -25,9 +25,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.models.chunk import FileChunkBase
+    from grover.models.file import FileBase
     from grover.providers.search.extractors import EmbeddableChunk
     from grover.providers.search.types import SearchResult
     from grover.results.operations import (
+        BatchChunkResult,
+        BatchWriteResult,
         ChunkListResult,
         ChunkResult,
         ConnectionListResult,
@@ -127,6 +131,28 @@ class GroverFileSystem(Protocol):
         owner_id: str | None = None,
         user_id: str | None = None,
     ) -> WriteResult: ...
+
+    async def write_file(
+        self,
+        file: FileBase,
+        *,
+        overwrite: bool = True,
+        created_by: str = "agent",
+        session: AsyncSession | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
+    ) -> WriteResult: ...
+
+    async def write_files(
+        self,
+        files: list[FileBase],
+        *,
+        overwrite: bool = True,
+        created_by: str = "agent",
+        session: AsyncSession | None = None,
+        owner_id: str | None = None,
+        user_id: str | None = None,
+    ) -> BatchWriteResult: ...
 
     async def edit(
         self,
@@ -377,6 +403,20 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession | None = None,
     ) -> ChunkListResult: ...
+
+    async def write_chunk(
+        self,
+        chunk: FileChunkBase,
+        *,
+        session: AsyncSession | None = None,
+    ) -> ChunkResult: ...
+
+    async def write_chunks(
+        self,
+        chunks: list[FileChunkBase],
+        *,
+        session: AsyncSession | None = None,
+    ) -> BatchChunkResult: ...
 
 
 @runtime_checkable

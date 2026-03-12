@@ -7,11 +7,16 @@ from typing import TYPE_CHECKING, Any
 
 from grover.exceptions import MountNotFoundError
 from grover.permissions import Permission
-from grover.providers.search.extractors import extract_from_chunks, extract_from_file
+from grover.providers.search.extractors import (
+    EmbeddableChunk,
+    extract_from_chunks,
+    extract_from_file,
+)
 from grover.results import ListDirEvidence
 
 if TYPE_CHECKING:
     from grover.api.context import GroverContext
+    from grover.models.chunk import FileChunkBase
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +97,44 @@ class IndexMixin:
             edge_type=connection_type,
             weight=weight,
         )
+
+    async def _process_chunk_write(self, chunk: FileChunkBase) -> None:
+        """Update graph and search index after a chunk write."""
+        if not self._ctx.initialized:
+            return
+
+        file_path = chunk.file_path
+        chunk_path = chunk.path
+
+        # Graph: ensure parent node exists, add chunk node + "contains" edge
+        try:
+            graph = self._ctx.resolve_graph(file_path)
+            if not graph.has_node(file_path):
+                graph.add_node(file_path)
+            graph.add_node(chunk_path)
+            if not graph.has_edge(file_path, chunk_path):
+                graph.add_edge(file_path, chunk_path, edge_type="contains")
+        except RuntimeError:
+            pass  # No graph on this mount
+
+        # Search: remove old entry, add new
+        try:
+            mount, _rel = self._ctx.registry.resolve(file_path)
+        except MountNotFoundError:
+            return
+
+        if chunk.content and chunk.content.strip():
+            embeddable = EmbeddableChunk(
+                path=chunk_path,
+                content=chunk.content,
+                parent_path=file_path,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+            )
+            async with self._ctx.session_for(mount) as sess:
+                assert mount.filesystem is not None
+                await mount.filesystem.search_remove_file(chunk_path, session=sess)
+                await mount.filesystem.search_add_batch([embeddable], session=sess)
 
     async def _process_connection_deleted(self, source_path: str, target_path: str) -> None:
         """Update the in-memory graph when a connection is removed from FS."""

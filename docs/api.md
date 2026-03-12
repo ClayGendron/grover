@@ -92,6 +92,64 @@ g.copy(src, dest, *, user_id=None) -> WriteResult
 | `move(src, dest, *, follow=False)` | Move a file or directory. Default (`follow=False`) creates a clean break — new file record at dest, source soft-deleted, no version history carryover. `follow=True` does an in-place rename — same file record, versions follow, share paths updated. Returns `MoveResult`. |
 | `copy(src, dest)` | Copy a file to a new path. Returns `WriteResult`. |
 
+#### Model-based writes
+
+Write files using model instances instead of raw path + content pairs. The system manages all metadata (hash, size, version, timestamps) — caller-set values on the model are ignored.
+
+```python
+g.write_file(file, *, overwrite=True, user_id=None) -> WriteResult
+g.write_files(files, *, overwrite=True, user_id=None) -> BatchWriteResult
+```
+
+| Method | Description |
+|--------|-------------|
+| `write_file(file)` | Write a single file from a `File` model instance. Creates or updates. Returns `WriteResult` with `success`, `created`, `version`. |
+| `write_files(files)` | Batch write up to 100 files. Uses a single DB query to look up existing records, then per-file versioning. Returns `BatchWriteResult` with `results`, `succeeded`, `failed`. Partial failures are supported — successful files are written even if others fail. |
+
+```python
+from grover.models.file import File
+
+# Single file
+result = g.write_file(File(path="/project/hello.py", content="print('hello')"))
+assert result.created is True
+
+# Batch (up to 100)
+files = [
+    File(path="/project/a.py", content="# module a"),
+    File(path="/project/b.py", content="# module b"),
+]
+batch = g.write_files(files)
+assert batch.succeeded == 2
+```
+
+#### Model-based chunk writes
+
+Write chunks directly using model instances. Each chunk must reference an existing parent file. The chunk path must be a valid chunk ref (containing `#`).
+
+```python
+g.write_chunk(chunk, *, user_id=None) -> ChunkResult
+g.write_chunks(chunks, *, user_id=None) -> BatchChunkResult
+```
+
+| Method | Description |
+|--------|-------------|
+| `write_chunk(chunk)` | Write a single chunk from a `FileChunk` model. Upserts by chunk path. Returns `ChunkResult`. |
+| `write_chunks(chunks)` | Batch write chunks. Uses one DB query to find existing chunks, upserts all in one flush. Returns `BatchChunkResult` with `results`, `succeeded`, `failed`. |
+
+```python
+from grover.models.chunk import FileChunk
+
+# Write a chunk (parent file must exist)
+g.write("/project/auth.py", "def login(): pass")
+result = g.write_chunk(FileChunk(
+    file_path="/project/auth.py",
+    path="/project/auth.py#login",
+    name="login",
+    content="def login(): pass",
+))
+assert result.success is True
+```
+
 #### Move semantics: `follow=True` vs `follow=False`
 
 The `follow` parameter controls how `move()` handles identity and history:
@@ -468,6 +526,8 @@ This design is intentional: agents running in loops should handle failures grace
 | `FileInfoResult` | `is_directory`, `mime_type`, `size_bytes`, `created_at`, `updated_at`, `permission`, `mount_type`. `get_info()` always returns this (never `None`); check `success` for not-found. |
 | `ExistsResult` | `exists` (bool) |
 | `ReconcileResult` | `created`, `updated`, `deleted`, `chain_errors` (all int) |
+| `BatchWriteResult` | `results: list[WriteResult]`, `succeeded` (int), `failed` (int) |
+| `BatchChunkResult` | `results: list[ChunkResult]`, `succeeded` (int), `failed` (int) |
 | `ChunkResult` | `count` (int) |
 | `ChunkListResult` | `chunks` (list) |
 | `ConnectionListResult` | `connections` (list) |

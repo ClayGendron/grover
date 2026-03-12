@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from grover.results.operations import ChunkListResult, ChunkResult
+from grover.results.operations import BatchChunkResult, ChunkListResult, ChunkResult
+from grover.util.content import compute_content_hash
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,3 +81,72 @@ class DefaultChunkProvider:
         )
         chunks = list(result.scalars().all())
         return ChunkListResult(chunks=chunks, path=file_path)
+
+    async def write_chunk(
+        self,
+        session: AsyncSession,
+        chunk: FileChunkBase,
+    ) -> ChunkResult:
+        """Upsert a single chunk. Delegates to write_chunks."""
+        result = await self.write_chunks(session, [chunk])
+        if result.results:
+            return result.results[0]
+        return ChunkResult(count=0, path=chunk.path, success=False, message="Write failed")
+
+    async def write_chunks(
+        self,
+        session: AsyncSession,
+        chunks: list[FileChunkBase],
+    ) -> BatchChunkResult:
+        """Batch upsert chunks. System manages content_hash and timestamps."""
+        model = self._chunk_model
+        now = datetime.now(UTC)
+
+        # Batch lookup: one query for all chunk paths
+        chunk_paths = [c.path for c in chunks]
+        existing_result = await session.execute(
+            select(model).where(model.path.in_(chunk_paths))  # type: ignore[arg-type]
+        )
+        existing_map: dict[str, FileChunkBase] = {
+            row.path: row for row in existing_result.scalars().all()
+        }
+
+        results: list[ChunkResult] = []
+        for chunk in chunks:
+            content_hash, _ = compute_content_hash(chunk.content)
+
+            existing = existing_map.get(chunk.path)
+            if existing is not None:
+                # Update existing record
+                existing.content = chunk.content
+                existing.content_hash = content_hash
+                existing.line_start = chunk.line_start
+                existing.line_end = chunk.line_end
+                existing.updated_at = now
+                results.append(ChunkResult(count=1, path=chunk.path))
+            else:
+                # Insert new record using the configured model class
+                record = model(
+                    file_path=chunk.file_path,
+                    path=chunk.path,
+                    content=chunk.content,
+                    content_hash=content_hash,
+                    line_start=chunk.line_start,
+                    line_end=chunk.line_end,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(record)
+                results.append(ChunkResult(count=1, path=chunk.path))
+
+        await session.flush()
+
+        succeeded = sum(1 for r in results if r.success)
+        failed = len(results) - succeeded
+        return BatchChunkResult(
+            success=failed == 0,
+            message=f"Wrote {succeeded} chunk(s)" + (f", {failed} failed" if failed else ""),
+            results=results,
+            succeeded=succeeded,
+            failed=failed,
+        )

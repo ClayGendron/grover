@@ -192,6 +192,8 @@ The three layers stay in sync through a `BackgroundWorker`. When a facade method
 | Operation | Processing method | What it does |
 |-----------|------------------|--------------|
 | `write()`, `edit()`, `copy()`, `restore_*()` | `_process_write(path, content, user_id)` | Re-analyze file, write chunk DB rows, update graph edges, re-index embeddings |
+| `write_file()`, `write_files()` | `_process_write(path, content, user_id)` | Same as above, once per successful file |
+| `write_chunk()`, `write_chunks()` | `_process_chunk_write(chunk)` | Add chunk node + "contains" edge to graph, index chunk for search |
 | `delete()` | `_process_delete(path, user_id)` | Remove file and children from graph, search index, and chunk DB rows |
 | `move()` | `_process_move(old, new, user_id)` | `_process_delete(old)` + `_process_write(new)` |
 | `add_connection()` | `_process_connection_added(src, tgt, type, weight)` | Add edge to in-memory graph |
@@ -212,6 +214,18 @@ Delete and move operations use `worker.cancel(key)` + `worker.schedule_immediate
 ### Post-commit graph projection
 
 `_analyze_and_integrate` collects dependency edges in an `edges_to_project` list during the DB session. After the session commits, edges are projected directly into the in-memory graph via `graph.add_edge()`. This ensures graph edges are only added after the DB commit succeeds (post-commit ordering). "contains" edges (file → chunk) are structural and remain in-memory only — they are not persisted to the database.
+
+### Batch write optimization
+
+`write_files()` and `write_chunks()` minimize database queries using a batch pattern:
+
+1. **One SELECT IN** — fetch all existing records in a single query (`_batch_get_file_records` for files, `SELECT WHERE path IN (...)` for chunks).
+2. **Per-item processing** — unavoidable per-file versioning (diff computation) and per-chunk upsert logic.
+3. **One flush** — all mutations flushed to the DB in a single `session.flush()` at the end.
+
+Results are tracked by original input index (`results_by_idx: dict[int, Result]`) to preserve input order even when some items fail validation early. Duplicate paths within a batch use last-write-wins semantics — earlier entries for the same path are superseded.
+
+Single-item methods (`write_file`, `write_chunk`) delegate to their batch counterparts with a single-element list.
 
 ### flush() and drain lifecycle
 
