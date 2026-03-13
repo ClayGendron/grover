@@ -6,7 +6,7 @@ import asyncio
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import rustworkx
 
@@ -16,6 +16,8 @@ from grover.models.internal.results import FileSearchResult
 from grover.ref import Ref as LegacyRef
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -134,9 +136,7 @@ class RustworkxGraph:
 
     def remove_node(self, path: str) -> None:
         """Remove a node and all incident edges. Raises ``KeyError`` if missing."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+        self._require_node(path)
         self._nodes.discard(path)
         self._edges = {(s, t) for s, t in self._edges if s != path and t != path}
 
@@ -145,9 +145,7 @@ class RustworkxGraph:
 
     def get_node(self, path: str) -> dict[str, Any]:
         """Return minimal node data dict. Raises ``KeyError`` if missing."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+        self._require_node(path)
         return {"path": path}
 
     def nodes(self) -> list[str]:
@@ -174,15 +172,7 @@ class RustworkxGraph:
 
     def remove_edge(self, source: str, target: str) -> None:
         """Remove the edge between *source* and *target*. Raises ``KeyError``."""
-        if source not in self._nodes:
-            msg = f"Node not found: {source!r}"
-            raise KeyError(msg)
-        if target not in self._nodes:
-            msg = f"Node not found: {target!r}"
-            raise KeyError(msg)
-        if (source, target) not in self._edges:
-            msg = f"No edge from {source!r} to {target!r}"
-            raise KeyError(msg)
+        self._require_edge(source, target)
         self._edges.discard((source, target))
 
     def has_edge(self, source: str, target: str) -> bool:
@@ -190,15 +180,7 @@ class RustworkxGraph:
 
     def get_edge(self, source: str, target: str) -> dict[str, Any]:
         """Return minimal edge data dict. Raises ``KeyError`` if missing."""
-        if source not in self._nodes:
-            msg = f"Node not found: {source!r}"
-            raise KeyError(msg)
-        if target not in self._nodes:
-            msg = f"Node not found: {target!r}"
-            raise KeyError(msg)
-        if (source, target) not in self._edges:
-            msg = f"No edge from {source!r} to {target!r}"
-            raise KeyError(msg)
+        self._require_edge(source, target)
         return {
             "id": str(uuid.uuid4()),
             "source": source,
@@ -285,30 +267,9 @@ class RustworkxGraph:
         aug_nodes, aug_edges = self._augment_with_candidates(
             frozenset(self._nodes), frozenset(self._edges), paths
         )
-        # All requested paths are now in aug_nodes (augment adds unknowns)
         path_set = set(paths) & aug_nodes
-        edge_list: list[tuple[str, str, dict[str, Any]]] = []
-        for s, t in aug_edges:
-            if s in path_set and t in path_set:
-                edge_list.append((s, t, {"type": "", "weight": 1.0}))
-        nodes_sorted = sorted(path_set)
-        return FileSearchResult(
-            success=True,
-            message=f"{len(nodes_sorted)} node(s), {len(edge_list)} edge(s)",
-            files=[
-                File(path=n, evidence=[GraphEvidence(operation="subgraph")]) for n in nodes_sorted
-            ],
-            connections=[
-                FileConnection(
-                    source=Ref(path=s),
-                    target=Ref(path=t),
-                    type=data.get("type", ""),
-                    weight=data.get("weight", 1.0),
-                    evidence=[GraphEvidence(operation="subgraph")],
-                )
-                for s, t, data in edge_list
-            ],
-        )
+        files, connections, message = self._build_subgraph_result(path_set, aug_edges, "subgraph")
+        return FileSearchResult(success=True, message=message, files=files, connections=connections)
 
     async def neighborhood(
         self,
@@ -440,9 +401,7 @@ class RustworkxGraph:
 
     def remove_file_subgraph(self, path: str) -> list[str]:
         """Remove a node and all its successors connected by any edge."""
-        if path not in self._nodes:
-            msg = f"Node not found: {path!r}"
-            raise KeyError(msg)
+        self._require_node(path)
         children = {t for s, t in self._edges if s == path}
         removed = [path, *sorted(children)]
         for p in removed:
@@ -487,6 +446,34 @@ class RustworkxGraph:
             )
             for path, score in sorted_items
         ]
+
+    # --- Subgraph building helper ---
+
+    @staticmethod
+    def _build_subgraph_result(
+        node_set: set[str],
+        edges: frozenset[tuple[str, str]],
+        operation: str,
+    ) -> tuple[list[File], list[FileConnection], str]:
+        """Build File list, FileConnection list, and message from node/edge sets."""
+        edge_list: list[tuple[str, str, dict[str, Any]]] = []
+        for s, t in edges:
+            if s in node_set and t in node_set:
+                edge_list.append((s, t, {"type": "", "weight": 1.0}))
+        nodes_sorted = sorted(node_set)
+        files = [File(path=n, evidence=[GraphEvidence(operation=operation)]) for n in nodes_sorted]
+        connections = [
+            FileConnection(
+                source=Ref(path=s),
+                target=Ref(path=t),
+                type=data.get("type", ""),
+                weight=data.get("weight", 1.0),
+                evidence=[GraphEvidence(operation=operation)],
+            )
+            for s, t, data in edge_list
+        ]
+        message = f"{len(nodes_sorted)} node(s), {len(edge_list)} edge(s)"
+        return files, connections, message
 
     # --- Candidate augmentation: inject unknown paths with inferred edges ---
 
@@ -546,6 +533,44 @@ class RustworkxGraph:
         keep_paths = frozenset(idx_to_path[i] for i in keep_indices if i in idx_to_path)
         keep_edges = frozenset((s, t) for s, t in aug_edges if s in keep_paths and t in keep_paths)
         return RustworkxGraph._build_graph_from(keep_paths, keep_edges)
+
+    # --- Generic centrality dispatcher ---
+
+    class _CentralitySpec(NamedTuple):
+        operation: str
+        algorithm: str
+
+    async def _run_centrality(
+        self,
+        spec: _CentralitySpec,
+        rx_fn: Callable[..., Any],
+        candidates: FileSearchResult | None,
+        session: AsyncSession | None,
+        **kwargs: object,
+    ) -> FileSearchResult:
+        """Generic centrality: ensure_fresh → snapshot → to_thread."""
+        await self._ensure_fresh(session)
+        nodes, edges = self._snapshot()
+        return await asyncio.to_thread(
+            self._centrality_impl, nodes, edges, candidates, spec, rx_fn, kwargs
+        )
+
+    @staticmethod
+    def _centrality_impl(
+        nodes: frozenset[str],
+        edges: frozenset[tuple[str, str]],
+        candidates: FileSearchResult | None,
+        spec: RustworkxGraph._CentralitySpec,
+        rx_fn: Callable[..., Any],
+        kwargs: dict[str, object],
+    ) -> FileSearchResult:
+        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
+        if graph.num_nodes() == 0:
+            return FileSearchResult(success=True, message="0 node(s)")
+        scores = rx_fn(graph, **kwargs)
+        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
+        fcs = RustworkxGraph._scores_to_candidates(raw, spec.operation, spec.algorithm)
+        return FileSearchResult(success=True, message=f"{len(fcs)} node(s)", files=fcs)
 
     # --- PageRank ---
 
@@ -607,29 +632,12 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> FileSearchResult:
         """Betweenness centrality scores."""
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._betweenness_impl, nodes, edges, candidates, normalized)
-
-    @staticmethod
-    def _betweenness_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        candidates: FileSearchResult | None,
-        normalized: bool,
-    ) -> FileSearchResult:
-        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
-        if graph.num_nodes() == 0:
-            return FileSearchResult(success=True, message="0 node(s)")
-        scores = rustworkx.digraph_betweenness_centrality(graph, normalized=normalized)
-        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
-        fcs = RustworkxGraph._scores_to_candidates(
-            raw, "betweenness_centrality", "betweenness_centrality"
-        )
-        return FileSearchResult(
-            success=True,
-            message=f"{len(fcs)} node(s)",
-            files=fcs,
+        return await self._run_centrality(
+            self._CentralitySpec("betweenness_centrality", "betweenness_centrality"),
+            rustworkx.digraph_betweenness_centrality,
+            candidates,
+            session,
+            normalized=normalized,
         )
 
     # --- Closeness ---
@@ -641,28 +649,11 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> FileSearchResult:
         """Closeness centrality scores."""
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._closeness_impl, nodes, edges, candidates)
-
-    @staticmethod
-    def _closeness_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        candidates: FileSearchResult | None,
-    ) -> FileSearchResult:
-        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
-        if graph.num_nodes() == 0:
-            return FileSearchResult(success=True, message="0 node(s)")
-        scores = rustworkx.closeness_centrality(graph)
-        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
-        fcs = RustworkxGraph._scores_to_candidates(
-            raw, "closeness_centrality", "closeness_centrality"
-        )
-        return FileSearchResult(
-            success=True,
-            message=f"{len(fcs)} node(s)",
-            files=fcs,
+        return await self._run_centrality(
+            self._CentralitySpec("closeness_centrality", "closeness_centrality"),
+            rustworkx.closeness_centrality,
+            candidates,
+            session,
         )
 
     # --- Harmonic ---
@@ -777,34 +768,15 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> FileSearchResult:
         """Katz centrality scores."""
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(
-            self._katz_impl, nodes, edges, candidates, alpha, beta, max_iter, tol
-        )
-
-    @staticmethod
-    def _katz_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        candidates: FileSearchResult | None,
-        alpha: float,
-        beta: float,
-        max_iter: int,
-        tol: float,
-    ) -> FileSearchResult:
-        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
-        if graph.num_nodes() == 0:
-            return FileSearchResult(success=True, message="0 node(s)")
-        scores = rustworkx.katz_centrality(
-            graph, alpha=alpha, beta=beta, max_iter=max_iter, tol=tol
-        )
-        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
-        fcs = RustworkxGraph._scores_to_candidates(raw, "katz_centrality", "katz_centrality")
-        return FileSearchResult(
-            success=True,
-            message=f"{len(fcs)} node(s)",
-            files=fcs,
+        return await self._run_centrality(
+            self._CentralitySpec("katz_centrality", "katz_centrality"),
+            rustworkx.katz_centrality,
+            candidates,
+            session,
+            alpha=alpha,
+            beta=beta,
+            max_iter=max_iter,
+            tol=tol,
         )
 
     # --- Degree centrality ---
@@ -816,26 +788,11 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> FileSearchResult:
         """Degree centrality (in + out) scores."""
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._degree_impl, nodes, edges, candidates)
-
-    @staticmethod
-    def _degree_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        candidates: FileSearchResult | None,
-    ) -> FileSearchResult:
-        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
-        if graph.num_nodes() == 0:
-            return FileSearchResult(success=True, message="0 node(s)")
-        scores = rustworkx.digraph_degree_centrality(graph)
-        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
-        fcs = RustworkxGraph._scores_to_candidates(raw, "degree_centrality", "degree_centrality")
-        return FileSearchResult(
-            success=True,
-            message=f"{len(fcs)} node(s)",
-            files=fcs,
+        return await self._run_centrality(
+            self._CentralitySpec("degree_centrality", "degree_centrality"),
+            rustworkx.digraph_degree_centrality,
+            candidates,
+            session,
         )
 
     async def in_degree_centrality(
@@ -845,28 +802,11 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> FileSearchResult:
         """In-degree centrality scores."""
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._in_degree_impl, nodes, edges, candidates)
-
-    @staticmethod
-    def _in_degree_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        candidates: FileSearchResult | None,
-    ) -> FileSearchResult:
-        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
-        if graph.num_nodes() == 0:
-            return FileSearchResult(success=True, message="0 node(s)")
-        scores = rustworkx.in_degree_centrality(graph)
-        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
-        fcs = RustworkxGraph._scores_to_candidates(
-            raw, "in_degree_centrality", "in_degree_centrality"
-        )
-        return FileSearchResult(
-            success=True,
-            message=f"{len(fcs)} node(s)",
-            files=fcs,
+        return await self._run_centrality(
+            self._CentralitySpec("in_degree_centrality", "in_degree_centrality"),
+            rustworkx.in_degree_centrality,
+            candidates,
+            session,
         )
 
     async def out_degree_centrality(
@@ -876,63 +816,43 @@ class RustworkxGraph:
         session: AsyncSession | None = None,
     ) -> FileSearchResult:
         """Out-degree centrality scores."""
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._out_degree_impl, nodes, edges, candidates)
-
-    @staticmethod
-    def _out_degree_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        candidates: FileSearchResult | None,
-    ) -> FileSearchResult:
-        graph, _, idx_to_path = RustworkxGraph._resolve_graph_from(nodes, edges, candidates)
-        if graph.num_nodes() == 0:
-            return FileSearchResult(success=True, message="0 node(s)")
-        scores = rustworkx.out_degree_centrality(graph)
-        raw = {idx_to_path[idx]: score for idx, score in scores.items() if idx in idx_to_path}
-        fcs = RustworkxGraph._scores_to_candidates(
-            raw, "out_degree_centrality", "out_degree_centrality"
-        )
-        return FileSearchResult(
-            success=True,
-            message=f"{len(fcs)} node(s)",
-            files=fcs,
+        return await self._run_centrality(
+            self._CentralitySpec("out_degree_centrality", "out_degree_centrality"),
+            rustworkx.out_degree_centrality,
+            candidates,
+            session,
         )
 
     # --- Connectivity ---
 
-    async def weakly_connected_components(
-        self, *, session: AsyncSession | None = None
+    @staticmethod
+    def _components_impl(
+        nodes: frozenset[str],
+        edges: frozenset[tuple[str, str]],
+        rx_fn: Callable[..., Any],
+    ) -> list[set[str]]:
+        graph, _, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges)
+        components = rx_fn(graph)
+        return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
+
+    async def _run_components(
+        self,
+        rx_fn: Callable[..., Any],
+        session: AsyncSession | None,
     ) -> list[set[str]]:
         await self._ensure_fresh(session)
         nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._weakly_connected_impl, nodes, edges)
+        return await asyncio.to_thread(self._components_impl, nodes, edges, rx_fn)
 
-    @staticmethod
-    def _weakly_connected_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
+    async def weakly_connected_components(
+        self, *, session: AsyncSession | None = None
     ) -> list[set[str]]:
-        graph, _, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges)
-        components = rustworkx.weakly_connected_components(graph)
-        return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
+        return await self._run_components(rustworkx.weakly_connected_components, session)
 
     async def strongly_connected_components(
         self, *, session: AsyncSession | None = None
     ) -> list[set[str]]:
-        await self._ensure_fresh(session)
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._strongly_connected_impl, nodes, edges)
-
-    @staticmethod
-    def _strongly_connected_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-    ) -> list[set[str]]:
-        graph, _, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges)
-        components = rustworkx.strongly_connected_components(graph)
-        return [{idx_to_path[idx] for idx in comp if idx in idx_to_path} for comp in components]
+        return await self._run_components(rustworkx.strongly_connected_components, session)
 
     async def is_weakly_connected(self, *, session: AsyncSession | None = None) -> bool:
         await self._ensure_fresh(session)
@@ -952,55 +872,47 @@ class RustworkxGraph:
 
     # --- Traversal ---
 
-    async def ancestors(
-        self, path: str, *, session: AsyncSession | None = None
-    ) -> FileSearchResult:
-        await self._ensure_fresh(session)
-        if path not in self._nodes:
-            return FileSearchResult(success=True, message="0 ancestor(s)")
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._ancestors_impl, nodes, edges, path)
-
     @staticmethod
-    def _ancestors_impl(
+    def _reachability_impl(
         nodes: frozenset[str],
         edges: frozenset[tuple[str, str]],
         path: str,
+        rx_fn: Callable[..., Any],
+        operation: str,
     ) -> FileSearchResult:
         graph, path_to_idx, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges)
         idx = path_to_idx[path]
-        result = sorted(idx_to_path[i] for i in rustworkx.ancestors(graph, idx) if i in idx_to_path)
+        result = sorted(idx_to_path[i] for i in rx_fn(graph, idx) if i in idx_to_path)
         return FileSearchResult(
             success=True,
-            message=f"{len(result)} ancestor(s)",
-            files=[File(path=p, evidence=[GraphEvidence(operation="ancestors")]) for p in result],
+            message=f"{len(result)} {operation}(s)",
+            files=[File(path=p, evidence=[GraphEvidence(operation=operation)]) for p in result],
         )
+
+    async def _run_reachability(
+        self,
+        path: str,
+        rx_fn: Callable[..., Any],
+        operation: str,
+        session: AsyncSession | None,
+    ) -> FileSearchResult:
+        await self._ensure_fresh(session)
+        if path not in self._nodes:
+            return FileSearchResult(success=True, message=f"0 {operation}(s)")
+        nodes, edges = self._snapshot()
+        return await asyncio.to_thread(
+            self._reachability_impl, nodes, edges, path, rx_fn, operation
+        )
+
+    async def ancestors(
+        self, path: str, *, session: AsyncSession | None = None
+    ) -> FileSearchResult:
+        return await self._run_reachability(path, rustworkx.ancestors, "ancestor", session)
 
     async def descendants(
         self, path: str, *, session: AsyncSession | None = None
     ) -> FileSearchResult:
-        await self._ensure_fresh(session)
-        if path not in self._nodes:
-            return FileSearchResult(success=True, message="0 descendant(s)")
-        nodes, edges = self._snapshot()
-        return await asyncio.to_thread(self._descendants_impl, nodes, edges, path)
-
-    @staticmethod
-    def _descendants_impl(
-        nodes: frozenset[str],
-        edges: frozenset[tuple[str, str]],
-        path: str,
-    ) -> FileSearchResult:
-        graph, path_to_idx, idx_to_path = RustworkxGraph._build_graph_from(nodes, edges)
-        idx = path_to_idx[path]
-        result = sorted(
-            idx_to_path[i] for i in rustworkx.descendants(graph, idx) if i in idx_to_path
-        )
-        return FileSearchResult(
-            success=True,
-            message=f"{len(result)} descendant(s)",
-            files=[File(path=p, evidence=[GraphEvidence(operation="descendants")]) for p in result],
-        )
+        return await self._run_reachability(path, rustworkx.descendants, "descendant", session)
 
     async def path_between(
         self, source: str, target: str, *, session: AsyncSession | None = None
@@ -1215,27 +1127,11 @@ class RustworkxGraph:
                 break
             node_list.remove(worst)
 
-        # Build subgraph inline
+        # Build subgraph via shared helper
         valid = {p for p in node_list if p in nodes}
-        edge_list: list[tuple[str, str, dict[str, Any]]] = []
-        for s, t in edges:
-            if s in valid and t in valid:
-                edge_list.append((s, t, {"type": "", "weight": 1.0}))
-        nodes_sorted = sorted(valid)
-        sub_files = [
-            File(path=n, evidence=[GraphEvidence(operation="subgraph")]) for n in nodes_sorted
-        ]
-        sub_conns = [
-            FileConnection(
-                source=Ref(path=s),
-                target=Ref(path=t),
-                type=data.get("type", ""),
-                weight=data.get("weight", 1.0),
-                evidence=[GraphEvidence(operation="subgraph")],
-            )
-            for s, t, data in edge_list
-        ]
-        sub_message = f"{len(nodes_sorted)} node(s), {len(edge_list)} edge(s)"
+        sub_files, sub_conns, sub_message = RustworkxGraph._build_subgraph_result(
+            valid, edges, "subgraph"
+        )
 
         # Enrich files with PageRank scores
         enriched_files = [
@@ -1381,21 +1277,6 @@ class RustworkxGraph:
                 keep.add(cur)
         return keep
 
-    # Keep instance method delegating to static for connecting_subgraph
-    def _multisource_bfs(
-        self,
-        graph: rustworkx.PyDiGraph,
-        seed_indices: list[int],
-    ) -> set[int]:
-        return self._multisource_bfs_static(graph, seed_indices)
-
-    def _graph_from_candidates(self, candidates: FileSearchResult) -> RustworkxGraph:
-        """Build a RustworkxGraph from explicit files + connections."""
-        sub = RustworkxGraph()
-        sub._nodes = {f.path for f in candidates.files}
-        sub._edges = {(cc.source.path, cc.target.path) for cc in candidates.connections}
-        return sub
-
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
@@ -1451,6 +1332,14 @@ class RustworkxGraph:
         """Raise ``KeyError`` if *path* is not in the graph."""
         if path not in self._nodes:
             msg = f"Node not found: {path!r}"
+            raise KeyError(msg)
+
+    def _require_edge(self, source: str, target: str) -> None:
+        """Raise ``KeyError`` if the edge *source* → *target* doesn't exist."""
+        self._require_node(source)
+        self._require_node(target)
+        if (source, target) not in self._edges:
+            msg = f"No edge from {source!r} to {target!r}"
             raise KeyError(msg)
 
     def _undirected_neighbors(self, path: str) -> set[str]:
