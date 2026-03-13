@@ -217,7 +217,7 @@ class FileSearchResult(BaseModel):
     def __and__(self, other: object) -> Self:
         """Intersection — paths in both, evidence merged."""
         if not isinstance(other, FileSearchResult):
-            return NotImplemented  # type: ignore[return-value]
+            return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
         common = set(d1) & set(d2)
@@ -237,7 +237,7 @@ class FileSearchResult(BaseModel):
     def __or__(self, other: object) -> Self:
         """Union — paths from either, evidence merged."""
         if not isinstance(other, FileSearchResult):
-            return NotImplemented  # type: ignore[return-value]
+            return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
         all_paths = set(d1) | set(d2)
@@ -271,7 +271,7 @@ class FileSearchResult(BaseModel):
     def __sub__(self, other: object) -> Self:
         """Difference — paths in LHS not in RHS."""
         if not isinstance(other, FileSearchResult):
-            return NotImplemented  # type: ignore[return-value]
+            return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
         diff = set(d1) - set(d2)
@@ -291,7 +291,7 @@ class FileSearchResult(BaseModel):
     def __rshift__(self, other: object) -> Self:
         """Pipeline — passes LHS paths as candidates to RHS."""
         if not isinstance(other, FileSearchResult):
-            return NotImplemented  # type: ignore[return-value]
+            return NotImplemented
         d1 = self._as_dict()
         d2 = other._as_dict()
         common = set(d1) & set(d2)

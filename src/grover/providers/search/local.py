@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 from usearch.index import Index
 
-from grover.models.internal.evidence import VectorEvidence
+from grover.models.internal.evidence import Evidence, VectorEvidence
 from grover.models.internal.ref import File
 from grover.models.internal.results import FileSearchResult
 from grover.providers.search.filters import FilterExpression, compile_dict
@@ -154,7 +154,7 @@ class LocalVectorStore:
         hits.sort(key=lambda r: r.score, reverse=True)
 
         # Wrap into FileSearchResult
-        entries: dict[str, list[VectorEvidence]] = {}
+        entries: dict[str, list[Evidence]] = {}
         for hit in hits:
             fp = hit.metadata.get("parent_path") or hit.id
             content = hit.metadata.get("content", "")

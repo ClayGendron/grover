@@ -464,8 +464,8 @@ class UserScopedFileSystem(DatabaseFileSystem):
             size_bytes: int | None = None
             try:
                 info = await super().get_info(file_stored, session=session)
-                if info.success:
-                    size_bytes = info.size_bytes
+                if info.success and info.file.content is not None:
+                    size_bytes = len(info.file.content.encode("utf-8"))
             except Exception:
                 pass
             entry_path = f"{base}/{name}"

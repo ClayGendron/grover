@@ -698,7 +698,8 @@ class FileOpsMixin:
 
                     batch_result = await mount.filesystem.write_chunks(backend_chunks, session=sess)
                     # Re-prefix paths and map back to original indices
-                    for i, r in enumerate(batch_result.results):
+                    batch_results: list[FileOperationResult] = getattr(batch_result, "results", [])
+                    for i, r in enumerate(batch_results):
                         r.file.path = self._ctx.prefix_path(r.file.path, mount.path) or r.file.path
                         results_by_idx[idx_order[i]] = r
 
@@ -810,7 +811,10 @@ class FileOpsMixin:
                     )
 
                     # Re-prefix paths and map back to original indices
-                    for i, r in enumerate(batch_result.results):
+                    batch_results_list: list[FileOperationResult] = getattr(
+                        batch_result, "results", []
+                    )
+                    for i, r in enumerate(batch_results_list):
                         r.file.path = self._ctx.prefix_path(r.file.path, mount.path) or r.file.path
                         results_by_idx[idx_order[i]] = r
 

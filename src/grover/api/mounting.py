@@ -175,7 +175,7 @@ class MountMixin:
         if fs is not None and not new_mount.hidden:
             gp = getattr(fs, "graph_provider", None)
             if gp is not None and hasattr(gp, "configure_refresh"):
-                gp.configure_refresh(path_prefix="")  # type: ignore[union-attr]
+                gp.configure_refresh(path_prefix="")
 
         # Call open() on the filesystem if needed (skip LocalFileSystem — already opened above)
         if not isinstance(new_mount.filesystem, LocalFileSystem) and hasattr(
@@ -226,7 +226,7 @@ class MountMixin:
             )
 
         if backend is None:
-            backend = DatabaseFileSystem(
+            backend = DatabaseFileSystem(  # type: ignore[assignment]
                 dialect=dialect,
                 file_model=file_model,
                 file_version_model=file_version_model,
@@ -268,7 +268,7 @@ class MountMixin:
     ) -> Mount:
         """Build a Mount from a caller-provided session factory."""
         if backend is None:
-            backend = DatabaseFileSystem(
+            backend = DatabaseFileSystem(  # type: ignore[assignment]
                 dialect=dialect,
                 file_model=file_model,
                 file_version_model=file_version_model,

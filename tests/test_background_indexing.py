@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -10,7 +11,7 @@ from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import Grover, GroverAsync
 from grover.providers.search.local import LocalVectorStore
-from grover.worker import IndexingMode
+from grover.worker import BackgroundWorker, IndexingMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -259,3 +260,65 @@ class TestManualMode:
         await grover.write("/project/noop.py", "x = 1\n")
         await grover.flush()  # Should not raise
         assert not grover.get_graph().has_node("/project/noop.py")
+
+
+# ==================================================================
+# TestDrainSafety (timeout + iteration guard)
+# ==================================================================
+
+
+class TestDrainSafety:
+    """Tests for drain() timeout and iteration guard."""
+
+    @pytest.mark.asyncio
+    async def test_drain_timeout_cancels_hung_task(self) -> None:
+        """drain() should cancel tasks that exceed the timeout."""
+        worker = BackgroundWorker(drain_timeout=0.5)
+        worker.schedule_immediate(asyncio.sleep(999))
+        await worker.drain()
+        assert len(worker._active_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_max_iterations_guard(self) -> None:
+        """drain() should bail after _MAX_DRAIN_ITERATIONS even if tasks reschedule."""
+        worker = BackgroundWorker(drain_timeout=10.0)
+
+        async def self_rescheduler() -> None:
+            worker.schedule("loop", lambda: self_rescheduler())
+
+        worker.schedule("loop", lambda: self_rescheduler())
+        await worker.drain()
+        # Should return without hanging
+        assert len(worker._active_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_explicit_timeout_override(self) -> None:
+        """Explicit timeout= kwarg should override constructor default."""
+        worker = BackgroundWorker(drain_timeout=30.0)
+        worker.schedule_immediate(asyncio.sleep(999))
+        await worker.drain(timeout=0.5)
+        assert len(worker._active_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_normal_operation_unchanged(self) -> None:
+        """Fast tasks should complete normally under drain()."""
+        results: list[int] = []
+
+        async def quick(n: int) -> None:
+            results.append(n)
+
+        worker = BackgroundWorker(drain_timeout=5.0)
+        worker.schedule_immediate(quick(1))
+        worker.schedule_immediate(quick(2))
+        worker.schedule_immediate(quick(3))
+        await worker.drain()
+        assert sorted(results) == [1, 2, 3]
+        assert len(worker._active_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_empty_is_noop(self) -> None:
+        """drain() with nothing pending should return immediately."""
+        worker = BackgroundWorker()
+        await worker.drain()
+        assert len(worker._active_tasks) == 0
+        assert len(worker._pending) == 0

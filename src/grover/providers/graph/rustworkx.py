@@ -257,13 +257,19 @@ class RustworkxGraph:
             files=[File(path=p, evidence=[GraphEvidence(operation="successors")]) for p in succs],
         )
 
-    async def contains(self, path: str) -> list[Ref]:
+    async def contains(self, path: str, *, session: AsyncSession | None = None) -> list[Ref]:
         """Successors as Refs (internal use — not part of typed-result API)."""
+        await self._ensure_fresh(session)
         if path not in self._nodes:
             return []
         return [Ref(path=t) for s, t in self._edges if s == path]
 
-    async def by_parent(self, parent_path: str) -> list[Ref]:
+    async def by_parent(
+        self,
+        parent_path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list[Ref]:
         """Not supported with minimal storage — returns empty list."""
         return []
 

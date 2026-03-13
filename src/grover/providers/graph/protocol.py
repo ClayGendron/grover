@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from grover.models.internal.ref import Ref
     from grover.models.internal.results import FileSearchResult
-    from grover.ref import Ref
 
 
 @runtime_checkable

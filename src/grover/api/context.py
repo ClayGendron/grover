@@ -59,9 +59,9 @@ class GroverContext:
         finally:
             await session.close()
 
-    async def drain(self) -> None:
+    async def drain(self, *, timeout: float | None = None) -> None:
         """Drain all pending background work."""
-        await self.worker.drain()
+        await self.worker.drain(timeout=timeout)
 
     def check_writable(self, virtual_path: str) -> str | None:
         """Return an error message if *virtual_path* is read-only, else ``None``.

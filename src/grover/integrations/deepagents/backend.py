@@ -90,11 +90,11 @@ def _format_grep_result(result: object) -> list[GrepMatch]:
         for ev in f.evidence:
             if isinstance(ev, GrepEvidence):
                 matches.extend(
-                    {
-                        "path": f.path,
-                        "line": lm.line_number,
-                        "text": lm.line_content,
-                    }
+                    GrepMatch(
+                        path=f.path,
+                        line=lm.line_number,
+                        text=lm.line_content,
+                    )
                     for lm in ev.line_matches
                 )
     return matches
@@ -170,7 +170,7 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = Grover()
-        g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)
+        g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
         return cls(g)
 
     @classmethod
@@ -187,7 +187,7 @@ class GroverBackend(BackendProtocol):
         g = Grover()
         g.add_mount(
             "/",
-            DatabaseFileSystem(),
+            DatabaseFileSystem(),  # type: ignore[arg-type]
             engine=engine,
             session_factory=session_factory,
             **mount_kwargs,
@@ -210,7 +210,7 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = GroverAsync()
-        await g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)
+        await g.add_mount("/", LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
         return cls(g)
 
     @classmethod
@@ -227,7 +227,7 @@ class GroverBackend(BackendProtocol):
         g = GroverAsync()
         await g.add_mount(
             "/",
-            DatabaseFileSystem(),
+            DatabaseFileSystem(),  # type: ignore[arg-type]
             engine=engine,
             session_factory=session_factory,
             **mount_kwargs,

@@ -125,37 +125,37 @@ class GraphOpsMixin:
         """Return graph predecessors of *path* (nodes with edges pointing to it)."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.predecessors(path, session=sess)
+            return await gp.predecessors(path, session=sess)  # type: ignore[arg-type]
 
     async def successors(self, path: str) -> FileSearchResult:
         """Return graph successors of *path* (nodes it points to)."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.successors(path, session=sess)
+            return await gp.successors(path, session=sess)  # type: ignore[arg-type]
 
     async def ancestors(self, path: str) -> FileSearchResult:
         """Return all nodes reachable by following edges backward from *path*."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.ancestors(path, session=sess)
+            return await gp.ancestors(path, session=sess)  # type: ignore[arg-type]
 
     async def descendants(self, path: str) -> FileSearchResult:
         """Return all nodes reachable by following edges forward from *path*."""
         gp, mount = self._ctx.resolve_graph_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.descendants(path, session=sess)
+            return await gp.descendants(path, session=sess)  # type: ignore[arg-type]
 
     async def shortest_path(self, source: str, target: str) -> FileSearchResult:
         """Return the shortest path from *source* to *target*."""
         gp, mount = self._ctx.resolve_graph_with_mount(source)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.path_between(source, target, session=sess)
+            return await gp.path_between(source, target, session=sess)  # type: ignore[arg-type]
 
     async def has_path(self, source: str, target: str) -> FileSearchResult:
         """Check if a directed path exists from *source* to *target*."""
         gp, mount = self._ctx.resolve_graph_with_mount(source)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.has_path(source, target, session=sess)
+            return await gp.has_path(source, target, session=sess)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Subgraph extraction — async delegates with session pass-through
@@ -170,7 +170,7 @@ class GraphOpsMixin:
         """Extract the induced subgraph for nodes in *candidates*."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.subgraph(list(candidates.paths), session=sess)
+            return await gp.subgraph(list(candidates.paths), session=sess)  # type: ignore[arg-type]
 
     async def min_meeting_subgraph(
         self,
@@ -182,7 +182,7 @@ class GraphOpsMixin:
         paths = list(candidates.paths)
         gp, mount = self._ctx.resolve_graph_any_with_mount(paths[0] if paths else None)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.meeting_subgraph(paths, max_size=max_size, session=sess)
+            return await gp.meeting_subgraph(paths, max_size=max_size, session=sess)  # type: ignore[arg-type]
 
     async def ego_graph(
         self,
@@ -200,7 +200,7 @@ class GraphOpsMixin:
                 max_depth=max_depth,
                 direction=direction,
                 edge_types=edge_types,
-                session=sess,
+                session=sess,  # type: ignore[arg-type]
             )
 
     # ------------------------------------------------------------------
@@ -217,7 +217,7 @@ class GraphOpsMixin:
         """Run PageRank on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.pagerank(candidates, personalization=personalization, session=sess)
+            return await gp.pagerank(candidates, personalization=personalization, session=sess)  # type: ignore[arg-type]
 
     async def betweenness_centrality(
         self,
@@ -228,7 +228,7 @@ class GraphOpsMixin:
         """Betweenness centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.betweenness_centrality(candidates, session=sess)
+            return await gp.betweenness_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def closeness_centrality(
         self,
@@ -239,7 +239,7 @@ class GraphOpsMixin:
         """Closeness centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.closeness_centrality(candidates, session=sess)
+            return await gp.closeness_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def harmonic_centrality(
         self,
@@ -250,7 +250,7 @@ class GraphOpsMixin:
         """Harmonic centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.harmonic_centrality(candidates, session=sess)
+            return await gp.harmonic_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def katz_centrality(
         self,
@@ -261,7 +261,7 @@ class GraphOpsMixin:
         """Katz centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.katz_centrality(candidates, session=sess)
+            return await gp.katz_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def degree_centrality(
         self,
@@ -272,7 +272,7 @@ class GraphOpsMixin:
         """Degree centrality (in + out) on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.degree_centrality(candidates, session=sess)
+            return await gp.degree_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def in_degree_centrality(
         self,
@@ -283,7 +283,7 @@ class GraphOpsMixin:
         """In-degree centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.in_degree_centrality(candidates, session=sess)
+            return await gp.in_degree_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def out_degree_centrality(
         self,
@@ -294,7 +294,7 @@ class GraphOpsMixin:
         """Out-degree centrality on the knowledge graph."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.out_degree_centrality(candidates, session=sess)
+            return await gp.out_degree_centrality(candidates, session=sess)  # type: ignore[arg-type]
 
     async def hits(
         self,
@@ -305,7 +305,7 @@ class GraphOpsMixin:
         """HITS hub and authority scores."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.hits(candidates, session=sess)
+            return await gp.hits(candidates, session=sess)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Other graph operations — async delegates with session pass-through
@@ -321,4 +321,4 @@ class GraphOpsMixin:
         """Find common neighbors of two nodes."""
         gp, mount = self._ctx.resolve_graph_any_with_mount(path)
         async with self._ctx.session_for(mount) as sess:
-            return await gp.common_neighbors(path1, path2, session=sess)
+            return await gp.common_neighbors(path1, path2, session=sess)  # type: ignore[arg-type]

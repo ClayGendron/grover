@@ -32,6 +32,7 @@ from grover.models.internal.results import FileOperationResult, FileSearchResult
 from grover.providers.chunks import DefaultChunkProvider
 from grover.providers.search.types import SearchResult, VectorEntry
 from grover.providers.versioning import DefaultVersionProvider
+from grover.ref import Ref as LegacyRef
 from grover.util.content import (
     compute_content_hash,
     guess_mime_type,
@@ -159,7 +160,7 @@ class DatabaseFileSystem:
             if path
             else None
         )
-        return FileOperationResult(success=success, message=message, file=f)
+        return FileOperationResult(success=success, message=message, file=f or File(path=""))
 
     @staticmethod
     def _search_to_internal(old: object) -> FileSearchResult:
@@ -1306,28 +1307,44 @@ class DatabaseFileSystem:
             return False
         return self.graph_provider.has_edge(source, target)
 
-    async def graph_predecessors(self, path: str) -> FileSearchResult:
+    async def graph_predecessors(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> FileSearchResult:
         if self.graph_provider is None:
             return FileSearchResult(success=True, message="No graph provider")
-        old = await self.graph_provider.predecessors(path)
+        old = await self.graph_provider.predecessors(path, session=session)  # type: ignore[arg-type]
         return self._search_to_internal(old)
 
-    async def graph_successors(self, path: str) -> FileSearchResult:
+    async def graph_successors(
+        self,
+        path: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> FileSearchResult:
         if self.graph_provider is None:
             return FileSearchResult(success=True, message="No graph provider")
-        old = await self.graph_provider.successors(path)
+        old = await self.graph_provider.successors(path, session=session)  # type: ignore[arg-type]
         return self._search_to_internal(old)
 
-    async def graph_path_between(self, source: str, target: str) -> FileSearchResult:
+    async def graph_path_between(
+        self,
+        source: str,
+        target: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> FileSearchResult:
         if self.graph_provider is None:
             return FileSearchResult(success=True, message="No path found")
-        old = await self.graph_provider.path_between(source, target)
+        old = await self.graph_provider.path_between(source, target, session=session)  # type: ignore[arg-type]
         return self._search_to_internal(old)
 
-    async def graph_contains(self, path: str) -> list[Ref]:
+    async def graph_contains(self, path: str, *, session: AsyncSession | None = None) -> list[Ref]:
         if self.graph_provider is None:
             return []
-        return await self.graph_provider.contains(path)
+        return await self.graph_provider.contains(path, session=session)  # type: ignore[arg-type]
 
     def graph_remove_file_subgraph(self, path: str) -> list[str]:
         if self.graph_provider is None:
@@ -1855,12 +1872,12 @@ class DatabaseFileSystem:
             provider_result = await self.search_provider.lexical_search(query, k=k)
             if provider_result.success and len(provider_result) > 0:
                 results: list[SearchResult] = []
-                for c in provider_result.file_candidates:
+                for c in provider_result.files:
                     for ev in c.evidence:
                         snippet = getattr(ev, "snippet", "")
                         results.append(
                             SearchResult(
-                                ref=Ref(path=c.path),
+                                ref=LegacyRef(path=c.path),
                                 score=1.0,
                                 content=snippet,
                             )
@@ -1894,7 +1911,7 @@ class DatabaseFileSystem:
                 rows = await sess.execute(stmt, {"query": query, "k": k})
                 results.extend(
                     SearchResult(
-                        ref=Ref(path=row[0]),
+                        ref=LegacyRef(path=row[0]),
                         score=1.0,
                         content=row[1] or "",
                     )
@@ -1917,7 +1934,7 @@ class DatabaseFileSystem:
                 rows = await sess.execute(stmt, {"query": query})
                 results.extend(
                     SearchResult(
-                        ref=Ref(path=row[0]),
+                        ref=LegacyRef(path=row[0]),
                         score=1.0,
                         content=row[1] or "",
                     )
@@ -1940,7 +1957,7 @@ class DatabaseFileSystem:
                 rows = await sess.execute(stmt, {"query": query})
                 results.extend(
                     SearchResult(
-                        ref=Ref(path=row[0]),
+                        ref=LegacyRef(path=row[0]),
                         score=1.0,
                         content=row[1] or "",
                     )
@@ -1964,7 +1981,7 @@ class DatabaseFileSystem:
         rows = await sess.execute(stmt)
         results.extend(
             SearchResult(
-                ref=Ref(path=row[0]),
+                ref=LegacyRef(path=row[0]),
                 score=0.5,
                 content=row[1] or "",
             )

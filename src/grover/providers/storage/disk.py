@@ -211,7 +211,6 @@ class DiskStorageProvider:
             return FileOperationResult(
                 success=True,
                 message="OK",
-                path=path,
                 file=File(
                     path=path,
                     is_directory=is_dir,

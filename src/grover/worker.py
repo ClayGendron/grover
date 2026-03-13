@@ -41,14 +41,18 @@ class BackgroundWorker:
     degrades consistency, it does not crash the system.
     """
 
+    _MAX_DRAIN_ITERATIONS = 50
+
     def __init__(
         self,
         *,
         indexing_mode: IndexingMode = IndexingMode.BACKGROUND,
         debounce_delay: float = 0.1,
+        drain_timeout: float = 30.0,
     ) -> None:
         self._indexing_mode = indexing_mode
         self._debounce_delay = debounce_delay
+        self._drain_timeout = drain_timeout
         # Per-key pending work: key -> (coro_factory, TimerHandle | None)
         self._pending: dict[
             str,
@@ -141,12 +145,30 @@ class BackgroundWorker:
     # Drain / lifecycle
     # ------------------------------------------------------------------
 
-    async def drain(self) -> None:
+    async def drain(self, *, timeout: float | None = None) -> None:
         """Fire all pending timers immediately, then await all active tasks.
 
         Loops until settled (tasks may schedule new work during drain).
+        Times out after *timeout* seconds (defaults to ``drain_timeout``
+        from the constructor) and cancels remaining tasks.
         """
+        effective = timeout if timeout is not None else self._drain_timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + effective
+        iterations = 0
+
         while self._pending or self._active_tasks:
+            iterations += 1
+            if iterations > self._MAX_DRAIN_ITERATIONS:
+                logger.warning(
+                    "drain: exceeded %d iterations, cancelling %d tasks",
+                    self._MAX_DRAIN_ITERATIONS,
+                    len(self._active_tasks),
+                )
+                await self._cancel_active()
+                self._pending.clear()
+                return
+
             # Fire all pending timers
             for key in list(self._pending):
                 factory, handle = self._pending.pop(key)
@@ -156,9 +178,41 @@ class BackgroundWorker:
                     self._create_task(factory())
                 except Exception:
                     logger.warning("Factory for key %r failed during drain", key, exc_info=True)
-            # Await all active tasks
+
+            # Await active tasks with remaining time budget
             if self._active_tasks:
-                await asyncio.gather(*list(self._active_tasks), return_exceptions=True)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    logger.warning(
+                        "drain: timed out after %.1fs, cancelling %d tasks",
+                        effective,
+                        len(self._active_tasks),
+                    )
+                    await self._cancel_active()
+                    self._pending.clear()
+                    return
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*list(self._active_tasks), return_exceptions=True),
+                        timeout=remaining,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "drain: timed out after %.1fs, cancelling %d tasks",
+                        effective,
+                        len(self._active_tasks),
+                    )
+                    await self._cancel_active()
+                    self._pending.clear()
+                    return
+
+    async def _cancel_active(self) -> None:
+        """Cancel all active tasks and wait for them to finish."""
+        for task in self._active_tasks:
+            task.cancel()
+        if self._active_tasks:
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+        self._active_tasks.clear()
 
     # ------------------------------------------------------------------
     # Properties
