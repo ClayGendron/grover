@@ -1,4 +1,4 @@
-"""Tests for the Grover integration class."""
+"""Tests for the Grover integration class (sync wrapper)."""
 
 from __future__ import annotations
 
