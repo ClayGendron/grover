@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -105,7 +106,10 @@ class TestAnalyzeCreatesGraphState:
         assert graph.has_node("/project/funcs.py")
 
         # Find chunk nodes via contains edges
-        result = await graph.successors(FileSearchSet.from_paths(["/project/funcs.py"]))
+        result = await graph.successors(
+            FileSearchSet.from_paths(["/project/funcs.py"]),
+            session=AsyncMock(),
+        )
         assert len(result) >= 2
 
     @pytest.mark.asyncio
@@ -115,7 +119,10 @@ class TestAnalyzeCreatesGraphState:
         await grover.flush()
 
         graph = grover.get_graph("/project/funcs.py")
-        result = await graph.successors(FileSearchSet.from_paths(["/project/funcs.py"]))
+        result = await graph.successors(
+            FileSearchSet.from_paths(["/project/funcs.py"]),
+            session=AsyncMock(),
+        )
         assert len(result) >= 2
 
 

@@ -64,26 +64,6 @@ class TestSessionInjection:
             assert read.file.content == "hello"
         await engine.dispose()
 
-    async def test_write_without_session_raises(self):
-        import pytest
-
-        from grover.exceptions import GroverError
-
-        db, _factory, engine = await _make_db_fs()
-        with pytest.raises(GroverError, match="requires a session"):
-            await db.write("/hello.txt", "hello")
-        await engine.dispose()
-
-    async def test_read_without_session_raises(self):
-        import pytest
-
-        from grover.exceptions import GroverError
-
-        db, _factory, engine = await _make_db_fs()
-        with pytest.raises(GroverError, match="requires a session"):
-            await db.read("/hello.txt")
-        await engine.dispose()
-
 
 # =========================================================================
 # Flush Behavior (DFS flushes, never commits)

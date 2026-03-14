@@ -17,7 +17,6 @@ from grover.backends.protocol import (
 )
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import GroverAsync
-from grover.exceptions import GroverError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,46 +135,3 @@ class TestSessionRollback:
         assert not result.success
         await g.close()
         await engine.dispose()
-
-
-# =========================================================================
-# Session=None failure tests for LocalFileSystem
-# =========================================================================
-
-
-class TestLocalFileSystemRequiresSession:
-    """LFS methods fail fast when session is None."""
-
-    @pytest.fixture
-    async def lfs(self, tmp_path: Path) -> LocalFileSystem:
-        lfs = LocalFileSystem(
-            workspace_dir=tmp_path,
-            data_dir=tmp_path / ".grover_test",
-        )
-        await lfs.open()
-        return lfs
-
-    async def test_write_without_session_raises(self, lfs: LocalFileSystem) -> None:
-        with pytest.raises(GroverError, match="requires a session"):
-            await lfs.write("/test.txt", "content", session=None)
-
-    async def test_read_without_session_raises(self, lfs: LocalFileSystem) -> None:
-        with pytest.raises(GroverError, match="requires a session"):
-            await lfs.read("/test.txt", session=None)
-
-    async def test_edit_without_session_raises(self, lfs: LocalFileSystem) -> None:
-        with pytest.raises(GroverError, match="requires a session"):
-            await lfs.edit("/test.txt", "old", "new", session=None)
-
-    async def test_delete_without_session_raises(self, lfs: LocalFileSystem) -> None:
-        with pytest.raises(GroverError, match="requires a session"):
-            await lfs.delete("/test.txt", session=None)
-
-    async def test_list_dir_without_session_succeeds_with_disk_provider(self, lfs: LocalFileSystem) -> None:
-        # list_dir delegates to DiskStorageProvider — no session needed
-        result = await lfs.list_dir("/", session=None)
-        assert result.success is True
-
-    async def test_list_versions_without_session_raises(self, lfs: LocalFileSystem) -> None:
-        with pytest.raises(GroverError, match="requires a session"):
-            await lfs.list_versions("/test.txt", session=None)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -189,10 +190,15 @@ class TestGroverGraph:
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         grover.write("/project/funcs.py", code)
         grover.flush()
-        result = grover._run(grover.get_graph().successors(FileSearchSet.from_paths(["/project/funcs.py"])))
+        result = grover._run(
+            grover.get_graph().successors(
+                FileSearchSet.from_paths(["/project/funcs.py"]),
+                session=AsyncMock(),
+            )
+        )
         assert len(result) >= 2
-        assert any("foo" in p for p in result)
-        assert any("bar" in p for p in result)
+        assert any("foo" in p for p in result.paths)
+        assert any("bar" in p for p in result.paths)
 
 
 # ==================================================================

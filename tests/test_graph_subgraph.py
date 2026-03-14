@@ -50,6 +50,7 @@ class TestNeighborhood:
 
     async def test_unknown_node_returns_empty(self) -> None:
         g = RustworkxGraph()
+        g.loaded_at = 0  # Prevent _ensure_fresh from calling from_sql on mock
         result = await g.neighborhood(_paths("/missing.py"), session=_session)
         assert result.success
         assert len(result) == 0

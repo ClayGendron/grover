@@ -9,7 +9,6 @@ from __future__ import annotations
 from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
 
-
 # ======================================================================
 # Protocol satisfaction
 # ======================================================================

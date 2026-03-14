@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-import pytest
-
 from grover.models.internal.results import FileSearchSet
 from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
@@ -71,9 +69,7 @@ class TestPageRank:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         # /missing.py is not in the graph — should be silently skipped
-        result = await g.pagerank(
-            FileSearchSet(), personalization={"/missing.py": 1.0, "/a.py": 0.5}, session=_session
-        )
+        result = await g.pagerank(FileSearchSet(), personalization={"/missing.py": 1.0, "/a.py": 0.5}, session=_session)
         assert len(result) == 2
 
     async def test_all_personalization_keys_missing(self) -> None:
@@ -82,7 +78,6 @@ class TestPageRank:
         # All keys missing — falls back to uniform personalization
         result = await g.pagerank(FileSearchSet(), personalization={"/missing.py": 1.0}, session=_session)
         assert len(result) == 2
-
 
 
 # ======================================================================
@@ -209,7 +204,6 @@ class TestTraversal:
         g = RustworkxGraph()
         g.add_edge("/a.py", "/b.py", "imports")
         assert set((await g.descendants(_paths("/b.py"), session=_session)).paths) == set()
-
 
 
 # ======================================================================

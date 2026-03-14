@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
 from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import GroverAsync
-from grover.models.internal.results import FileSearchResult as InternalFileSearchResult, FileSearchSet
+from grover.models.internal.results import FileSearchResult as InternalFileSearchResult
+from grover.models.internal.results import FileSearchSet
 from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
 
@@ -222,7 +224,10 @@ class TestGraphOpsResolveMount:
         await multi_grover.write("/mount1/funcs.py", code)
         await multi_grover.flush()
         graph = multi_grover.get_graph("/mount1/funcs.py")
-        result = await graph.successors(FileSearchSet.from_paths(["/mount1/funcs.py"]))
+        result = await graph.successors(
+            FileSearchSet.from_paths(["/mount1/funcs.py"]),
+            session=AsyncMock(),
+        )
         assert len(result) >= 2
 
 

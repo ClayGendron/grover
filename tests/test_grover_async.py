@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -260,7 +261,10 @@ class TestGroverAsyncGraph:
         code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
         await grover.write("/project/funcs.py", code)
         await grover.flush()
-        result = await grover.get_graph().successors(FileSearchSet.from_paths(["/project/funcs.py"]))
+        result = await grover.get_graph().successors(
+            FileSearchSet.from_paths(["/project/funcs.py"]),
+            session=AsyncMock(),
+        )
         assert len(result) >= 2
 
     @pytest.mark.asyncio
@@ -400,7 +404,6 @@ class TestGroverAsyncGraphQueries:
         result = await grover.successors(FileSearchSet.from_paths(["/project/consumer.py"]))
         assert isinstance(result, FileSearchResult)
         assert result.success is True
-
 
 
 # ==================================================================
@@ -836,11 +839,13 @@ class TestGroverAsyncGraphAlgorithms:
         assert isinstance(result, FileSearchResult)
         assert result.success is True
         if len(result) > 0:
-            # Each candidate should have two evidence records
+            # Each candidate should have one evidence record with authority and hub scores
             for f in result.files:
                 ops = [e.operation for e in f.evidence]
-                assert "hits_authority" in ops
-                assert "hits_hub" in ops
+                assert "hits" in ops
+                hits_ev = next(e for e in f.evidence if e.operation == "hits")
+                assert "authority" in hits_ev.scores
+                assert "hub" in hits_ev.scores
 
     @pytest.mark.asyncio
     async def test_betweenness_centrality(self, grover: GroverAsync):
@@ -915,7 +920,6 @@ class TestGroverAsyncGraphAlgorithms:
         await grover.flush()
         graph = grover.get_graph()
         assert not graph.has_edge("/project/dc_src.py", "/project/dc_tgt.py")
-
 
 
 # ------------------------------------------------------------------

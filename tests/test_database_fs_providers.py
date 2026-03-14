@@ -193,7 +193,7 @@ class TestStorageProviderExistsGetInfo:
         mock_sp.exists = AsyncMock(return_value=True)
         fs = DatabaseFileSystem(storage_provider=mock_sp)
 
-        result = await fs.exists("/file.py")
+        result = await fs.exists("/file.py", session=AsyncMock())
 
         assert result.message == "exists"
         mock_sp.exists.assert_called_once_with("/file.py")
@@ -217,7 +217,7 @@ class TestStorageProviderExistsGetInfo:
         mock_sp.get_info = AsyncMock(return_value=mock_info)
         fs = DatabaseFileSystem(storage_provider=mock_sp)
 
-        result = await fs.get_info("/file.py")
+        result = await fs.get_info("/file.py", session=AsyncMock())
 
         assert result.success is True
         mock_sp.get_info.assert_called_once_with("/file.py")
@@ -300,15 +300,15 @@ class TestSearchMethodsNoop:
 
     async def test_search_add_noop_when_none(self):
         fs = DatabaseFileSystem()
-        await fs.search_add("/a.py", "hello")  # Should not raise
+        await fs.search_add("/a.py", "hello", session=AsyncMock())  # Should not raise
 
     async def test_search_add_batch_noop_when_none(self):
         fs = DatabaseFileSystem()
-        await fs.search_add_batch([])  # Should not raise
+        await fs.search_add_batch([], session=AsyncMock())  # Should not raise
 
     async def test_search_remove_noop_when_none(self):
         fs = DatabaseFileSystem()
-        await fs.search_remove("/a.py")  # Should not raise
+        await fs.search_remove("/a.py", session=AsyncMock())  # Should not raise
 
     async def test_vector_search_fails_without_embedding(self):
         fs = DatabaseFileSystem()
@@ -340,7 +340,7 @@ class TestSearchWithProviders:
             search_provider=mock_search,
         )
 
-        await fs.search_add("/a.py", "hello world")
+        await fs.search_add("/a.py", "hello world", session=AsyncMock())
 
         mock_embed.embed.assert_called_once_with("hello world")
         mock_search.upsert.assert_called_once()

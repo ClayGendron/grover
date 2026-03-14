@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from grover.models.internal.evidence import Evidence, GlobEvidence, VectorEvidence
 from grover.models.internal.ref import File, FileConnection, Ref
 from grover.models.internal.results import (
@@ -286,8 +288,13 @@ class TestFileSearchResultWithEvidence:
     def test_serialization_round_trip(self):
         f = File(path="/a.py", evidence=[Evidence(operation="glob", score=0.5)])
         r = FileSearchResult(files=[f], message="1 path")
-        data = r.model_dump()
-        r2 = FileSearchResult.model_validate(data)
+        # Dataclass round-trip: reconstruct from fields
+        r2 = FileSearchResult(
+            files=[File(path=fi.path, evidence=list(fi.evidence)) for fi in r.files],
+            connections=list(r.connections),
+            message=r.message,
+            success=r.success,
+        )
         assert r2.paths == ("/a.py",)
         assert r2.files[0].evidence[0].operation == "glob"
 
@@ -304,8 +311,9 @@ class TestFileSearchSetConstruction:
         assert s.connections == []
 
     def test_has_no_success_or_message(self):
-        assert "success" not in FileSearchSet.model_fields
-        assert "message" not in FileSearchSet.model_fields
+        fields = {f.name for f in dataclasses.fields(FileSearchSet)}
+        assert "success" not in fields
+        assert "message" not in fields
 
     def test_with_files(self):
         s = FileSearchSet(files=[File(path="/a.py"), File(path="/b.py")])

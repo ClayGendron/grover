@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import ClassVar
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -209,7 +211,7 @@ async def test_async_mount_open_failure_does_not_register_mount(tmp_path: Path) 
 async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> None:
     g = GroverAsync()
     try:
-        await g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
+        await g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider(), session_factory=AsyncMock)
         write_result = await g.write("/app/file.txt", "hello")
         edit_result = await g.edit("/app/file.txt", "hello", "world")
         delete_result = await g.delete("/app/file.txt", permanent=True)
@@ -243,7 +245,7 @@ async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) 
 def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
     g = Grover()
     try:
-        g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider())
+        g.add_mount("/app", InMemoryBackend(), embedding_provider=FakeProvider(), session_factory=AsyncMock)
         write_result = g.write("/app/file.txt", "hello")
         edit_result = g.edit("/app/file.txt", "hello", "world")
         delete_result = g.delete("/app/file.txt", permanent=True)
@@ -294,7 +296,7 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
     class MinimalGraph:
         """Graph with only CRUD methods — no algorithm methods."""
 
-        nodes: set[str] = set()
+        nodes: ClassVar[set[str]] = set()
 
         def add_node(self, path: str, **attrs: object) -> None: ...
         def remove_node(self, path: str) -> None: ...
