@@ -31,14 +31,14 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Lint
-        run: uv run ruff check src/ tests/
+        run: uvx ruff check src/ tests/
 
       - name: Format check
-        run: uv run ruff format --check src/ tests/
+        run: uvx ruff format --check src/ tests/
 
       - name: Type check
         if: matrix.python-version == '3.13'
-        run: uv run ty check src/
+        run: uvx ty check src/
 
       - name: Tests
         run: uv run pytest --tb=short
