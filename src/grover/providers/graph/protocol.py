@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from grover.models.internal.results import FileSearchResult
+    from grover.models.internal.results import FileSearchResult, FileSearchSet
 
 
 @runtime_checkable
@@ -22,6 +22,10 @@ class GraphProvider(Protocol):
     Mutations are synchronous. Query/algorithm methods are async.
     All async query methods require a ``session`` parameter so the
     provider can self-refresh from the database when stale.
+
+    Query methods accept ``FileSearchSet`` as their first positional
+    argument for composability — the output of one graph operation
+    can feed directly into another via set algebra.
     """
 
     # ------------------------------------------------------------------
@@ -49,183 +53,169 @@ class GraphProvider(Protocol):
     def edges(self) -> list[tuple[str, str, dict]]: ...
 
     @property
-    def node_count(self) -> int: ...
-
-    @property
-    def edge_count(self) -> int: ...
-
-    @property
     def graph(self) -> Any: ...
-
-    def remove_file_subgraph(self, path: str) -> list[str]: ...
-
-    async def from_sql(self, session: AsyncSession) -> None: ...
 
     # ------------------------------------------------------------------
     # Graph APIs — async typed result returns
     # ------------------------------------------------------------------
 
-    # Light reads (async inline)
+    async def predecessors(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """One-hop backward: all nodes with an edge pointing *to* any node
+        in *candidates*, excluding the candidate nodes themselves.
 
-    async def predecessors(self, path: str, *, session: AsyncSession) -> FileSearchResult: ...
+        For multi-path input the result is the union across all input paths.
+        """
+        ...
 
-    async def successors(self, path: str, *, session: AsyncSession) -> FileSearchResult: ...
+    async def successors(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """One-hop forward: all nodes that any node in *candidates* points
+        *to*, excluding the candidate nodes themselves.
 
-    async def subgraph(self, paths: list[str], *, session: AsyncSession) -> FileSearchResult: ...
+        For multi-path input the result is the union across all input paths.
+        """
+        ...
+
+    async def ancestors(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Transitive backward: all nodes reachable by following edges
+        backward from any node in *candidates*, recursively until no more
+        predecessors exist. Excludes the candidate nodes themselves.
+
+        For multi-path input the result is the union of all ancestor sets.
+        """
+        ...
+
+    async def descendants(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Transitive forward: all nodes reachable by following edges
+        forward from any node in *candidates*, recursively until no more
+        successors exist. Excludes the candidate nodes themselves.
+
+        For multi-path input the result is the union of all descendant sets.
+        """
+        ...
 
     async def neighborhood(
         self,
-        path: str,
+        candidates: FileSearchSet,
         *,
         max_depth: int = 2,
-        direction: str = "both",
-        edge_types: list[str] | None = None,
         session: AsyncSession,
-    ) -> FileSearchResult: ...
+    ) -> FileSearchResult:
+        """Bounded undirected BFS around a single node up to *max_depth* hops.
 
-    async def connecting_subgraph(
-        self, paths: list[str], *, session: AsyncSession
-    ) -> GraphProvider: ...
+        Returns all discovered nodes and the edges between them (induced
+        subgraph of the visited set). Follows edges in both directions.
 
-    async def common_neighbors(
-        self, path1: str, path2: str, *, session: AsyncSession
-    ) -> FileSearchResult: ...
+        Requires exactly 1 path in *candidates* (``ValueError`` otherwise).
+        """
+        ...
 
-    async def node_similarity(
-        self,
-        path1: str,
-        path2: str,
-        *,
-        method: str = "jaccard",
-        session: AsyncSession,
-    ) -> float: ...
+    async def meeting_subgraph(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Find all paths between candidate nodes.
 
-    async def similar_nodes(
-        self,
-        path: str,
-        *,
-        method: str = "jaccard",
-        k: int = 10,
-        session: AsyncSession,
-    ) -> list[tuple[str, float]]: ...
+        For every ordered pair (A, B), finds all directed paths from A
+        to B following edge direction. Since every pair is checked in
+        both orders, reverse paths are covered naturally.
 
-    # Heavy algorithms (async + to_thread)
+        If candidates span disconnected subgraphs, bridges them by
+        finding nearest common descendants first, then nearest common
+        ancestors if still disconnected.
 
-    async def path_between(
-        self, source: str, target: str, *, session: AsyncSession
-    ) -> FileSearchResult: ...
+        Returns the candidate nodes, all intermediate nodes on those
+        paths, and the edges between them.
 
-    async def ancestors(self, path: str, *, session: AsyncSession) -> FileSearchResult: ...
+        Result includes both ``files`` (nodes) and ``connections`` (edges).
+        """
+        ...
 
-    async def descendants(self, path: str, *, session: AsyncSession) -> FileSearchResult: ...
+    async def min_meeting_subgraph(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Minimum connecting subgraph between candidate nodes.
 
-    async def has_path(
-        self, source: str, target: str, *, session: AsyncSession
-    ) -> FileSearchResult: ...
+        Starts from ``meeting_subgraph`` then iteratively removes non-candidate
+        nodes that are not articulation points (whose removal would not
+        disconnect the graph).
 
-    async def all_simple_paths(
-        self,
-        source: str,
-        target: str,
-        *,
-        cutoff: int | None = None,
-        session: AsyncSession,
-    ) -> list[list[str]]: ...
-
-    async def topological_sort(self, *, session: AsyncSession) -> list[str]: ...
-
-    async def shortest_path_length(
-        self, source: str, target: str, *, session: AsyncSession
-    ) -> float | None: ...
-
-    async def meeting_subgraph(
-        self, start_paths: list[str], *, max_size: int = 50, session: AsyncSession
-    ) -> FileSearchResult: ...
-
-    async def common_reachable(
-        self, paths: list[str], *, direction: str = "forward", session: AsyncSession
-    ) -> set[str]: ...
-
-    # Centrality algorithms
+        Result includes both ``files`` (nodes) and ``connections`` (edges).
+        """
+        ...
 
     async def pagerank(
         self,
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet,
         *,
         alpha: float = 0.85,
         personalization: dict[str, float] | None = None,
         max_iter: int = 100,
         tol: float = 1e-6,
         session: AsyncSession,
-    ) -> FileSearchResult: ...
+    ) -> FileSearchResult:
+        """PageRank importance scores for candidate nodes.
+
+        *alpha* is the damping factor. *personalization* biases the
+        random walk toward specific nodes (path → weight mapping).
+        """
+        ...
 
     async def betweenness_centrality(
         self,
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet,
         *,
         normalized: bool = True,
         session: AsyncSession,
-    ) -> FileSearchResult: ...
+    ) -> FileSearchResult:
+        """Betweenness centrality — how often each candidate lies on
+        shortest paths between other nodes in the topology.
+        """
+        ...
 
-    async def closeness_centrality(
-        self,
-        candidates: FileSearchResult | None = None,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
-
-    async def harmonic_centrality(
-        self,
-        candidates: FileSearchResult | None = None,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def closeness_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Closeness centrality — inverse of the average shortest-path
+        distance from each candidate to all other reachable nodes.
+        """
+        ...
 
     async def hits(
         self,
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet,
         *,
         max_iter: int = 100,
         tol: float = 1e-8,
         session: AsyncSession,
-    ) -> FileSearchResult: ...
+    ) -> FileSearchResult:
+        """HITS hub and authority scores. Each candidate gets two
+        evidence entries: ``hits_hub`` and ``hits_authority``.
+        """
+        ...
 
     async def katz_centrality(
         self,
-        candidates: FileSearchResult | None = None,
+        candidates: FileSearchSet,
         *,
         alpha: float = 0.1,
         beta: float = 1.0,
         max_iter: int = 1000,
         tol: float = 1e-6,
         session: AsyncSession,
-    ) -> FileSearchResult: ...
+    ) -> FileSearchResult:
+        """Katz centrality — measures influence by counting all paths
+        from a node, with longer paths attenuated by *alpha*.
+        """
+        ...
 
-    async def degree_centrality(
-        self,
-        candidates: FileSearchResult | None = None,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Degree centrality — fraction of nodes each candidate is
+        connected to (in + out edges combined).
+        """
+        ...
 
-    async def in_degree_centrality(
-        self,
-        candidates: FileSearchResult | None = None,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
+    async def in_degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """In-degree centrality — fraction of nodes with an edge
+        pointing *to* each candidate. Measures how depended-upon
+        a file is.
+        """
+        ...
 
-    async def out_degree_centrality(
-        self,
-        candidates: FileSearchResult | None = None,
-        *,
-        session: AsyncSession,
-    ) -> FileSearchResult: ...
-
-    # Connectivity
-
-    async def weakly_connected_components(self, *, session: AsyncSession) -> list[set[str]]: ...
-
-    async def strongly_connected_components(self, *, session: AsyncSession) -> list[set[str]]: ...
-
-    async def is_weakly_connected(self, *, session: AsyncSession) -> bool: ...
+    async def out_degree_centrality(self, candidates: FileSearchSet, *, session: AsyncSession) -> FileSearchResult:
+        """Out-degree centrality — fraction of nodes each candidate
+        points *to*. Measures how many dependencies a file has.
+        """
+        ...
