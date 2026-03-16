@@ -4,6 +4,27 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.7] — 2026-03-16
+
+### Added
+
+- **`EngineConfig`** — Frozen dataclass for engine-managed mounts. Accepts `url` (simple) or `engine_factory` (advanced, e.g. custom pool/connect_args via `create_async_engine_factory`). Supports `schema`, `create_tables`, and custom model overrides. Engine is created at mount time and disposed on unmount/close.
+- **`SessionConfig`** — Frozen dataclass for app-managed mounts. Wraps an existing session factory; Grover does not dispose the engine. Dialect inferred from the factory's bind or set explicitly.
+- **`create_async_engine_factory()`** — Helper that captures `create_async_engine` args and returns a zero-arg callable for deferred engine creation.
+- **Engine lifecycle on `Mount`** — `Mount.engine` field tracks Grover-owned engines. `unmount()` and `close()` dispose them automatically.
+
+### Changed
+
+- **`add_mount()` API redesigned** — `engine=`, `session_factory=`, `dialect=`, `file_model=`, `file_version_model=`, `file_chunk_model=`, `db_schema=` parameters replaced by `engine_config=` and `session_config=`. `filesystem` and `mount` are now keyword-only. `path` remains positional.
+- **`DatabaseFileSystem` constructor simplified** — Config parameters (dialect, schema, model classes) removed. Only provider kwargs remain. New `_configure()` method applies settings from `EngineConfig`/`SessionConfig` at mount time.
+- **`LocalFileSystem` constructor simplified** — Model and schema parameters removed. Accepts only `workspace_dir`, `data_dir`, and provider kwargs.
+- **`UserScopedFileSystem` constructor simplified** — Config parameters removed. Accepts only `share_model` and provider kwargs.
+- **deepagents integration** — `from_database()` and `from_database_async()` now accept `EngineConfig` instead of raw engine/session_factory.
+
+### Fixed
+
+- **Sync `Grover` in Jupyter** — Pre-created `AsyncEngine` bound to the wrong event loop no longer causes failures. `EngineConfig` defers engine creation to mount time, ensuring it runs on the correct loop.
+
 ## [0.0.6] — 2026-03-16
 
 ### Changed
