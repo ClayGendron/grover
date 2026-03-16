@@ -3,7 +3,7 @@
 Safe file operations, knowledge graphs, and semantic search — unified for AI agents.
 """
 
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import Grover, GroverAsync

@@ -4,6 +4,37 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.5] — 2026-03-16
+
+### Added
+
+- **`FileSearchSet` candidate container** — unordered set with set algebra (`&`, `|`, `-`, `>>`), path transforms (`rebase`, `remap_paths`), and iteration. Used as input filter for search methods.
+- **`BatchResult`** — batch operation result type with `succeeded`/`failed` counts.
+- **Candidates filtering** — `glob`, `grep`, `vector_search`, `lexical_search`, `hybrid_search` all accept `candidates: FileSearchSet` for pipeline-style filtering.
+- **`diff_versions`** — compare two file versions, exposed on `Grover`/`GroverAsync`.
+- **`write_file`, `write_files`, `write_chunk`, `write_chunks`** — public API methods for model-based writes.
+- **Self-managing graph** — `RustworkxGraph` lazy-loads from DB, TTL-based refresh, `configure_refresh()`.
+- **`IndexConfig`** — frozen dataclass for vector index creation, defined in `providers/search/protocol.py`.
+- **`parent_path_from_id`** — utility to extract parent file path from chunk IDs (`/a.py#login` → `/a.py`).
+
+### Changed
+
+- **SearchProvider protocol stripped to MVP** — 6 methods: `connect`, `close`, `create_index`, `upsert(files=)`, `delete(files=)`, `vector_search(candidates=)`. Uses domain types (`File`, `BatchResult`, `FileSearchResult`) instead of search-specific types. `lexical_search` moved to filesystem backend (DB-native FTS).
+- **`types.py` deleted** — `VectorEntry`, `UpsertResult`, `DeleteResult`, `VectorHit`, `SparseVector`, `TextEntry`, `IndexConfig` (old), `IndexInfo`, `SearchResult` all removed.
+- **Opt-in search protocols removed** — `SupportsNamespaces`, `SupportsMetadataFilter`, `SupportsIndexLifecycle`, `SupportsHybridSearch`, `SupportsReranking` deleted from `protocol.py`. Pinecone/Databricks keep these as concrete methods.
+- **DatabricksVectorStore rewritten** — stripped to protocol surface only (`connect`, `close`, `create_index`, `upsert`, `delete`, `vector_search`).
+- **Internal result types overhauled** — `FileSearchResult` extends `FileSearchSet`, typed `Evidence` subclasses on `File` objects replace 30+ result subclasses. `GraphProvider` returns `FileSearchResult` directly.
+- **RustworkxGraph refactored** — adjacency dicts, `_snapshot()` for thread-safe algorithm execution, `.graph` property exposes `PyDiGraph`, public attributes replace getters.
+- **Async graph operations** — all query/algorithm methods on `RustworkxGraph` are `async def`. Heavy algorithms use `asyncio.to_thread()`.
+- **Graph facade simplified** — `GraphOpsMixin` is pure delegation to `GraphProvider`. `GraphStore` alias removed.
+- **`GroverAsync` mixins consolidated** — 8 → 6 mixins (ConnectionMixin absorbed into GraphOpsMixin, VersionTrashMixin into FileOpsMixin).
+- **Search method signatures corrected** — `list_dir`, `tree`, `list_versions` reverted to path-based; `vector_search` rebase bug fixed.
+
+### Fixed
+
+- **CI workflow** — `uvx ruff`/`uvx ty` instead of pip-installed tools; trigger on workflow file changes.
+- **ty type errors** — evidence lists annotated as `list[Evidence]`, `Any` replaced with concrete types.
+
 ## [0.0.4] — 2026-03-04
 
 ### Added
