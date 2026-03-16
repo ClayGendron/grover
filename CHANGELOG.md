@@ -4,6 +4,12 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.6] — 2026-03-16
+
+### Changed
+
+- **`max_length=1024` on all indexed string columns** — All `id`, `path`, `file_path`, `source_path`, `target_path`, `owner_id`, and `grantee_id` fields across all five DB models (`grover_files`, `grover_file_chunks`, `grover_file_connections`, `grover_file_shares`, `grover_file_versions`) now have explicit `max_length=1024` for compatibility with databases that require bounded index columns.
+
 ## [0.0.5] — 2026-03-16
 
 ### Added
