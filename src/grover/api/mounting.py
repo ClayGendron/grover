@@ -15,9 +15,12 @@ from grover.models.database.share import FileShareModel
 from grover.mount import Mount
 from grover.permissions import Permission
 from grover.providers.graph.rustworkx import RustworkxGraph
+from grover.util.dialect import check_tables_exist, ensure_schema
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
+    from sqlalchemy import Connection
+
     from grover.api.context import GroverContext
     from grover.backends.protocol import GroverFileSystem
     from grover.models.config import EngineConfig, SessionConfig
@@ -170,32 +173,51 @@ class MountMixin:
         if isinstance(backend, DatabaseFileSystem):
             backend._configure(config, dialect)
 
-        # Ensure base tables exist
+        # Ensure schema and base tables exist
         if config.create_tables:
-            fm = config.file_model
-            fvm = config.file_version_model
-            fcm = config.file_chunk_model
-            fconn = config.file_connection_model
-            async with engine.begin() as conn:
-                await conn.run_sync(
-                    lambda c: fm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-                )
-                await conn.run_sync(
-                    lambda c: fvm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-                )
-                await conn.run_sync(
-                    lambda c: fcm.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-                )
-                await conn.run_sync(
-                    lambda c: fconn.__table__.create(c, checkfirst=True)  # type: ignore[attr-defined]
-                )
+            schema = config.schema
 
-            # Create share table if backend supports sharing
-            if isinstance(backend, SupportsReBAC):
+            # Create schema if needed (non-SQLite only)
+            if schema:
                 async with engine.begin() as conn:
-                    await conn.run_sync(
-                        lambda c: FileShareModel.__table__.create(c, checkfirst=True)  # type: ignore[unresolved-attribute]
-                    )
+                    schema_created = await conn.run_sync(lambda c: ensure_schema(c, dialect, schema))
+                if schema_created:
+                    logger.info('Schema created: "%s"', schema)
+
+            # Gather all tables to create
+            tables = [
+                config.file_model.__table__,  # type: ignore[attr-defined]
+                config.file_version_model.__table__,  # type: ignore[attr-defined]
+                config.file_chunk_model.__table__,  # type: ignore[attr-defined]
+                config.file_connection_model.__table__,  # type: ignore[attr-defined]
+            ]
+            if isinstance(backend, SupportsReBAC):
+                tables.append(FileShareModel.__table__)  # type: ignore[unresolved-attribute]
+
+            table_names = [t.name for t in tables]
+
+            # Check which tables already exist
+            async with engine.begin() as conn:
+                existing_before = await conn.run_sync(lambda c: check_tables_exist(c, table_names, schema))
+
+            # Create tables (with schema_translate_map if schema is set)
+            def _create_tables_sync(c: Connection) -> None:
+                if schema:
+                    c = c.execution_options(schema_translate_map={None: schema})
+                for t in tables:
+                    t.create(c, checkfirst=True)
+
+            async with engine.begin() as conn:
+                await conn.run_sync(_create_tables_sync)
+
+            # Print newly created tables
+            new_tables = [name for name in table_names if name not in existing_before]
+            if new_tables:
+                table_list = ", ".join(new_tables)
+                if schema:
+                    logger.info('Tables created in schema "%s": %s', schema, table_list)
+                else:
+                    logger.info("Tables created: %s", table_list)
 
         return Mount(
             path=path,

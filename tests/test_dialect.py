@@ -2,13 +2,99 @@
 
 from __future__ import annotations
 
+import unittest.mock
 from unittest.mock import AsyncMock, MagicMock
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
 from grover.models.database.file import FileModel
-from grover.util.dialect import _upsert_mssql, get_dialect, now_expression, upsert_file
+from grover.util.dialect import (
+    _upsert_mssql,
+    check_tables_exist,
+    ensure_schema,
+    get_dialect,
+    now_expression,
+    upsert_file,
+)
+
+# =========================================================================
+# ensure_schema()
+# =========================================================================
+
+
+class TestEnsureSchema:
+    def test_sqlite_noop(self):
+        result = ensure_schema(MagicMock(), "sqlite", "myschema")
+        assert result is False
+
+    def test_creates_schema_when_missing(self):
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_schema_names.return_value = ["public"]
+        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
+            result = ensure_schema(conn, "postgresql", "myschema")
+        assert result is True
+        conn.execute.assert_called_once()
+        sql = str(conn.execute.call_args[0][0])
+        assert "myschema" in sql
+
+    def test_schema_already_exists(self):
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_schema_names.return_value = ["public", "myschema"]
+        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
+            result = ensure_schema(conn, "postgresql", "myschema")
+        assert result is False
+        conn.execute.assert_not_called()
+
+    def test_mssql_creates_schema(self):
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_schema_names.return_value = ["dbo"]
+        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
+            result = ensure_schema(conn, "mssql", "grover")
+        assert result is True
+        sql = str(conn.execute.call_args[0][0])
+        assert "CREATE SCHEMA" in sql
+        assert "grover" in sql
+
+
+# =========================================================================
+# check_tables_exist()
+# =========================================================================
+
+
+class TestCheckTablesExist:
+    def test_returns_intersection(self):
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["grover_files", "other_table"]
+        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
+            result = check_tables_exist(
+                conn,
+                ["grover_files", "grover_file_versions"],
+                schema="myschema",
+            )
+        assert result == {"grover_files"}
+        inspector.get_table_names.assert_called_once_with(schema="myschema")
+
+    def test_returns_empty_when_none_exist(self):
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = []
+        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
+            result = check_tables_exist(conn, ["grover_files"])
+        assert result == set()
+
+    def test_no_schema(self):
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["grover_files"]
+        with unittest.mock.patch("grover.util.dialect.inspect", return_value=inspector):
+            result = check_tables_exist(conn, ["grover_files"])
+        inspector.get_table_names.assert_called_once_with(schema=None)
+        assert result == {"grover_files"}
 
 
 class TestGetDialect:

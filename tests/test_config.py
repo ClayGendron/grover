@@ -206,6 +206,78 @@ class TestCreateTablesFalse:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Schema / table creation log messages
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaTableCreationMessages:
+    async def test_tables_created_logs_message(self, caplog):
+        """Fresh DB with create_tables=True logs table names."""
+        import logging
+
+        config = EngineConfig(url="sqlite+aiosqlite://")
+        g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
+        with caplog.at_level(logging.INFO, logger="grover.api.mounting"):
+            await g.add_mount("/data", engine_config=config)
+
+        assert "Tables created:" in caplog.text
+        assert "grover_files" in caplog.text
+        assert "grover_file_versions" in caplog.text
+        assert "grover_file_chunks" in caplog.text
+        assert "grover_file_connections" in caplog.text
+        await g.close()
+
+    async def test_tables_already_exist_no_log(self, caplog):
+        """When tables already exist, no 'Tables created' message is logged."""
+        import logging
+
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        # Re-use the same engine so tables are already present
+        config = EngineConfig(engine_factory=lambda: engine)  # type: ignore[arg-type]
+
+        g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
+        with caplog.at_level(logging.INFO, logger="grover.api.mounting"):
+            await g.add_mount("/data", engine_config=config)
+
+        assert "Tables created" not in caplog.text
+        await g.close()
+        await engine.dispose()
+
+    async def test_create_tables_false_no_log(self, caplog):
+        """With create_tables=False, nothing is logged."""
+        import logging
+
+        config = EngineConfig(url="sqlite+aiosqlite://", create_tables=False)
+        g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
+        with caplog.at_level(logging.INFO, logger="grover.api.mounting"):
+            await g.add_mount("/data", engine_config=config)
+
+        assert "Tables created" not in caplog.text
+        assert "Schema created" not in caplog.text
+        await g.close()
+
+    async def test_schema_none_no_schema_message(self, caplog):
+        """Without schema set, no 'Schema created' message is logged."""
+        import logging
+
+        config = EngineConfig(url="sqlite+aiosqlite://")
+        g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
+        with caplog.at_level(logging.INFO, logger="grover.api.mounting"):
+            await g.add_mount("/data", engine_config=config)
+
+        assert "Schema created" not in caplog.text
+        await g.close()
+
+
+# ---------------------------------------------------------------------------
+# Mutual exclusion
+# ---------------------------------------------------------------------------
+
+
 class TestMutualExclusion:
     async def test_engine_and_session_config_rejected(self):
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)

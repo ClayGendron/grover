@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 
@@ -13,7 +13,7 @@ from grover.models.database.file import FileModel
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from sqlalchemy import Engine
+    from sqlalchemy import Connection, Engine
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
     from sqlalchemy.sql.expression import ColumnElement
 
@@ -30,6 +30,42 @@ def get_dialect(engine: Engine | AsyncEngine) -> str:
     if name in ("mssql", "pyodbc"):
         return "mssql"
     return name
+
+
+def ensure_schema(conn: Connection, dialect: str, schema: str) -> bool:
+    """Create *schema* if it does not already exist.  Returns ``True`` if created.
+
+    - SQLite: no-op (returns ``False``) — SQLite has no ``CREATE SCHEMA``.
+    - PostgreSQL: ``CREATE SCHEMA IF NOT EXISTS "name"``
+    - MSSQL: conditional check + ``CREATE SCHEMA [name]``
+    - Other: attempts standard ``CREATE SCHEMA IF NOT EXISTS "name"``
+    """
+    if dialect == "sqlite":
+        return False
+
+    inspector = inspect(conn)
+    if schema in inspector.get_schema_names():
+        return False
+
+    if dialect == "mssql":
+        conn.execute(
+            text(f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '{schema}') EXEC('CREATE SCHEMA [{schema}]')")
+        )
+    else:
+        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+
+    return True
+
+
+def check_tables_exist(
+    conn: Connection,
+    table_names: list[str],
+    schema: str | None = None,
+) -> set[str]:
+    """Return the subset of *table_names* that already exist in *schema*."""
+    inspector = inspect(conn)
+    existing = set(inspector.get_table_names(schema=schema))
+    return existing & set(table_names)
 
 
 async def upsert_file(
