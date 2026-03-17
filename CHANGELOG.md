@@ -4,6 +4,14 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.8] — 2026-03-17
+
+### Added
+
+- **Schema-aware table creation** — When `EngineConfig` provides a `schema`, `add_mount()` now creates the schema if it doesn't exist (PostgreSQL, MSSQL) and creates tables within that schema using `schema_translate_map`. Logs `Schema created: "name"` and `Tables created: ...` when new objects are created.
+- **`ensure_schema()`** — Dialect-aware helper in `grover.util.dialect` that creates a database schema if missing. Supports PostgreSQL (`CREATE SCHEMA IF NOT EXISTS`), MSSQL (conditional `CREATE SCHEMA`), and no-ops on SQLite.
+- **`check_tables_exist()`** — Helper that returns which table names already exist in a given schema, used to determine whether to log table creation messages.
+
 ## [0.0.7] — 2026-03-16
 
 ### Added
