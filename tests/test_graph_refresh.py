@@ -21,7 +21,7 @@ class TestMountWiring:
     async def test_graph_provider_is_rustworkx_after_mount(self):
         """After add_mount(), the graph provider is a RustworkxGraph."""
         g = GroverAsync()
-        await g.add_mount("/data", engine_config=EngineConfig(url="sqlite+aiosqlite://"))
+        await g.add_mount("data", engine_config=EngineConfig(url="sqlite+aiosqlite://"))
         gp = g.get_graph("/data/foo.py")
         assert isinstance(gp, RustworkxGraph)
         await g.close()
@@ -36,7 +36,7 @@ class TestMountWiring:
         from grover.mount import Mount
 
         mount = Mount(
-            path="/__hidden",
+            name="__hidden",
             filesystem=fs,
             hidden=True,
         )
@@ -66,7 +66,7 @@ class TestLazyLoadViaFacade:
             await session.commit()
 
         g = GroverAsync()
-        await g.add_mount("/data", session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
+        await g.add_mount("data", session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
         gp = g.get_graph()
         assert isinstance(gp, RustworkxGraph)
         # Graph is empty — needs_refresh is True
@@ -98,7 +98,7 @@ class TestLazyLoadViaFacade:
             await session.commit()
 
         g = GroverAsync()
-        await g.add_mount("/data", session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
+        await g.add_mount("data", session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
         gp = g.get_graph()
         assert isinstance(gp, RustworkxGraph)
 
@@ -148,7 +148,7 @@ class TestLazyLoadViaFacade:
         from grover.backends.database import DatabaseFileSystem
 
         fs = DatabaseFileSystem(graph_provider=graph)
-        await g.add_mount("/data", filesystem=fs, session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
+        await g.add_mount("data", filesystem=fs, session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
         gp = g.get_graph()
 
         # Trigger initial load
@@ -202,7 +202,7 @@ class TestLazyLoadViaFacade:
         from grover.backends.database import DatabaseFileSystem
 
         fs = DatabaseFileSystem(graph_provider=graph)
-        await g.add_mount("/data", filesystem=fs, session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
+        await g.add_mount("data", filesystem=fs, session_config=SessionConfig(session_factory=sf, dialect="sqlite"))
 
         # Trigger initial load
         await g.pagerank(FileSearchSet.from_paths(["/data/a.py"]))

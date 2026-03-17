@@ -40,7 +40,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover()
     g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
     )
@@ -58,7 +58,7 @@ async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data_async"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
     )
@@ -479,7 +479,7 @@ def _make_sync_backend(tmp_path: Path) -> tuple[GroverBackend, GroverAsync]:
     async def _setup() -> GroverAsync:
         g = GroverAsync()
         await g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )

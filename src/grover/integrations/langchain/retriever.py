@@ -34,14 +34,14 @@ class GroverRetriever(BaseRetriever):
 
         # Sync
         g = Grover(embedding_provider=provider)
-        g.add_mount("/project", backend)
+        g.add_mount("project", backend)
         g.index()
         retriever = GroverRetriever(grover=g, k=5)
         docs = retriever.invoke("authentication flow")
 
         # Async
         ga = GroverAsync(embedding_provider=provider)
-        await ga.add_mount("/project", backend)
+        await ga.add_mount("project", backend)
         await ga.index()
         retriever = GroverRetriever(grover=ga, k=5)
         docs = await retriever.ainvoke("authentication flow")

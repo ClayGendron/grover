@@ -42,7 +42,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -55,7 +55,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
 async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
-    await g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    await g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -76,7 +76,7 @@ class TestGroverAsyncLifecycle:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -88,7 +88,7 @@ class TestGroverAsyncLifecycle:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -104,7 +104,7 @@ class TestGroverAsyncLifecycle:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -199,12 +199,12 @@ class TestGroverAsyncMultiMount:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_app"),
             embedding_provider=FakeProvider(),
         )
         await g.add_mount(
-            "/data",
+            "data",
             filesystem=LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_data"),
             embedding_provider=FakeProvider(),
         )
@@ -230,8 +230,8 @@ class TestGroverAsyncMultiMount:
         g = GroverAsync()
         lfs_a = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a")
         lfs_b = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b")
-        await g.add_mount("/a", filesystem=lfs_a, embedding_provider=FakeProvider())
-        await g.add_mount("/b", filesystem=lfs_b, embedding_provider=FakeProvider())
+        await g.add_mount("a", filesystem=lfs_a, embedding_provider=FakeProvider())
+        await g.add_mount("b", filesystem=lfs_b, embedding_provider=FakeProvider())
 
         await g.write("/a/file.txt", "in mount a")
         assert (await g.exists("/a/file.txt")).message == "exists"
@@ -343,8 +343,8 @@ class TestGroverAsyncIndex:
         g = GroverAsync()
         lfs_a = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_a")
         lfs_b = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local_b")
-        await g.add_mount("/a", filesystem=lfs_a, embedding_provider=FakeProvider())
-        await g.add_mount("/b", filesystem=lfs_b, embedding_provider=FakeProvider())
+        await g.add_mount("a", filesystem=lfs_a, embedding_provider=FakeProvider())
+        await g.add_mount("b", filesystem=lfs_b, embedding_provider=FakeProvider())
 
         (workspace / "a.py").write_text("def a():\n    pass\n")
         (workspace2 / "b.py").write_text("def b():\n    pass\n")
@@ -466,12 +466,12 @@ class TestGroverAsyncMountOptions:
         ws_hidden = tmp_path / "ws_hidden"
         ws_hidden.mkdir()
         await g.add_mount(
-            "/hidden",
+            "hidden",
             filesystem=LocalFileSystem(workspace_dir=ws_hidden, data_dir=data / "local_hidden"),
             hidden=True,
         )
         await g.add_mount(
-            "/visible",
+            "visible",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local_visible"),
             embedding_provider=FakeProvider(),
         )
@@ -497,7 +497,7 @@ class TestGroverAsyncMountOptions:
 
         # Local mount
         await g.add_mount(
-            "/local",
+            "local",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
             embedding_provider=FakeProvider(),
         )
@@ -510,7 +510,7 @@ class TestGroverAsyncMountOptions:
             await conn.run_sync(SQLModel.metadata.create_all)
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         await g.add_mount(
-            "/db",
+            "db",
             session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
         )
         db_mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/db")
@@ -524,7 +524,7 @@ class TestGroverAsyncMountOptions:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
             embedding_provider=FakeProvider(),
         )
@@ -537,7 +537,7 @@ class TestGroverAsyncMountOptions:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "l"),
             embedding_provider=FakeProvider(),
         )
@@ -588,7 +588,7 @@ async def auth_grover(tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     backend = UserScopedFileSystem(share_model=FileShareModel)
     await g.add_mount(
-        "/ws",
+        "ws",
         filesystem=backend,
         engine_config=EngineConfig(url="sqlite+aiosqlite://"),
         embedding_provider=FakeProvider(),
@@ -675,7 +675,7 @@ class TestGroverAsyncSharing:
         data = tmp_path / "grover_data"
         g = GroverAsync()
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )

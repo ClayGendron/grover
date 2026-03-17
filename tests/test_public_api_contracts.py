@@ -189,7 +189,7 @@ async def test_async_unmount_requires_exact_mount_path(tmp_path: Path) -> None:
     g = GroverAsync()
     backend = InMemoryBackend()
     try:
-        await g.add_mount("/app", filesystem=backend, embedding_provider=FakeProvider())
+        await g.add_mount("app", filesystem=backend, embedding_provider=FakeProvider())
         await g.unmount("/app/subpath")
         assert g._ctx.registry.has_mount("/app")
         assert backend.close_calls == 0
@@ -202,7 +202,7 @@ async def test_async_mount_open_failure_does_not_register_mount(tmp_path: Path) 
     g = GroverAsync()
     try:
         with pytest.raises(RuntimeError, match="open failed"):
-            await g.add_mount("/bad", filesystem=OpenFailBackend(), embedding_provider=FakeProvider())
+            await g.add_mount("bad", filesystem=OpenFailBackend(), embedding_provider=FakeProvider())
         assert not g._ctx.registry.has_mount("/bad")
     finally:
         await g.close()
@@ -213,7 +213,7 @@ async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> No
     g = GroverAsync()
     try:
         await g.add_mount(
-            "/app",
+            "app",
             filesystem=InMemoryBackend(),
             embedding_provider=FakeProvider(),
             session_config=SessionConfig(session_factory=AsyncMock, dialect="sqlite"),
@@ -236,7 +236,7 @@ async def test_async_write_edit_delete_return_result_types(tmp_path: Path) -> No
 async def test_async_write_commit_failure_returns_failed_result(tmp_path: Path) -> None:
     g = GroverAsync()
     try:
-        await g.add_mount("/app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
+        await g.add_mount("app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
         mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
@@ -252,7 +252,7 @@ def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
     g = Grover()
     try:
         g.add_mount(
-            "/app",
+            "app",
             filesystem=InMemoryBackend(),
             embedding_provider=FakeProvider(),
             session_config=SessionConfig(session_factory=AsyncMock, dialect="sqlite"),
@@ -274,7 +274,7 @@ def test_sync_write_edit_delete_return_result_types(tmp_path: Path) -> None:
 def test_sync_write_commit_failure_returns_failed_result(tmp_path: Path) -> None:
     g = Grover()
     try:
-        g.add_mount("/app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
+        g.add_mount("app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
         mount = next(m for m in g._async._ctx.registry.list_mounts() if m.path == "/app")
         mount.session_factory = BadCommitSession
 
@@ -343,7 +343,7 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
 
     ga = GroverAsync()
     try:
-        await ga.add_mount("/app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
+        await ga.add_mount("app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
         # Inject MinimalGraph onto the mounted backend
         mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
         mount.filesystem.graph_provider = MinimalGraph()

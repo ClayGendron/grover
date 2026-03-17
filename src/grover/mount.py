@@ -17,12 +17,15 @@ if TYPE_CHECKING:
 
 
 class Mount:
-    """A mount point binding a path to a filesystem.
+    """A mount point binding a name to a filesystem.
 
     Each mount has:
+    - ``name`` — simple identifier (no ``/``), e.g. ``"project"``
     - ``filesystem`` — the storage backend (required)
     - ``session_factory`` — optional async session factory for DB-backed filesystems
     - ``permission`` — read-write or read-only
+
+    Internally, ``path`` is derived as ``f"/{name}"`` for routing.
 
     Graph, search, and other providers live on the filesystem itself
     (via ``filesystem.graph_provider``, ``filesystem.search_provider``, etc.).
@@ -30,7 +33,7 @@ class Mount:
 
     def __init__(
         self,
-        path: str = "",
+        name: str = "",
         filesystem: GroverFileSystem | None = None,
         *,
         session_factory: Callable[..., AsyncSession] | None = None,
@@ -41,18 +44,22 @@ class Mount:
         hidden: bool = False,
         read_only_paths: set[str] | None = None,
     ) -> None:
-        self.path: str = normalize_path(path).rstrip("/")
+        name = name.strip("/")
+        if "/" in name:
+            raise ValueError(f"Mount name must not contain '/': {name!r}")
+        self.name: str = name
+        self.path: str = f"/{name}" if name else ""
         self.filesystem: GroverFileSystem | None = filesystem
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
         self.engine: AsyncEngine | None = engine
         self.permission: Permission = permission
-        self.label: str = label or self.path.lstrip("/") or "root"
+        self.label: str = label or self.name or "root"
         self.mount_type: str = mount_type
         self.hidden: bool = hidden
         self.read_only_paths: set[str] = read_only_paths if read_only_paths is not None else set()
 
     def __repr__(self) -> str:
-        parts = [f"path={self.path!r}"]
+        parts = [f"name={self.name!r}"]
         if self.filesystem is not None:
             parts.append(f"filesystem={type(self.filesystem).__name__}")
         return f"Mount({', '.join(parts)})"

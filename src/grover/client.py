@@ -51,18 +51,18 @@ class GroverAsync(
 
         g = GroverAsync()
         await g.add_mount(
-            "/data", engine_config=EngineConfig(url="postgresql+asyncpg://...")
+            "data", engine_config=EngineConfig(url="postgresql+asyncpg://...")
         )
 
     SessionConfig (app manages the engine)::
 
         g = GroverAsync()
-        await g.add_mount("/data", session_config=SessionConfig(session_factory=sf))
+        await g.add_mount("data", session_config=SessionConfig(session_factory=sf))
 
     Direct filesystem::
 
         g = GroverAsync()
-        await g.add_mount("/app", filesystem=LocalFileSystem(workspace_dir="."))
+        await g.add_mount("app", filesystem=LocalFileSystem(workspace_dir="."))
         await g.write("/app/test.py", "print('hi')")
     """
 
@@ -90,7 +90,7 @@ class Grover:
     Usage::
 
         g = Grover()
-        g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir="."))
+        g.add_mount("project", filesystem=LocalFileSystem(workspace_dir="."))
         g.write("/project/hello.py", "print('hi')")
         g.close()
     """
@@ -146,7 +146,7 @@ class Grover:
 
     def add_mount(
         self,
-        path: str | None = None,
+        name: str | None = None,
         *,
         mount: Mount | None = None,
         filesystem: GroverFileSystem | None = None,
@@ -159,10 +159,10 @@ class Grover:
         embedding_provider: EmbeddingProvider | None = None,
         search_provider: SearchProvider | None = None,
     ) -> None:
-        """Add a mount at *path* with *filesystem*."""
+        """Add a mount with *name* and *filesystem*."""
         self._run(
             self._async.add_mount(
-                path,
+                name,
                 mount=mount,
                 filesystem=filesystem,
                 engine_config=engine_config,
@@ -176,9 +176,9 @@ class Grover:
             )
         )
 
-    def unmount(self, path: str) -> None:
-        """Unmount the backend at *path*."""
-        self._run(self._async.unmount(path))
+    def unmount(self, name: str) -> None:
+        """Unmount the backend with the given *name*."""
+        self._run(self._async.unmount(name))
 
     # ------------------------------------------------------------------
     # Filesystem wrappers (sync)

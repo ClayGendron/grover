@@ -91,7 +91,7 @@ async def dbfs_setup(tmp_path: Path):
 
     g = GroverAsync()
     await g.add_mount(
-        "/vfs",
+        "vfs",
         filesystem=fs,
         session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
         embedding_provider=FakeProvider(),
@@ -362,7 +362,7 @@ class TestAnalyzeEdgeCases:
 
         g = GroverAsync()
         await g.add_mount(
-            "/vfs",
+            "vfs",
             filesystem=fs,
             session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
             embedding_provider=FakeProvider(),
@@ -407,7 +407,7 @@ class TestAnalyzeEdgeCases:
 
         g = GroverAsync()
         await g.add_mount(
-            "/ro",
+            "ro",
             filesystem=dfs,
             session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
             permission=Permission.READ_ONLY,

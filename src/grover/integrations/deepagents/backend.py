@@ -127,12 +127,12 @@ class GroverBackend(BackendProtocol):
 
         # Sync
         g = Grover()
-        g.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/ws"))
+        g.add_mount("project", LocalFileSystem(workspace_dir="/tmp/ws"))
         backend = GroverBackend(g)
 
         # Async
         ga = GroverAsync()
-        await ga.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/ws"))
+        await ga.add_mount("project", LocalFileSystem(workspace_dir="/tmp/ws"))
         backend = GroverBackend(ga)
     """
 
@@ -162,7 +162,7 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = Grover()
-        g.add_mount("/", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
+        g.add_mount("", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
         return cls(g)
 
     @classmethod
@@ -175,7 +175,7 @@ class GroverBackend(BackendProtocol):
         from grover.client import Grover
 
         g = Grover()
-        g.add_mount("/", engine_config=engine_config, **mount_kwargs)
+        g.add_mount("", engine_config=engine_config, **mount_kwargs)
         return cls(g)
 
     @classmethod
@@ -194,7 +194,7 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = GroverAsync()
-        await g.add_mount("/", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
+        await g.add_mount("", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
         return cls(g)
 
     @classmethod
@@ -207,7 +207,7 @@ class GroverBackend(BackendProtocol):
         from grover.client import GroverAsync
 
         g = GroverAsync()
-        await g.add_mount("/", engine_config=engine_config, **mount_kwargs)
+        await g.add_mount("", engine_config=engine_config, **mount_kwargs)
         return cls(g)
 
     # ------------------------------------------------------------------

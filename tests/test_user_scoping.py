@@ -82,7 +82,7 @@ async def auth_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsync:
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount(
-        "/ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
+        "ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -98,7 +98,7 @@ async def shared_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsyn
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount(
-        "/ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
+        "ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
     )
     yield g  # type: ignore[misc]
     await g.close()
@@ -114,7 +114,7 @@ async def regular_grover(async_engine: AsyncEngine, tmp_path: Path) -> GroverAsy
 
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount(
-        "/ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
+        "ws", filesystem=backend, session_config=SessionConfig(session_factory=session_factory, dialect="sqlite")
     )
     yield g  # type: ignore[misc]
     await g.close()

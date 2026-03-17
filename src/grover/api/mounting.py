@@ -16,7 +16,6 @@ from grover.mount import Mount
 from grover.permissions import Permission
 from grover.providers.graph.rustworkx import RustworkxGraph
 from grover.util.dialect import check_tables_exist, ensure_schema
-from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
     from sqlalchemy import Connection
@@ -41,7 +40,7 @@ class MountMixin:
 
     async def add_mount(
         self,
-        path: str | None = None,
+        name: str | None = None,
         *,
         mount: Mount | None = None,
         filesystem: GroverFileSystem | None = None,
@@ -59,19 +58,19 @@ class MountMixin:
         Usage::
 
             # From a pre-built Mount object
-            mount = Mount(path="/project", filesystem=LocalFileSystem(...))
+            mount = Mount("project", filesystem=LocalFileSystem(...))
             await g.add_mount(mount=mount)
 
             # Filesystem-based (LocalFileSystem or custom backend)
-            await g.add_mount("/data", filesystem=LocalFileSystem(workspace_dir="."))
+            await g.add_mount("data", filesystem=LocalFileSystem(workspace_dir="."))
 
             # Engine-based — Grover creates and owns the engine
             await g.add_mount(
-                "/data", engine_config=EngineConfig(url="sqlite+aiosqlite:///db")
+                "data", engine_config=EngineConfig(url="sqlite+aiosqlite:///db")
             )
 
             # Session-factory-based — app owns engine lifecycle
-            await g.add_mount("/data", session_config=SessionConfig(session_factory=sf))
+            await g.add_mount("data", session_config=SessionConfig(session_factory=sf))
         """
         if mount is not None:
             new_mount = mount
@@ -83,7 +82,7 @@ class MountMixin:
             if session_config is not None:
                 raise ValueError("Provide engine_config or session_config, not both")
             new_mount = await self._create_engine_mount(
-                path or "",
+                name or "",
                 engine_config,
                 filesystem,
                 mount_type,
@@ -93,7 +92,7 @@ class MountMixin:
             )
         elif session_config is not None:
             new_mount = self._create_session_factory_mount(
-                path or "",
+                name or "",
                 session_config,
                 filesystem,
                 mount_type,
@@ -102,8 +101,8 @@ class MountMixin:
                 hidden,
             )
         else:
-            if path is None or filesystem is None:
-                raise ValueError("Provide mount=Mount(...), (path + filesystem=), engine_config=, or session_config=")
+            if name is None or filesystem is None:
+                raise ValueError("Provide mount=Mount(...), (name + filesystem=), engine_config=, or session_config=")
 
             # For local backends, eagerly init DB and extract session_factory
             sf = None
@@ -115,7 +114,7 @@ class MountMixin:
                     mt = "local"
 
             new_mount = Mount(
-                path=path,
+                name=name,
                 filesystem=filesystem,
                 session_factory=sf,
                 permission=permission,
@@ -153,7 +152,7 @@ class MountMixin:
 
     async def _create_engine_mount(
         self,
-        path: str,
+        name: str,
         config: EngineConfig,
         backend: GroverFileSystem | None,
         mount_type: str | None,
@@ -211,17 +210,17 @@ class MountMixin:
                 await conn.run_sync(_create_tables_sync)
 
             # Print newly created tables
-            new_tables = [name for name in table_names if name not in existing_before]
+            new_tables = [table_name for table_name in table_names if table_name not in existing_before]
             if new_tables:
                 if schema:
                     print(f'Tables created in schema "{schema}":')  # noqa: T201
                 else:
                     print("Tables created:")  # noqa: T201
-                for name in new_tables:
-                    print(f"  - {name}")  # noqa: T201
+                for table_name in new_tables:
+                    print(f"  - {table_name}")  # noqa: T201
 
         return Mount(
-            path=path,
+            name=name,
             filesystem=backend,
             session_factory=sf,
             engine=engine,
@@ -233,7 +232,7 @@ class MountMixin:
 
     def _create_session_factory_mount(
         self,
-        path: str,
+        name: str,
         config: SessionConfig,
         backend: GroverFileSystem | None,
         mount_type: str | None,
@@ -259,7 +258,7 @@ class MountMixin:
             backend._configure(config, dialect)
 
         return Mount(
-            path=path,
+            name=name,
             filesystem=backend,
             session_factory=config.session_factory,
             mount_type=mount_type or "vfs",
@@ -268,10 +267,10 @@ class MountMixin:
             hidden=hidden,
         )
 
-    async def unmount(self, path: str) -> None:
-        """Unmount the backend at *path*."""
-
-        path = normalize_path(path).rstrip("/")
+    async def unmount(self, name: str) -> None:
+        """Unmount the backend with the given *name*."""
+        name = name.strip("/")
+        path = f"/{name}" if name else ""
         try:
             mount, _ = self._ctx.registry.resolve(path)
         except MountNotFoundError:

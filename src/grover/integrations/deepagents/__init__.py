@@ -13,7 +13,7 @@ Sync usage::
     from grover.integrations.deepagents import GroverBackend, GroverMiddleware
 
     g = Grover()
-    g.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/test"))
+    g.add_mount("project", LocalFileSystem(workspace_dir="/tmp/test"))
 
     backend = GroverBackend(g)
     middleware = GroverMiddleware(g)
@@ -25,7 +25,7 @@ Async usage::
     from grover.integrations.deepagents import GroverBackend, GroverMiddleware
 
     ga = GroverAsync()
-    await ga.add_mount("/project", LocalFileSystem(workspace_dir="/tmp/test"))
+    await ga.add_mount("project", LocalFileSystem(workspace_dir="/tmp/test"))
 
     backend = GroverBackend(ga)
     middleware = GroverMiddleware(ga)

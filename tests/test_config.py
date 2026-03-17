@@ -83,7 +83,7 @@ class TestEngineFactoryDeferred:
         assert call_count == 0, "Factory should not be called at config creation"
 
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
         assert call_count == 1, "Factory should be called exactly once at mount time"
         await g.close()
 
@@ -98,7 +98,7 @@ class TestEngineDisposal:
         """EngineConfig path stores engine on mount for disposal."""
         config = EngineConfig(url="sqlite+aiosqlite://")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         mount = g._ctx.registry.get_mount("/data")
         assert mount is not None
@@ -110,7 +110,7 @@ class TestEngineDisposal:
         """Unmounting removes the mount from the registry."""
         config = EngineConfig(url="sqlite+aiosqlite://")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         assert g._ctx.registry.get_mount("/data") is not None
         await g.unmount("/data")
@@ -126,7 +126,7 @@ class TestEngineDisposal:
 
         config = SessionConfig(session_factory=factory, dialect="sqlite")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", session_config=config)
+        await g.add_mount("data", session_config=config)
 
         mount = g._ctx.registry.get_mount("/data")
         assert mount is not None
@@ -149,7 +149,7 @@ class TestDialectInference:
 
         config = SessionConfig(session_factory=factory)
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", session_config=config)
+        await g.add_mount("data", session_config=config)
 
         mount = g._ctx.registry.get_mount("/data")
         assert mount is not None
@@ -166,7 +166,7 @@ class TestDialectInference:
 
         config = SessionConfig(session_factory=factory, dialect="custom_dialect")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", session_config=config)
+        await g.add_mount("data", session_config=config)
 
         mount = g._ctx.registry.get_mount("/data")
         assert mount.filesystem.dialect == "custom_dialect"  # type: ignore[union-attr]
@@ -179,7 +179,7 @@ class TestDialectInference:
         config = SessionConfig(session_factory=plain_factory)
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
         with pytest.raises(ValueError, match="Cannot infer dialect"):
-            await g.add_mount("/data", session_config=config)
+            await g.add_mount("data", session_config=config)
         await g.close()
 
 
@@ -193,7 +193,7 @@ class TestCreateTablesFalse:
         """With create_tables=False, tables are NOT created automatically."""
         config = EngineConfig(url="sqlite+aiosqlite://", create_tables=False)
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         # Writing should fail because tables don't exist
         result = await g.write("/data/test.txt", "hello")
@@ -216,7 +216,7 @@ class TestSchemaTableCreationMessages:
         """Fresh DB with create_tables=True prints table names."""
         config = EngineConfig(url="sqlite+aiosqlite://")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         captured = capsys.readouterr().out
         assert "Tables created:" in captured
@@ -236,7 +236,7 @@ class TestSchemaTableCreationMessages:
         config = EngineConfig(engine_factory=lambda: engine)  # type: ignore[arg-type]
 
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         captured = capsys.readouterr().out
         assert "Tables created" not in captured
@@ -247,7 +247,7 @@ class TestSchemaTableCreationMessages:
         """With create_tables=False, nothing is printed."""
         config = EngineConfig(url="sqlite+aiosqlite://", create_tables=False)
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         captured = capsys.readouterr().out
         assert "Tables created" not in captured
@@ -258,7 +258,7 @@ class TestSchemaTableCreationMessages:
         """Without schema set, no 'Schema created' message is printed."""
         config = EngineConfig(url="sqlite+aiosqlite://")
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
-        await g.add_mount("/data", engine_config=config)
+        await g.add_mount("data", engine_config=config)
 
         captured = capsys.readouterr().out
         assert "Schema created" not in captured
@@ -275,7 +275,7 @@ class TestMutualExclusion:
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
         with pytest.raises(ValueError, match="not both"):
             await g.add_mount(
-                "/data",
+                "data",
                 engine_config=EngineConfig(url="sqlite+aiosqlite://"),
                 session_config=SessionConfig(session_factory=lambda: AsyncSession(), dialect="sqlite"),
             )

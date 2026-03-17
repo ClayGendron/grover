@@ -77,7 +77,7 @@ class TestSessionRollback:
 
         g = GroverAsync()
         await g.add_mount(
-            "/db",
+            "db",
             filesystem=DatabaseFileSystem(),
             session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
         )
@@ -129,7 +129,7 @@ class TestSessionRollback:
 
         g = GroverAsync()
         await g.add_mount(
-            "/fail", filesystem=dfs, session_config=SessionConfig(session_factory=factory, dialect="sqlite")
+            "fail", filesystem=dfs, session_config=SessionConfig(session_factory=factory, dialect="sqlite")
         )
 
         # Monkey-patch write to raise

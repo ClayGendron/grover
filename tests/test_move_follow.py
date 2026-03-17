@@ -55,7 +55,7 @@ async def grover_with_sharing(session_factory, engine: AsyncEngine, tmp_path: Pa
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     backend = UserScopedFileSystem(share_model=FileShareModel)
     sc = SessionConfig(session_factory=session_factory, dialect="sqlite")
-    await g.add_mount("/ws", filesystem=backend, session_config=sc)
+    await g.add_mount("ws", filesystem=backend, session_config=sc)
     yield g
     await g.close()
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from grover.mount import Mount
 from grover.permissions import Permission
 
@@ -32,65 +34,66 @@ class FakeFilesystem:
 class TestMountConstruction:
     def test_basic_construction(self):
         fs = FakeFilesystem()
-        m = Mount(path="/project", filesystem=fs)
+        m = Mount(name="project", filesystem=fs)
         assert m.path == "/project"
         assert m.filesystem is fs
 
-    def test_path_normalized(self):
-        m = Mount(path="project/src", filesystem=FakeFilesystem())
-        assert m.path == "/project/src"
+    def test_name_with_slash_rejected(self):
+        with pytest.raises(ValueError, match="must not contain"):
+            Mount(name="project/src", filesystem=FakeFilesystem())
 
     def test_trailing_slash_stripped(self):
-        m = Mount(path="/project/", filesystem=FakeFilesystem())
+        m = Mount(name="project/", filesystem=FakeFilesystem())
+        assert m.name == "project"
         assert m.path == "/project"
 
     def test_default_label_from_path(self):
-        m = Mount(path="/my-project", filesystem=FakeFilesystem())
+        m = Mount(name="my-project", filesystem=FakeFilesystem())
         assert m.label == "my-project"
 
     def test_custom_label(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem(), label="My App")
+        m = Mount(name="project", filesystem=FakeFilesystem(), label="My App")
         assert m.label == "My App"
 
     def test_default_permission(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
+        m = Mount(name="project", filesystem=FakeFilesystem())
         assert m.permission == Permission.READ_WRITE
 
     def test_custom_permission(self):
         m = Mount(
-            path="/project",
+            name="project",
             filesystem=FakeFilesystem(),
             permission=Permission.READ_ONLY,
         )
         assert m.permission == Permission.READ_ONLY
 
     def test_hidden_default(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
+        m = Mount(name="project", filesystem=FakeFilesystem())
         assert m.hidden is False
 
     def test_hidden_true(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem(), hidden=True)
+        m = Mount(name="project", filesystem=FakeFilesystem(), hidden=True)
         assert m.hidden is True
 
     def test_read_only_paths_default(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
+        m = Mount(name="project", filesystem=FakeFilesystem())
         assert m.read_only_paths == set()
 
     def test_read_only_paths_custom(self):
         m = Mount(
-            path="/project",
+            name="project",
             filesystem=FakeFilesystem(),
             read_only_paths={"/project/locked"},
         )
         assert m.read_only_paths == {"/project/locked"}
 
     def test_mount_type_default(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
+        m = Mount(name="project", filesystem=FakeFilesystem())
         assert m.mount_type == "vfs"
 
     def test_no_graph_or_search_attributes(self):
         """Mount no longer has graph or search attributes."""
-        m = Mount(path="/project", filesystem=FakeFilesystem())
+        m = Mount(name="project", filesystem=FakeFilesystem())
         assert not hasattr(m, "graph")
         assert not hasattr(m, "search")
 
@@ -102,8 +105,8 @@ class TestMountConstruction:
 
 class TestMountRepr:
     def test_repr_basic(self):
-        m = Mount(path="/project", filesystem=FakeFilesystem())
+        m = Mount(name="project", filesystem=FakeFilesystem())
         r = repr(m)
         assert "Mount(" in r
-        assert "path='/project'" in r
+        assert "name='project'" in r
         assert "FakeFilesystem" in r

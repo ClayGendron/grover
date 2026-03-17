@@ -33,7 +33,7 @@ class TestBackgroundModeAsync:
         ws.mkdir()
         g = GroverAsync()
         await g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
             search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -148,7 +148,7 @@ class TestBackgroundModeAsync:
         ws.mkdir()
         g = GroverAsync()
         await g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -182,7 +182,7 @@ class TestBackgroundModeSync:
         ws.mkdir()
         g = Grover()
         g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
             search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -208,7 +208,7 @@ class TestBackgroundModeSync:
         ws.mkdir()
         g = Grover()
         g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -232,7 +232,7 @@ class TestManualMode:
         ws.mkdir()
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
         await g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )

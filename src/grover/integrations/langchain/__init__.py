@@ -12,7 +12,7 @@ Sync usage::
     from grover.integrations.langchain import GroverRetriever, GroverLoader
 
     g = Grover(embedding_provider=provider)
-    g.add_mount("/project", backend)
+    g.add_mount("project", backend)
 
     retriever = GroverRetriever(grover=g, k=5)
     docs = retriever.invoke("search query")
@@ -26,7 +26,7 @@ Async usage::
     from grover.integrations.langchain import GroverRetriever, GroverLoader
 
     ga = GroverAsync(embedding_provider=provider)
-    await ga.add_mount("/project", backend)
+    await ga.add_mount("project", backend)
 
     retriever = GroverRetriever(grover=ga, k=5)
     docs = await retriever.ainvoke("search query")

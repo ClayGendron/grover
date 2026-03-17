@@ -41,7 +41,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover()
     g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -60,7 +60,7 @@ async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data_async"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -265,7 +265,7 @@ class TestSearchSemantic:
         # Create a Grover without embedding provider
         data = tmp_path / "no_search_data"
         g = Grover()
-        g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+        g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
         try:
             mw = GroverMiddleware(g, enable_search=False)
             names = {t.name for t in mw.tools}
@@ -387,7 +387,7 @@ def _make_sync_middleware(tmp_path: Path) -> tuple[GroverMiddleware, GroverAsync
     async def _setup() -> GroverAsync:
         g = GroverAsync()
         await g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
             search_provider=LocalVectorStore(dimension=FAKE_DIM),

@@ -35,7 +35,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -49,7 +49,7 @@ async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
     )
     yield g  # type: ignore[misc]
@@ -109,7 +109,7 @@ class TestWriteFile:
         data = tmp_path / "grover_data_ro"
         g = GroverAsync()
         await g.add_mount(
-            "/readonly",
+            "readonly",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             permission=Permission.READ_ONLY,
         )
@@ -175,7 +175,7 @@ class TestWriteFiles:
         data = tmp_path / "grover_data_ro"
         g = GroverAsync()
         await g.add_mount(
-            "/readonly",
+            "readonly",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             permission=Permission.READ_ONLY,
         )
@@ -235,7 +235,7 @@ class TestWriteFilesSync:
         data = tmp_path / "grover_data"
         g = Grover()
         g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         yield g
@@ -254,3 +254,86 @@ class TestWriteFilesSync:
         ]
         result = grover_sync.write_files(files)
         assert result.succeeded == 2
+
+
+# ---------------------------------------------------------------------------
+# FileModel.create() factory tests
+# ---------------------------------------------------------------------------
+
+
+class TestFileModelCreate:
+    def test_create_factory_populates_all_fields(self):
+        f = FileModel.create("a.py", "x = 1\n", mount="project")
+        assert f.path == "/project/a.py"
+        assert f.parent_path == "/project"
+        assert f.is_directory is False
+        assert f.content == "x = 1\n"
+        assert f.content_hash is not None
+        assert f.mime_type == "text/x-python"
+        assert f.lines == 1
+        assert f.size_bytes == len(b"x = 1\n")
+        assert f.created_at is not None
+        assert f.updated_at is not None
+
+    def test_create_factory_with_embedding_and_tokens(self):
+        f = FileModel.create("a.py", "code\n", mount="proj", embedding=[0.1, 0.2], tokens=42)
+        assert f.embedding is not None
+        assert list(f.embedding) == [0.1, 0.2]
+        assert f.tokens == 42
+
+    def test_create_factory_no_mount(self):
+        f = FileModel.create("/src/a.py", "hello\n")
+        assert f.path == "/src/a.py"
+        assert f.parent_path == "/src"
+
+    def test_create_factory_mount_strips_slashes(self):
+        f = FileModel.create("a.py", "", mount="/project/")
+        assert f.path == "/project/a.py"
+
+    def test_create_factory_empty_content(self):
+        f = FileModel.create("empty.py", "", mount="proj")
+        assert f.content == ""
+        assert f.size_bytes == 0
+        assert f.lines == 0
+
+    def test_create_factory_owner_id(self):
+        f = FileModel.create("a.py", "x\n", mount="proj", owner_id="alice")
+        assert f.owner_id == "alice"
+
+
+# ---------------------------------------------------------------------------
+# Embedding / tokens flow-through tests
+# ---------------------------------------------------------------------------
+
+
+class TestWriteFilesModelFlowThrough:
+    async def test_write_files_preserves_embedding(self, grover_no_search: GroverAsync):
+        """Embedding set on model is persisted to DB."""
+        f = FileModel.create("embed.py", "x = 1\n", mount="project", embedding=[0.1, 0.2, 0.3])
+        result = await grover_no_search.write_files([f])
+        assert result.succeeded == 1
+
+        info = await grover_no_search.get_info("/project/embed.py")
+        assert info.success is True
+
+    async def test_write_files_preserves_tokens(self, grover_no_search: GroverAsync):
+        """Tokens set on model is persisted to DB."""
+        f = FileModel.create("tok.py", "x = 1\n", mount="project", tokens=150)
+        result = await grover_no_search.write_files([f])
+        assert result.succeeded == 1
+
+    async def test_write_files_timestamps_set_by_backend(self, grover_no_search: GroverAsync):
+        """Models without timestamps get them from the backend."""
+        f = FileModel(path="/project/ts.py", content="x\n")
+        assert f.created_at is None  # None before write
+        result = await grover_no_search.write_files([f])
+        assert result.succeeded == 1
+
+    async def test_write_files_embedding_update_existing(self, grover_no_search: GroverAsync):
+        """Updating an existing file with embedding merges it."""
+        await grover_no_search.write("/project/up.py", "v1\n")
+
+        f = FileModel.create("up.py", "v2\n", mount="project", embedding=[0.5, 0.6])
+        result = await grover_no_search.write_files([f])
+        assert result.succeeded == 1
+        assert result.results[0].file.current_version == 2

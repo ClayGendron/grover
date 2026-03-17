@@ -40,7 +40,7 @@ def workspace(tmp_path: Path) -> Path:
 def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover()
-    g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -54,7 +54,7 @@ def loader(grover: Grover) -> GroverLoader:
 async def grover_async(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data_async"
     g = GroverAsync()
-    await g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    await g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g  # type: ignore[misc]
     await g.close()
 
@@ -239,7 +239,7 @@ def _make_sync_loader(tmp_path: Path) -> tuple[GroverLoader, GroverAsync]:
 
     async def _setup() -> GroverAsync:
         g = GroverAsync()
-        await g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
+        await g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=ws, data_dir=data / "local"))
         return g
 
     ga = asyncio.run(_setup())

@@ -281,7 +281,7 @@ class TestConnectionIntegrationDBFS:
 
         g = GroverAsync()
         sc = SessionConfig(session_factory=factory, dialect="sqlite")
-        await g.add_mount("/vfs", filesystem=fs, session_config=sc)
+        await g.add_mount("vfs", filesystem=fs, session_config=sc)
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -374,7 +374,7 @@ class TestConnectionIntegrationLocalFS:
 
         g = GroverAsync()
         lfs = LocalFileSystem(workspace_dir=ws, data_dir=data / "local")
-        await g.add_mount("/local", filesystem=lfs)
+        await g.add_mount("local", filesystem=lfs)
 
         yield g  # type: ignore[misc]
         await g.close()
@@ -430,7 +430,7 @@ class TestAnalyzeIntegrateConnections:
 
         g = GroverAsync()
         sc = SessionConfig(session_factory=factory, dialect="sqlite")
-        await g.add_mount("/vfs", filesystem=fs, session_config=sc, embedding_provider=FakeProvider())
+        await g.add_mount("vfs", filesystem=fs, session_config=sc, embedding_provider=FakeProvider())
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -595,7 +595,7 @@ class TestGraphProjection:
 
         g = GroverAsync()
         sc = SessionConfig(session_factory=factory, dialect="sqlite")
-        await g.add_mount("/vfs", filesystem=fs, session_config=sc)
+        await g.add_mount("vfs", filesystem=fs, session_config=sc)
 
         yield g, engine  # type: ignore[misc]
         await g.close()
@@ -658,7 +658,7 @@ class TestSaveNoEdgePersistence:
 
         g = GroverAsync()
         sc = SessionConfig(session_factory=factory, dialect="sqlite")
-        await g.add_mount("/vfs", filesystem=fs, session_config=sc)
+        await g.add_mount("vfs", filesystem=fs, session_config=sc)
 
         yield g, engine  # type: ignore[misc]
         await g.close()

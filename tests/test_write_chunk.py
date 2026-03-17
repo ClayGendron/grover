@@ -125,7 +125,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -139,7 +139,7 @@ async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync()
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
     )
     yield g  # type: ignore[misc]
@@ -196,7 +196,7 @@ class TestWriteChunkFacade:
         data = tmp_path / "grover_data_ro"
         g = GroverAsync()
         await g.add_mount(
-            "/readonly",
+            "readonly",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             permission=Permission.READ_ONLY,
         )
@@ -285,7 +285,7 @@ class TestWriteChunkSync:
         data = tmp_path / "grover_data"
         g = Grover()
         g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         )
         yield g

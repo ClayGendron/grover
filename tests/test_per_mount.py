@@ -45,7 +45,7 @@ async def grover(workspace1: Path, tmp_path: Path) -> GroverAsync:
     g = GroverAsync()
     lfs = LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local")
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=lfs,
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -61,13 +61,13 @@ async def multi_grover(workspace1: Path, workspace2: Path, tmp_path: Path) -> Gr
     lfs1 = LocalFileSystem(workspace_dir=workspace1, data_dir=data / "local1")
     lfs2 = LocalFileSystem(workspace_dir=workspace2, data_dir=data / "local2")
     await g.add_mount(
-        "/mount1",
+        "mount1",
         filesystem=lfs1,
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
     await g.add_mount(
-        "/mount2",
+        "mount2",
         filesystem=lfs2,
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -249,7 +249,7 @@ class TestEngineMountGraphSearch:
         g = GroverAsync()
         try:
             await g.add_mount(
-                "/db",
+                "db",
                 engine_config=EngineConfig(url="sqlite+aiosqlite://"),
                 embedding_provider=FakeProvider(),
                 search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -282,7 +282,7 @@ class TestEngineMountGraphSearch:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         try:
             await g.add_mount(
-                "/sf",
+                "sf",
                 session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
                 embedding_provider=FakeProvider(),
             )

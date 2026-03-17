@@ -23,8 +23,8 @@ class FakeBackend:
 class TestMountRegistry:
     def test_add_and_list(self):
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/a", filesystem=FakeBackend()))
-        reg.add_mount(Mount(path="/b", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="a", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="b", filesystem=FakeBackend()))
         mounts = reg.list_mounts()
         assert len(mounts) == 2
         assert mounts[0].path == "/a"
@@ -32,13 +32,13 @@ class TestMountRegistry:
 
     def test_remove_mount(self):
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/a", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="a", filesystem=FakeBackend()))
         reg.remove_mount("/a")
         assert reg.list_mounts() == []
 
     def test_has_mount(self):
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/data", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="data", filesystem=FakeBackend()))
         assert reg.has_mount("/data") is True
         assert reg.has_mount("/nope") is False
 
@@ -52,7 +52,7 @@ class TestMountResolution:
     def test_basic_resolve(self):
         backend = FakeBackend()
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/data", filesystem=backend))
+        reg.add_mount(Mount(name="data", filesystem=backend))
 
         mount, rel = reg.resolve("/data/hello.txt")
         assert mount.filesystem is backend
@@ -60,21 +60,15 @@ class TestMountResolution:
 
     def test_resolve_mount_root(self):
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/data", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="data", filesystem=FakeBackend()))
 
         _mount, rel = reg.resolve("/data")
         assert rel == "/"
 
-    def test_longest_prefix_match(self):
-        backend_a = FakeBackend()
-        backend_b = FakeBackend()
-        reg = MountRegistry()
-        reg.add_mount(Mount(path="/data", filesystem=backend_a))
-        reg.add_mount(Mount(path="/data/deep", filesystem=backend_b))
-
-        mount, rel = reg.resolve("/data/deep/file.txt")
-        assert mount.filesystem is backend_b
-        assert rel == "/file.txt"
+    def test_nested_mount_name_rejected(self):
+        """Mount names cannot contain '/'."""
+        with pytest.raises(ValueError, match="must not contain"):
+            Mount(name="data/deep", filesystem=FakeBackend())
 
     def test_resolve_no_mount(self):
         reg = MountRegistry()
@@ -84,7 +78,7 @@ class TestMountResolution:
     def test_resolve_partial_name_no_match(self):
         """'/datafile' should NOT match mount at '/data'."""
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/data", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="data", filesystem=FakeBackend()))
 
         with pytest.raises(MountNotFoundError):
             reg.resolve("/datafile")
@@ -98,14 +92,14 @@ class TestMountResolution:
 class TestMountPermissions:
     def test_default_permission(self):
         reg = MountRegistry()
-        reg.add_mount(Mount(path="/data", filesystem=FakeBackend()))
+        reg.add_mount(Mount(name="data", filesystem=FakeBackend()))
         assert reg.get_permission("/data/file.txt") == Permission.READ_WRITE
 
     def test_read_only_mount(self):
         reg = MountRegistry()
         reg.add_mount(
             Mount(
-                path="/data",
+                name="data",
                 filesystem=FakeBackend(),
                 permission=Permission.READ_ONLY,
             )
@@ -116,7 +110,7 @@ class TestMountPermissions:
         reg = MountRegistry()
         reg.add_mount(
             Mount(
-                path="/data",
+                name="data",
                 filesystem=FakeBackend(),
                 read_only_paths={"/config"},
             )
@@ -133,7 +127,7 @@ class TestMountPermissions:
         reg = MountRegistry()
         reg.add_mount(
             Mount(
-                path="/data",
+                name="data",
                 filesystem=FakeBackend(),
                 read_only_paths={"/important.txt"},
             )

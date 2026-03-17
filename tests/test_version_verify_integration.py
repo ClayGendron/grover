@@ -48,7 +48,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
     data = tmp_path / "grover_data"
     g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
     await g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
     )
@@ -73,7 +73,7 @@ class TestReconcileChainErrors:
         data = tmp_path / "grover_data"
         g = GroverAsync(indexing_mode=IndexingMode.MANUAL)
         lfs = LocalFileSystem(workspace_dir=workspace, data_dir=data / "local")
-        await g.add_mount("/project", filesystem=lfs, embedding_provider=FakeProvider())
+        await g.add_mount("project", filesystem=lfs, embedding_provider=FakeProvider())
 
         await g.write("/project/f.py", "v1\n")
         await g.write("/project/f.py", "v2\n")

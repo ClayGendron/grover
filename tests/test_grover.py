@@ -38,7 +38,7 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     data = tmp_path / "grover_data"
     g = Grover()
     g.add_mount(
-        "/project",
+        "project",
         filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
@@ -52,7 +52,7 @@ def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
     """Grover without search to test graceful degradation."""
     data = tmp_path / "grover_data"
     g = Grover()
-    g.add_mount("/project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
+    g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -67,7 +67,7 @@ class TestGroverConstruction:
         data = tmp_path / "grover_data"
         g = Grover()
         g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -80,7 +80,7 @@ class TestGroverConstruction:
         data = tmp_path / "grover_data"
         g = Grover()
         g.add_mount(
-            "/project",
+            "project",
             filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"),
             embedding_provider=FakeProvider(),
         )
@@ -384,7 +384,7 @@ def auth_grover(tmp_path: Path) -> Iterator[Grover]:
     g = Grover()
     backend = UserScopedFileSystem(share_model=FileShareModel)
     g.add_mount(
-        "/ws",
+        "ws",
         filesystem=backend,
         engine_config=EngineConfig(url="sqlite+aiosqlite://"),
         embedding_provider=FakeProvider(),
