@@ -734,6 +734,8 @@ class FileOpsMixin:
             return result.results[0]
         return FileOperationResult(success=result.success, message=result.message, file=File(path=file.path))
 
+    _BATCH_SIZE = 100
+
     async def write_files(
         self,
         files: list[FileModelBase],
@@ -741,13 +743,34 @@ class FileOpsMixin:
         overwrite: bool = True,
         user_id: str | None = None,
     ) -> BatchResult:
-        """Batch write files from model instances (max 100)."""
+        """Batch write files from model instances."""
         if not files:
             return BatchResult(success=True, message="No files to write")
 
-        if len(files) > 100:
-            return BatchResult(success=False, message="Batch size exceeds maximum of 100 files")
+        all_results: list[FileOperationResult] = []
+        for start in range(0, len(files), self._BATCH_SIZE):
+            batch = files[start : start + self._BATCH_SIZE]
+            batch_result = await self._write_files_batch(batch, overwrite=overwrite, user_id=user_id)
+            all_results.extend(batch_result.results)
 
+        succeeded = sum(1 for r in all_results if r.success)
+        failed = len(all_results) - succeeded
+        return BatchResult(
+            success=failed == 0,
+            message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
+            results=all_results,
+            succeeded=succeeded,
+            failed=failed,
+        )
+
+    async def _write_files_batch(
+        self,
+        files: list[FileModelBase],
+        *,
+        overwrite: bool,
+        user_id: str | None,
+    ) -> BatchResult:
+        """Process a single batch of <= _BATCH_SIZE files."""
         try:
             # Track results by original index
             results_by_idx: dict[int, FileOperationResult] = {}

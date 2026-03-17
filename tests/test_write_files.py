@@ -163,11 +163,13 @@ class TestWriteFiles:
         result2 = await grover.write_files(files2)
         assert result2.results[0].file.current_version == 2
 
-    async def test_write_files_batch_max_100(self, grover: GroverAsync):
-        files = [FileModel(path=f"/project/f{i}.py", content="x\n") for i in range(101)]
+    async def test_write_files_batch_large(self, grover: GroverAsync):
+        """Large batches are auto-chunked internally — no user-facing limit."""
+        files = [FileModel(path=f"/project/f{i}.py", content="x\n") for i in range(150)]
         result = await grover.write_files(files)
-        assert result.success is False
-        assert "100" in result.message
+        assert result.success is True
+        assert result.succeeded == 150
+        assert len(result.results) == 150
 
     async def test_write_files_batch_read_only(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data_ro"
