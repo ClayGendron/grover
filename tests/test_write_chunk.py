@@ -1,4 +1,4 @@
-"""Tests for write_chunk and write_chunks."""
+"""Tests for write_chunks."""
 
 from __future__ import annotations
 
@@ -26,12 +26,12 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultChunkProviderWriteChunk:
+class TestDefaultChunkProviderWriteChunks:
     @pytest.fixture
     def service(self):
         return DefaultChunkProvider(FileChunkModel)
 
-    async def test_write_chunk_creates_new(self, service, async_session: AsyncSession):
+    async def test_write_chunks_creates_new(self, service, async_session: AsyncSession):
         chunk = FileChunkModel(
             file_path="/a.py",
             path="/a.py#foo",
@@ -39,21 +39,23 @@ class TestDefaultChunkProviderWriteChunk:
             line_start=1,
             line_end=3,
         )
-        result = await service.write_chunk(async_session, chunk)
+        result = await service.write_chunks(async_session, [chunk])
         assert result.success is True
-        assert result.file.path == "/a.py#foo"
+        assert result.file.path == "/a.py"
+        assert len(result.file.chunks) == 1
+        assert result.file.chunks[0].path == "/a.py#foo"
 
         listed = await service.list_file_chunks(async_session, "/a.py")
         assert len(listed.file.chunks) == 1
         assert listed.file.chunks[0].path == "/a.py#foo"
         assert listed.file.chunks[0].content == "def foo(): pass"
 
-    async def test_write_chunk_upserts_existing(self, service, async_session: AsyncSession):
+    async def test_write_chunks_upserts_existing(self, service, async_session: AsyncSession):
         chunk = FileChunkModel(file_path="/a.py", path="/a.py#foo", content="v1", line_start=1, line_end=3)
-        await service.write_chunk(async_session, chunk)
+        await service.write_chunks(async_session, [chunk])
 
         updated = FileChunkModel(file_path="/a.py", path="/a.py#foo", content="v2", line_start=5, line_end=10)
-        result = await service.write_chunk(async_session, updated)
+        result = await service.write_chunks(async_session, [updated])
         assert result.success is True
 
         listed = await service.list_file_chunks(async_session, "/a.py")
@@ -62,15 +64,14 @@ class TestDefaultChunkProviderWriteChunk:
         assert listed.file.chunks[0].line_start == 5
         assert listed.file.chunks[0].line_end == 10
 
-    async def test_write_chunk_content_hash_computed(self, service, async_session: AsyncSession):
-
+    async def test_write_chunks_content_hash_computed(self, service, async_session: AsyncSession):
         chunk = FileChunkModel(
             file_path="/a.py",
             path="/a.py#foo",
             content="def foo(): pass",
             content_hash="caller_should_be_ignored",
         )
-        await service.write_chunk(async_session, chunk)
+        await service.write_chunks(async_session, [chunk])
 
         listed = await service.list_file_chunks(async_session, "/a.py")
         # Verify the content is correct (hash is computed by provider)
@@ -82,9 +83,10 @@ class TestDefaultChunkProviderWriteChunk:
         ]
         result = await service.write_chunks(async_session, chunks)
         assert result.success is True
-        assert result.succeeded == 3
+        # 1 parent file with 3 chunks — all succeeded
+        assert result.succeeded == 1
         assert result.failed == 0
-        assert len(result.results) == 3
+        assert len(result.file.chunks) == 3
 
         listed = await service.list_file_chunks(async_session, "/a.py")
         assert len(listed.file.chunks) == 3
@@ -92,14 +94,14 @@ class TestDefaultChunkProviderWriteChunk:
     async def test_write_chunks_batch_upserts(self, service, async_session: AsyncSession):
         """Batch with mix of new and existing chunks."""
         existing = FileChunkModel(file_path="/a.py", path="/a.py#foo", content="old")
-        await service.write_chunk(async_session, existing)
+        await service.write_chunks(async_session, [existing])
 
         batch = [
             FileChunkModel(file_path="/a.py", path="/a.py#foo", content="updated"),
             FileChunkModel(file_path="/a.py", path="/a.py#bar", content="new"),
         ]
         result = await service.write_chunks(async_session, batch)
-        assert result.succeeded == 2
+        assert result.succeeded == 1
 
         listed = await service.list_file_chunks(async_session, "/a.py")
         assert len(listed.file.chunks) == 2
@@ -146,8 +148,8 @@ async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
     await g.close()
 
 
-class TestWriteChunkFacade:
-    async def test_write_chunk_creates_new(self, grover: GroverAsync):
+class TestWriteChunksFacade:
+    async def test_write_chunks_creates_new(self, grover: GroverAsync):
         await grover.write("/project/a.py", "# module a\n")
         await grover.flush()
 
@@ -158,41 +160,43 @@ class TestWriteChunkFacade:
             line_start=1,
             line_end=3,
         )
-        result = await grover.write_chunk(chunk)
+        result = await grover.write_chunks([chunk])
         assert result.success is True
-        assert result.file.path == "/project/a.py#foo"
+        assert result.file.path == "/project/a.py"
+        assert len(result.file.chunks) == 1
+        assert result.file.chunks[0].path == "/project/a.py#foo"
 
-    async def test_write_chunk_requires_parent_file(self, grover: GroverAsync):
+    async def test_write_chunks_requires_parent_file(self, grover: GroverAsync):
         chunk = FileChunkModel(
             file_path="/project/missing.py",
             path="/project/missing.py#foo",
             content="def foo(): pass",
         )
-        result = await grover.write_chunk(chunk)
+        result = await grover.write_chunks([chunk])
         assert result.success is False
-        assert "Parent file not found" in result.message
+        assert any("not found" in d.message.lower() for f in result.files for d in f.details)
 
-    async def test_write_chunk_validates_chunk_ref(self, grover: GroverAsync):
+    async def test_write_chunks_validates_chunk_ref(self, grover: GroverAsync):
         chunk = FileChunkModel(
             file_path="/project/a.py",
             path="/project/a.py",  # Missing '#' — not a chunk ref
             content="invalid",
         )
-        result = await grover.write_chunk(chunk)
+        result = await grover.write_chunks([chunk])
         assert result.success is False
-        assert "#" in result.message
+        assert any("#" in d.message for f in result.files for d in f.details)
 
-    async def test_write_chunk_validates_file_path_match(self, grover: GroverAsync):
+    async def test_write_chunks_validates_file_path_match(self, grover: GroverAsync):
         chunk = FileChunkModel(
             file_path="/project/b.py",
             path="/project/a.py#foo",  # file_path doesn't match
             content="def foo(): pass",
         )
-        result = await grover.write_chunk(chunk)
+        result = await grover.write_chunks([chunk])
         assert result.success is False
-        assert "mismatch" in result.message
+        assert any("mismatch" in d.message for f in result.files for d in f.details)
 
-    async def test_write_chunk_read_only_mount(self, workspace: Path, tmp_path: Path):
+    async def test_write_chunks_read_only_mount(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data_ro"
         g = GroverAsync()
         await g.add_mount(
@@ -206,12 +210,12 @@ class TestWriteChunkFacade:
                 path="/readonly/a.py#foo",
                 content="def foo(): pass",
             )
-            result = await g.write_chunk(chunk)
+            result = await g.write_chunks([chunk])
             assert result.success is False
         finally:
             await g.close()
 
-    async def test_write_chunk_creates_graph_node(self, grover_no_search: GroverAsync):
+    async def test_write_chunks_creates_graph_node(self, grover_no_search: GroverAsync):
         await grover_no_search.write("/project/a.py", "# module\n")
         await grover_no_search.flush()
 
@@ -220,7 +224,7 @@ class TestWriteChunkFacade:
             path="/project/a.py#foo",
             content="def foo(): pass",
         )
-        result = await grover_no_search.write_chunk(chunk)
+        result = await grover_no_search.write_chunks([chunk])
         assert result.success is True
         await grover_no_search.flush()
 
@@ -228,7 +232,7 @@ class TestWriteChunkFacade:
         assert graph.has_node("/project/a.py#foo")
         assert graph.has_edge("/project/a.py", "/project/a.py#foo")
 
-    async def test_write_chunk_indexes_for_search(self, grover: GroverAsync):
+    async def test_write_chunks_indexes_for_search(self, grover: GroverAsync):
         await grover.write("/project/a.py", "# module a\n")
         await grover.flush()
 
@@ -237,7 +241,7 @@ class TestWriteChunkFacade:
             path="/project/a.py#authenticate",
             content="def authenticate(user, password):\n    return True\n",
         )
-        result = await grover.write_chunk(chunk)
+        result = await grover.write_chunks([chunk])
         assert result.success is True
         await grover.flush()
 
@@ -259,10 +263,12 @@ class TestWriteChunkFacade:
         ]
         result = await grover.write_chunks(chunks)
         assert result.success is True
-        assert result.succeeded == 3
+        # 1 parent file, 3 chunks all successful
+        assert result.succeeded == 1
         assert result.failed == 0
 
     async def test_write_chunks_batch_validates_parents(self, grover: GroverAsync):
+        """Fail-fast: if any parent is missing, all chunks in that mount's batch fail."""
         await grover.write("/project/a.py", "# module a\n")
         await grover.flush()
 
@@ -275,11 +281,12 @@ class TestWriteChunkFacade:
             ),
         ]
         result = await grover.write_chunks(chunks)
-        assert result.succeeded == 1
-        assert result.failed == 1
+        # Fail-fast: missing parent fails the entire batch
+        assert result.success is False
+        assert result.succeeded == 0
 
 
-class TestWriteChunkSync:
+class TestWriteChunksSync:
     @pytest.fixture
     def grover_sync(self, workspace: Path, tmp_path: Path) -> Iterator[Grover]:
         data = tmp_path / "grover_data"
@@ -291,7 +298,7 @@ class TestWriteChunkSync:
         yield g
         g.close()
 
-    def test_write_chunk_sync(self, grover_sync: Grover):
+    def test_write_chunks_sync(self, grover_sync: Grover):
         grover_sync.write("/project/a.py", "# module\n")
         grover_sync.flush()
 
@@ -300,10 +307,10 @@ class TestWriteChunkSync:
             path="/project/a.py#foo",
             content="def foo(): pass",
         )
-        result = grover_sync.write_chunk(chunk)
+        result = grover_sync.write_chunks([chunk])
         assert result.success is True
 
-    def test_write_chunks_sync(self, grover_sync: Grover):
+    def test_write_chunks_batch_sync(self, grover_sync: Grover):
         grover_sync.write("/project/a.py", "# module\n")
         grover_sync.flush()
 
@@ -321,4 +328,4 @@ class TestWriteChunkSync:
         ]
         result = grover_sync.write_chunks(chunks)
         assert result.success is True
-        assert result.succeeded == 2
+        assert result.succeeded == 1

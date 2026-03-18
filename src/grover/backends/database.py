@@ -28,7 +28,6 @@ from grover.models.internal.evidence import (
 )
 from grover.models.internal.ref import Directory, File, FileChunk, FileConnection, FileVersion, Ref
 from grover.models.internal.results import (
-    BatchResult,
     FileOperationResult,
     FileSearchResult,
     FileSearchSet,
@@ -1624,7 +1623,7 @@ class DatabaseFileSystem:
         chunks: list[dict],
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         return await self.chunk_provider.replace_file_chunks(session, file_path, chunks)
 
     async def delete_file_chunks(
@@ -1632,7 +1631,7 @@ class DatabaseFileSystem:
         file_path: str,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         return await self.chunk_provider.delete_file_chunks(session, file_path)
 
     async def list_file_chunks(
@@ -1640,23 +1639,76 @@ class DatabaseFileSystem:
         file_path: str,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         return await self.chunk_provider.list_file_chunks(session, file_path)
-
-    async def write_chunk(
-        self,
-        chunk: FileChunkModelBase,
-        *,
-        session: AsyncSession,
-    ) -> FileOperationResult:
-        return await self.chunk_provider.write_chunk(session, chunk)
 
     async def write_chunks(
         self,
         chunks: list[FileChunkModelBase],
         *,
         session: AsyncSession,
-    ) -> BatchResult:
+    ) -> GroverResult:
+        """Batch write chunks with validation. Returns GroverResult."""
+        from grover.ref import Ref
+
+        if not chunks:
+            return GroverResult(success=True, message="No chunks to write")
+
+        # Phase 1: Validate chunk refs
+        for chunk in chunks:
+            ref = Ref(chunk.path)
+            if not ref.is_chunk:
+                msg = f"Invalid chunk ref (must contain '#'): {chunk.path}"
+                return GroverResult(
+                    success=False,
+                    message=msg,
+                    files=[
+                        File(
+                            path=c.path,
+                            evidence=[WriteDetail(operation="write_chunk", success=False, message=msg)],
+                        )
+                        for c in chunks
+                    ],
+                )
+            if chunk.file_path != ref.base_path:
+                msg = f"file_path mismatch: {chunk.file_path} != {ref.base_path} for chunk {chunk.path}"
+                return GroverResult(
+                    success=False,
+                    message=msg,
+                    files=[
+                        File(
+                            path=c.path,
+                            evidence=[WriteDetail(operation="write_chunk", success=False, message=msg)],
+                        )
+                        for c in chunks
+                    ],
+                )
+
+        # Batch parent existence check (single query)
+        unique_parents = list({c.file_path for c in chunks})
+        parent_records = await self._batch_get_file_records(session, unique_parents)
+        missing_parents = [p for p in unique_parents if p not in parent_records]
+        if missing_parents:
+            msg = f"Parent file(s) not found: {', '.join(missing_parents)}"
+            return GroverResult(
+                success=False,
+                message=msg,
+                files=[
+                    File(
+                        path=c.path,
+                        evidence=[
+                            WriteDetail(
+                                operation="write_chunk",
+                                success=False,
+                                message=f"Parent file not found: {c.file_path}",
+                            )
+                        ],
+                    )
+                    for c in chunks
+                ],
+            )
+
+        # Phase 2: Delegate to chunk provider (returns GroverResult directly)
         return await self.chunk_provider.write_chunks(session, chunks)
 
     async def write_files(

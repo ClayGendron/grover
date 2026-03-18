@@ -10,14 +10,12 @@ from grover.models.database.file import FileModel
 from grover.models.internal.detail import WriteDetail
 from grover.models.internal.ref import Directory, File
 from grover.models.internal.results import (
-    BatchResult,
     FileOperationResult,
     FileSearchResult,
     FileSearchSet,
     GroverResult,
 )
 from grover.permissions import Permission
-from grover.ref import Ref
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
@@ -664,129 +662,64 @@ class FileOpsMixin:
     # Chunk write operations
     # ------------------------------------------------------------------
 
-    async def write_chunk(
-        self,
-        chunk: FileChunkModelBase,
-        *,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        """Write (upsert) a single chunk. Parent file must exist."""
-        result = await self.write_chunks([chunk], user_id=user_id)
-        if result.results:
-            return result.results[0]
-        return FileOperationResult(success=result.success, message=result.message, file=File(path=chunk.path))
-
     async def write_chunks(
         self,
         chunks: list[FileChunkModelBase],
         *,
         user_id: str | None = None,
-    ) -> BatchResult:
+    ) -> GroverResult:
         """Batch write (upsert) chunks. Parent files must exist."""
         if not chunks:
-            return BatchResult(success=True, message="No chunks to write")
+            return GroverResult(success=True, message="No chunks to write")
 
-        # Validate all chunk refs upfront
+        groups, err = self._ctx.group_by_mount_writable(chunks, lambda c: c.file_path)
+        if err:
+            return err
+
+        async def _handler(mount: Mount, group: list[FileChunkModelBase], session: AsyncSession) -> GroverResult:
+            backend_chunks = [
+                type(c).model_validate(
+                    {
+                        "file_path": normalize_path(c.file_path).removeprefix(mount.path) or "/",
+                        "path": normalize_path(c.path).removeprefix(mount.path) or "/",
+                        "content": c.content,
+                        "line_start": c.line_start,
+                        "line_end": c.line_end,
+                    }
+                )
+                for c in group
+            ]
+            try:
+                result = await mount.filesystem.write_chunks(backend_chunks, session=session)
+                rebased = result.rebase(mount.path)
+                # rebase only prefixes File.path — also rebase chunk paths
+                for f in rebased.files:
+                    for ch in f.chunks:
+                        if not ch.path.startswith(mount.path):
+                            ch.path = mount.path + ch.path
+                return rebased
+            except Exception as e:
+                return GroverResult(
+                    success=False,
+                    message=str(e),
+                    files=[
+                        File(
+                            path=c.path,
+                            evidence=[WriteDetail(operation="write_chunk", success=False, message=str(e))],
+                        )
+                        for c in group
+                    ],
+                )
+
+        result = await self._ctx.dispatch_to_mounts(groups, _handler)
+        result.message = f"Wrote {result.succeeded} chunk(s)" + (f", {result.failed} failed" if result.failed else "")
+
+        # Schedule background processing for successful chunks (keyed by parent file_path)
+        success_paths = {f.path for f in result.files if all(d.success for d in f.details)}
         for chunk in chunks:
-            ref = Ref(chunk.path)
-            if not ref.is_chunk:
-                return BatchResult(
-                    success=False,
-                    message=f"Invalid chunk ref (must contain '#'): {chunk.path}",
-                )
-            if chunk.file_path != ref.base_path:
-                return BatchResult(
-                    success=False,
-                    message=(f"file_path mismatch: {chunk.file_path} != {ref.base_path} for chunk {chunk.path}"),
-                )
-
-        # Track results by original index to preserve input order
-        results_by_idx: dict[int, FileOperationResult] = {}
-
-        # Group chunks by mount, keeping original indices
-
-        mount_groups: dict[str, list[tuple[int, FileChunkModelBase]]] = defaultdict(list)
-        for idx, chunk in enumerate(chunks):
-            path = normalize_path(chunk.file_path)
-            mount, _rel = self._ctx.registry.resolve(path)
-            mount_groups[mount.path].append((idx, chunk))
-
-        for mount_path, group in mount_groups.items():
-            mount, _ = self._ctx.registry.resolve(mount_path + "/dummy")
-
-            # Check writable
-            if err := self._ctx.check_writable(mount_path + "/dummy"):
-                for idx, c in group:
-                    results_by_idx[idx] = FileOperationResult(
-                        success=False,
-                        message=err.message,
-                        file=File(path=c.path),
-                    )
-                continue
-
-            assert mount.filesystem is not None
-            async with self._ctx.session_for(mount) as sess:
-                # Validate parent files exist (one exists() per unique parent)
-                unique_parents = {normalize_path(c.file_path) for _, c in group}
-                parent_exists: dict[str, bool] = {}
-                for parent in unique_parents:
-                    _, rel_parent = self._ctx.registry.resolve(parent)
-                    ex = await mount.filesystem.exists(rel_parent, session=sess)
-                    parent_exists[parent] = ex.message == "exists"
-
-                valid_items: list[tuple[int, FileChunkModelBase]] = []
-                for idx, c in group:
-                    if not parent_exists.get(normalize_path(c.file_path), False):
-                        results_by_idx[idx] = FileOperationResult(
-                            success=False,
-                            message=f"Parent file not found: {c.file_path}",
-                            file=File(path=c.path),
-                        )
-                    else:
-                        valid_items.append((idx, c))
-
-                if valid_items:
-                    # Strip mount prefix from paths for backend
-                    backend_chunks = []
-                    idx_order: list[int] = []
-                    for idx, c in valid_items:
-                        rel_file = normalize_path(c.file_path).removeprefix(mount.path) or "/"
-                        rel_chunk_path = normalize_path(c.path).removeprefix(mount.path) or "/"
-                        bc = type(c).model_validate(
-                            {
-                                "file_path": rel_file,
-                                "path": rel_chunk_path,
-                                "content": c.content,
-                                "line_start": c.line_start,
-                                "line_end": c.line_end,
-                            }
-                        )
-                        backend_chunks.append(bc)
-                        idx_order.append(idx)
-
-                    batch_result = await mount.filesystem.write_chunks(backend_chunks, session=sess)
-                    # Re-prefix paths and map back to original indices
-                    batch_results: list[FileOperationResult] = getattr(batch_result, "results", [])
-                    for i, r in enumerate(batch_results):
-                        r.file.path = self._ctx.prefix_path(r.file.path, mount.path) or r.file.path
-                        results_by_idx[idx_order[i]] = r
-
-        # Build ordered results list
-        all_results = [results_by_idx[i] for i in range(len(chunks))]
-
-        # Schedule background processing for successful chunks
-        for chunk, result in zip(chunks, all_results, strict=True):
-            if result.success:
+            if chunk.file_path in success_paths:
                 self._ctx.worker.schedule_immediate(
                     self._process_chunk_write(chunk)  # type: ignore[attr-defined]
                 )
 
-        succeeded = sum(1 for r in all_results if r.success)
-        failed = len(all_results) - succeeded
-        return BatchResult(
-            success=failed == 0,
-            message=f"Wrote {succeeded} chunk(s)" + (f", {failed} failed" if failed else ""),
-            results=all_results,
-            succeeded=succeeded,
-            failed=failed,
-        )
+        return result

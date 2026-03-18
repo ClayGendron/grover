@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
+from grover.models.internal.detail import WriteDetail
+from grover.models.internal.evidence import Evidence
 from grover.models.internal.ref import File, FileChunk
-from grover.models.internal.results import BatchResult, FileOperationResult
+from grover.models.internal.results import GroverResult
 from grover.util.content import compute_content_hash
 
 if TYPE_CHECKING:
@@ -33,12 +35,12 @@ class DefaultChunkProvider:
         session: AsyncSession,
         file_path: str,
         chunks: list[dict],
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Delete all chunks for *file_path*, insert new ones. Returns count inserted."""
         await self.delete_file_chunks(session, file_path)
 
         model = self._chunk_model
-        count = 0
+        internal_chunks: list[FileChunk] = []
         for chunk_data in chunks:
             record = model(
                 file_path=file_path,
@@ -49,40 +51,57 @@ class DefaultChunkProvider:
                 content_hash=chunk_data.get("content_hash", ""),
             )
             session.add(record)
-            count += 1
+            internal_chunks.append(
+                FileChunk(
+                    path=record.path,
+                    name=record.path.split("#")[-1] if "#" in record.path else record.path,
+                    content=record.content,
+                    line_start=record.line_start,
+                    line_end=record.line_end,
+                )
+            )
 
         await session.flush()
-        return FileOperationResult(
+        return GroverResult(
             success=True,
-            message=f"{count} chunks replaced",
-            file=File(path=file_path),
+            message=f"{len(internal_chunks)} chunks replaced",
+            files=[File(path=file_path, chunks=internal_chunks)],
         )
 
     async def delete_file_chunks(
         self,
         session: AsyncSession,
         file_path: str,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Delete all chunks for *file_path*. Returns count deleted."""
         model = self._chunk_model
         result = await session.execute(select(model).where(model.file_path == file_path))
         rows = list(result.scalars().all())
-        count = len(rows)
+        deleted_chunks = [
+            FileChunk(
+                path=row.path,
+                name=row.path.split("#")[-1] if "#" in row.path else row.path,
+                content=row.content,
+                line_start=row.line_start,
+                line_end=row.line_end,
+            )
+            for row in rows
+        ]
         for row in rows:
             await session.delete(row)
-        if count > 0:
+        if deleted_chunks:
             await session.flush()
-        return FileOperationResult(
+        return GroverResult(
             success=True,
-            message=f"{count} chunks deleted",
-            file=File(path=file_path),
+            message=f"{len(deleted_chunks)} chunks deleted",
+            files=[File(path=file_path, chunks=deleted_chunks)],
         )
 
     async def list_file_chunks(
         self,
         session: AsyncSession,
         file_path: str,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """List all chunks for *file_path*, ordered by line_start."""
         model = self._chunk_model
         result = await session.execute(
@@ -100,28 +119,17 @@ class DefaultChunkProvider:
             )
             for c in db_chunks
         ]
-        return FileOperationResult(
+        return GroverResult(
             success=True,
             message=f"{len(db_chunks)} chunks found",
-            file=File(path=file_path, chunks=internal_chunks),
+            files=[File(path=file_path, chunks=internal_chunks)],
         )
-
-    async def write_chunk(
-        self,
-        session: AsyncSession,
-        chunk: FileChunkModelBase,
-    ) -> FileOperationResult:
-        """Upsert a single chunk. Delegates to write_chunks."""
-        batch_result = await self.write_chunks(session, [chunk])
-        if batch_result.success and batch_result.results:
-            return batch_result.results[0]
-        return FileOperationResult(success=False, message="Write failed", file=File(path=chunk.path))
 
     async def write_chunks(
         self,
         session: AsyncSession,
         chunks: list[FileChunkModelBase],
-    ) -> BatchResult:
+    ) -> GroverResult:
         """Batch upsert chunks. System manages content_hash and timestamps."""
         model = self._chunk_model
         now = datetime.now(UTC)
@@ -133,27 +141,29 @@ class DefaultChunkProvider:
         )
         existing_map: dict[str, FileChunkModelBase] = {row.path: row for row in existing_result.scalars().all()}
 
-        individual_results: list[FileOperationResult] = []
+        # Group results by parent file_path
+        file_map: dict[str, tuple[list[FileChunk], list[Evidence]]] = {}
+        total = 0
         for chunk in chunks:
             content_hash, _ = compute_content_hash(chunk.content)
 
+            chunk_ref = FileChunk(
+                path=chunk.path,
+                name=chunk.path.split("#")[-1] if "#" in chunk.path else chunk.path,
+                content=chunk.content,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+            )
+
             existing = existing_map.get(chunk.path)
             if existing is not None:
-                # Update existing record
                 existing.content = chunk.content
                 existing.content_hash = content_hash
                 existing.line_start = chunk.line_start
                 existing.line_end = chunk.line_end
                 existing.updated_at = now
-                individual_results.append(
-                    FileOperationResult(
-                        success=True,
-                        message=f"Updated chunk: {chunk.path}",
-                        file=File(path=chunk.path),
-                    )
-                )
+                detail = WriteDetail(operation="write_chunk", success=True, message=f"Updated chunk: {chunk.path}")
             else:
-                # Insert new record using the configured model class
                 record = model(
                     file_path=chunk.file_path,
                     path=chunk.path,
@@ -165,22 +175,21 @@ class DefaultChunkProvider:
                     updated_at=now,
                 )
                 session.add(record)
-                individual_results.append(
-                    FileOperationResult(
-                        success=True,
-                        message=f"Created chunk: {chunk.path}",
-                        file=File(path=chunk.path),
-                    )
-                )
+                detail = WriteDetail(operation="write_chunk", success=True, message=f"Created chunk: {chunk.path}")
+
+            if chunk.file_path not in file_map:
+                file_map[chunk.file_path] = ([], [])
+            file_map[chunk.file_path][0].append(chunk_ref)
+            file_map[chunk.file_path][1].append(detail)
+            total += 1
 
         await session.flush()
 
-        succeeded = sum(1 for r in individual_results if r.success)
-        failed = len(individual_results) - succeeded
-        return BatchResult(
-            success=failed == 0,
-            message=f"{succeeded} succeeded, {failed} failed",
-            results=individual_results,
-            succeeded=succeeded,
-            failed=failed,
+        result_files = [
+            File(path=fp, chunks=chunk_refs, evidence=details) for fp, (chunk_refs, details) in file_map.items()
+        ]
+        return GroverResult(
+            success=True,
+            message=f"{total} chunk(s) written",
+            files=result_files,
         )

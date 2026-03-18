@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
     from grover.models.internal.results import (
-        BatchResult,
         FileOperationResult,
         FileSearchResult,
         FileSearchSet,
@@ -364,35 +363,28 @@ class GroverFileSystem(Protocol):
         chunks: list[dict],
         *,
         session: AsyncSession,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def delete_file_chunks(
         self,
         file_path: str,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def list_file_chunks(
         self,
         file_path: str,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult: ...
-
-    async def write_chunk(
-        self,
-        chunk: FileChunkModelBase,
-        *,
-        session: AsyncSession,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def write_chunks(
         self,
         chunks: list[FileChunkModelBase],
         *,
         session: AsyncSession,
-    ) -> BatchResult: ...
+    ) -> GroverResult: ...
 
     # ------------------------------------------------------------------
     # Graph queries

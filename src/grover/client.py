@@ -411,21 +411,12 @@ class Grover:
     # Chunk write wrappers (sync)
     # ------------------------------------------------------------------
 
-    def write_chunk(
-        self,
-        chunk: FileChunkModelBase,
-        *,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        """Write (upsert) a single chunk."""
-        return self._run(self._async.write_chunk(chunk, user_id=user_id))
-
     def write_chunks(
         self,
         chunks: list[FileChunkModelBase],
         *,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Batch write (upsert) chunks."""
         return self._run(self._async.write_chunks(chunks, user_id=user_id))
 

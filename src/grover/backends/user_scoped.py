@@ -1187,7 +1187,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         chunks: list[dict],
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         # No user scoping on replace — stored path should already be resolved
         return await super().replace_file_chunks(file_path, chunks, session=session)
 
@@ -1196,7 +1196,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         file_path: str,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         # No user scoping on delete — stored path should already be resolved
         return await super().delete_file_chunks(file_path, session=session)
 
@@ -1205,6 +1205,6 @@ class UserScopedFileSystem(DatabaseFileSystem):
         file_path: str,
         *,
         session: AsyncSession,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         # No user scoping on list — stored path should already be resolved
         return await super().list_file_chunks(file_path, session=session)
