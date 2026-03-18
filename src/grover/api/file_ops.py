@@ -433,7 +433,7 @@ class FileOpsMixin:
         for dest_mount_path, triples in cross_mount_file_pairs.items():
             dest_mount = self._ctx.registry.mounts[dest_mount_path]
             assert dest_mount.filesystem is not None
-            dest_files = [
+            dest_files: list[FileModelBase] = [
                 FileModel(
                     path=dest.removeprefix(dest_mount.path) or "/",
                     content=content,

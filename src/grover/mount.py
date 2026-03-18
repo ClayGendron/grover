@@ -46,7 +46,10 @@ class Mount:
             raise ValueError(f"Mount name must not contain '/': {name!r}")
         self.name: str = name
         self.path: str = f"/{name}" if name else ""
-        self.filesystem: GroverFileSystem = filesystem or DatabaseFileSystem()
+        if filesystem is not None:
+            self.filesystem: GroverFileSystem = filesystem
+        else:
+            self.filesystem = DatabaseFileSystem()
         self.session_factory: Callable[..., AsyncSession] | None = session_factory
         self.engine: AsyncEngine | None = engine
         self.permission: Permission = permission

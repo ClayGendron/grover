@@ -118,9 +118,10 @@ class DatabaseFileSystem:
         self.graph_provider = graph_provider
         self.search_provider = search_provider
         self.embedding_provider = embedding_provider
-        self.version_provider: VersionProvider = version_provider or DefaultVersionProvider(
-            self.file_model, self.file_version_model
-        )
+        if version_provider is not None:
+            self.version_provider: VersionProvider = version_provider
+        else:
+            self.version_provider = DefaultVersionProvider(self.file_model, self.file_version_model)
         self.chunk_provider = chunk_provider or DefaultChunkProvider(self.file_chunk_model)
 
         # Validate search dimensions if both providers set

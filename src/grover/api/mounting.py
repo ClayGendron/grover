@@ -146,7 +146,7 @@ class MountMixin:
         dialect = engine.dialect.name
 
         if backend is None:
-            backend = DatabaseFileSystem()  # type: ignore[assignment]
+            backend = DatabaseFileSystem()
 
         # Configure the filesystem with settings from EngineConfig
         if isinstance(backend, DatabaseFileSystem):
@@ -218,7 +218,7 @@ class MountMixin:
             raise ValueError("Cannot infer dialect from session factory. Pass dialect= explicitly in SessionConfig.")
 
         if backend is None:
-            backend = DatabaseFileSystem()  # type: ignore[assignment]
+            backend = DatabaseFileSystem()
 
         # Configure the filesystem with settings from SessionConfig
         if isinstance(backend, DatabaseFileSystem):

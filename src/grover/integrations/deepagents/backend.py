@@ -162,7 +162,7 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = Grover()
-        g.add_mount("", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
+        g.add_mount("", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)
         return cls(g)
 
     @classmethod
@@ -194,7 +194,7 @@ class GroverBackend(BackendProtocol):
         if data_dir is not None:
             fs_kwargs["data_dir"] = data_dir
         g = GroverAsync()
-        await g.add_mount("", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)  # type: ignore[arg-type]
+        await g.add_mount("", filesystem=LocalFileSystem(**fs_kwargs), **mount_kwargs)
         return cls(g)
 
     @classmethod
