@@ -211,7 +211,6 @@ class DiskStorageProvider:
                 message="OK",
                 file=File(
                     path=path,
-                    is_directory=is_dir,
                     lines=lines,
                     created_at=datetime.fromtimestamp(stat.st_ctime, tz=UTC),
                     updated_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),

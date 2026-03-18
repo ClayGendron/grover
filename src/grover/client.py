@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from grover.models.config import EngineConfig, SessionConfig
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
-    from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
+    from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet, GroverResult
     from grover.mount import Mount
     from grover.providers.embedding.protocol import EmbeddingProvider
     from grover.providers.graph.protocol import GraphProvider
@@ -152,10 +152,7 @@ class Grover:
         filesystem: GroverFileSystem | None = None,
         engine_config: EngineConfig | None = None,
         session_config: SessionConfig | None = None,
-        mount_type: str | None = None,
         permission: Permission = Permission.READ_WRITE,
-        label: str = "",
-        hidden: bool = False,
         embedding_provider: EmbeddingProvider | None = None,
         search_provider: SearchProvider | None = None,
     ) -> None:
@@ -167,10 +164,7 @@ class Grover:
                 filesystem=filesystem,
                 engine_config=engine_config,
                 session_config=session_config,
-                mount_type=mount_type,
                 permission=permission,
-                label=label,
-                hidden=hidden,
                 embedding_provider=embedding_provider,
                 search_provider=search_provider,
             )
@@ -436,23 +430,13 @@ class Grover:
     # File write from model wrappers (sync)
     # ------------------------------------------------------------------
 
-    def write_file(
-        self,
-        file: FileModelBase,
-        *,
-        overwrite: bool = True,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        """Write a single file from a model instance."""
-        return self._run(self._async.write_file(file, overwrite=overwrite, user_id=user_id))
-
     def write_files(
         self,
         files: list[FileModelBase],
         *,
         overwrite: bool = True,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Batch write files from model instances."""
         return self._run(self._async.write_files(files, overwrite=overwrite, user_id=user_id))
 

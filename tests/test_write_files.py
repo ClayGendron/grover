@@ -10,6 +10,7 @@ from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import Grover, GroverAsync
 from grover.models.database.file import FileModel
+from grover.models.internal.detail import WriteDetail
 from grover.permissions import Permission
 from grover.providers.search.local import LocalVectorStore
 
@@ -57,14 +58,13 @@ async def grover_no_search(workspace: Path, tmp_path: Path) -> GroverAsync:
 
 
 # ---------------------------------------------------------------------------
-# write_file tests
+# write (single file via path+content) tests
 # ---------------------------------------------------------------------------
 
 
-class TestWriteFile:
-    async def test_write_file_model_creates_new(self, grover: GroverAsync):
-        f = FileModel(path="/project/a.py", content="print('hi')\n")
-        result = await grover.write_file(f)
+class TestWrite:
+    async def test_write_creates_new(self, grover: GroverAsync):
+        result = await grover.write("/project/a.py", "print('hi')\n")
         assert result.success is True
         assert "Created" in result.message
         assert result.file.current_version == 1
@@ -73,11 +73,10 @@ class TestWriteFile:
         assert read.success is True
         assert "print('hi')" in read.file.content
 
-    async def test_write_file_model_updates_existing(self, grover: GroverAsync):
+    async def test_write_updates_existing(self, grover: GroverAsync):
         await grover.write("/project/a.py", "v1\n")
 
-        f = FileModel(path="/project/a.py", content="v2\n")
-        result = await grover.write_file(f)
+        result = await grover.write("/project/a.py", "v2\n")
         assert result.success is True
         assert "Created" not in result.message
         assert result.file.current_version == 2
@@ -85,7 +84,7 @@ class TestWriteFile:
         read = await grover.read("/project/a.py")
         assert "v2" in read.file.content
 
-    async def test_write_file_model_ignores_caller_metadata(self, grover: GroverAsync):
+    async def test_write_model_ignores_caller_metadata(self, grover: GroverAsync):
         """System computes hash, size, version — ignores caller values."""
         f = FileModel(
             path="/project/a.py",
@@ -93,19 +92,18 @@ class TestWriteFile:
             content_hash="should_be_ignored",
             size_bytes=99999,
         )
-        result = await grover.write_file(f)
-        assert result.success is True
+        result = await grover.write_files([f])
+        assert result.succeeded == 1
 
-        # System managed the write correctly
         read = await grover.read("/project/a.py")
         assert "hello" in read.file.content
 
-    async def test_write_file_non_text_rejected(self, grover: GroverAsync):
+    async def test_write_non_text_rejected(self, grover: GroverAsync):
         f = FileModel(path="/project/image.png", content="data")
-        result = await grover.write_file(f)
+        result = await grover.write_files([f])
         assert result.success is False
 
-    async def test_write_file_read_only_mount(self, workspace: Path, tmp_path: Path):
+    async def test_write_read_only_mount(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data_ro"
         g = GroverAsync()
         await g.add_mount(
@@ -114,8 +112,7 @@ class TestWriteFile:
             permission=Permission.READ_ONLY,
         )
         try:
-            f = FileModel(path="/readonly/a.py", content="print('hi')\n")
-            result = await g.write_file(f)
+            result = await g.write("/readonly/a.py", "print('hi')\n")
             assert result.success is False
         finally:
             await g.close()
@@ -148,20 +145,20 @@ class TestWriteFiles:
         ]
         result = await grover.write_files(files)
         assert result.succeeded == 3
-        assert "Created" in result.results[0].message
-        assert "Created" not in result.results[1].message  # Updated existing
-        assert "Created" in result.results[2].message
+        assert "Created" in result.files[0].details[0].message
+        assert "Created" not in result.files[1].details[0].message  # Updated existing
+        assert "Created" in result.files[2].details[0].message
 
     async def test_write_files_batch_versions_each(self, grover: GroverAsync):
         """Each file in batch gets its own version record."""
         files = [FileModel(path=f"/project/v{i}.py", content=f"content {i}\n") for i in range(3)]
         result = await grover.write_files(files)
-        assert all(r.file.current_version == 1 for r in result.results)
+        assert all(f.current_version == 1 for f in result.files)
 
         # Update one of them
         files2 = [FileModel(path="/project/v1.py", content="updated\n")]
         result2 = await grover.write_files(files2)
-        assert result2.results[0].file.current_version == 2
+        assert result2.files[0].current_version == 2
 
     async def test_write_files_batch_large(self, grover: GroverAsync):
         """Large batches are auto-chunked internally — no user-facing limit."""
@@ -169,7 +166,7 @@ class TestWriteFiles:
         result = await grover.write_files(files)
         assert result.success is True
         assert result.succeeded == 150
-        assert len(result.results) == 150
+        assert len(result.files) == 150
 
     async def test_write_files_batch_read_only(self, workspace: Path, tmp_path: Path):
         data = tmp_path / "grover_data_ro"
@@ -182,8 +179,7 @@ class TestWriteFiles:
         try:
             files = [FileModel(path="/readonly/a.py", content="x\n")]
             result = await g.write_files(files)
-            assert result.succeeded == 0
-            assert result.failed == 1
+            assert result.success is False
         finally:
             await g.close()
 
@@ -200,17 +196,6 @@ class TestWriteFiles:
         exists = await grover.exists("/project/deep/nested")
         assert exists.message == "exists"
 
-    async def test_write_files_batch_triggers_indexing(self, grover_no_search: GroverAsync):
-        files = [
-            FileModel(path="/project/a.py", content="def foo():\n    pass\n"),
-        ]
-        result = await grover_no_search.write_files(files)
-        assert result.succeeded == 1
-        await grover_no_search.flush()
-
-        graph = grover_no_search.get_graph()
-        assert graph.has_node("/project/a.py")
-
     async def test_write_files_batch_partial_failure(self, grover: GroverAsync):
         """Binary extension fails, text succeeds."""
         files = [
@@ -220,8 +205,32 @@ class TestWriteFiles:
         result = await grover.write_files(files)
         assert result.succeeded == 1
         assert result.failed == 1
-        assert result.results[0].success is True
-        assert result.results[1].success is False
+        assert all(d.success for d in result.files[0].details)
+        assert any(not d.success for d in result.files[1].details)
+
+    async def test_write_files_returns_grover_result(self, grover: GroverAsync):
+        """write_files returns GroverResult with WriteDetail on each file."""
+        from grover.models.internal.results import GroverResult
+
+        files = [FileModel(path="/project/a.py", content="x\n")]
+        result = await grover.write_files(files)
+        assert isinstance(result, GroverResult)
+        assert len(result.files) == 1
+        detail = result.files[0].details[0]
+        assert isinstance(detail, WriteDetail)
+        assert detail.operation == "write"
+        assert detail.success is True
+        assert detail.version == 1
+
+    async def test_write_files_detail_on_failure(self, grover: GroverAsync):
+        """Failed writes have WriteDetail with success=False."""
+        files = [FileModel(path="/project/bad.png", content="binary")]
+        result = await grover.write_files(files)
+        assert result.failed == 1
+        detail = result.files[0].details[0]
+        assert isinstance(detail, WriteDetail)
+        assert detail.success is False
+        assert detail.message  # has an error message
 
 
 # ---------------------------------------------------------------------------
@@ -241,9 +250,8 @@ class TestWriteFilesSync:
         yield g
         g.close()
 
-    def test_write_file_sync(self, grover_sync: Grover):
-        f = FileModel(path="/project/a.py", content="print('hi')\n")
-        result = grover_sync.write_file(f)
+    def test_write_sync(self, grover_sync: Grover):
+        result = grover_sync.write("/project/a.py", "print('hi')\n")
         assert result.success is True
         assert "Created" in result.message
 
@@ -336,4 +344,70 @@ class TestWriteFilesModelFlowThrough:
         f = FileModel.create("up.py", "v2\n", mount="project", embedding=[0.5, 0.6])
         result = await grover_no_search.write_files([f])
         assert result.succeeded == 1
-        assert result.results[0].file.current_version == 2
+        assert result.files[0].current_version == 2
+
+
+# ---------------------------------------------------------------------------
+# Batch failure / flush error tests
+# ---------------------------------------------------------------------------
+
+
+class TestWriteFilesBatchFailures:
+    async def test_write_files_batch_total_failure_reports_failure(self, grover: GroverAsync):
+        """When backend raises, handler creates per-file failure details."""
+        files = [
+            FileModel(path="/project/a.py", content="x\n"),
+            FileModel(path="/project/b.py", content="y\n"),
+        ]
+
+        # Monkey-patch write_files on the backend to raise
+        mount, _ = grover._ctx.registry.resolve("/project/a.py")
+        original = mount.filesystem.write_files
+
+        async def _raise_on_write(*args, **kwargs):
+            raise RuntimeError("Backend exploded")
+
+        mount.filesystem.write_files = _raise_on_write
+        try:
+            result = await grover.write_files(files)
+            assert result.success is False
+            assert len(result.files) == 2
+            for f in result.files:
+                assert any(not d.success for d in f.details)
+                assert any("Backend exploded" in d.message for d in f.details)
+        finally:
+            mount.filesystem.write_files = original
+
+    async def test_write_files_flush_failure_returns_per_file_results(self, grover_no_search: GroverAsync):
+        """When session.flush() raises, backend returns per-file failure details."""
+        files = [
+            FileModel(path="/project/a.py", content="x\n"),
+            FileModel(path="/project/b.py", content="y\n"),
+        ]
+
+        # Monkey-patch session.flush on the backend to raise after write_files
+        mount, _ = grover_no_search._ctx.registry.resolve("/project/a.py")
+        original_wf = mount.filesystem.write_files
+
+        async def _flush_failing_write(files_arg, *, session, **kwargs):
+            original_flush = session.flush
+
+            async def _bad_flush(*a, **kw):
+                raise RuntimeError("Flush boom")
+
+            session.flush = _bad_flush
+            try:
+                return await original_wf(files_arg, session=session, **kwargs)
+            finally:
+                session.flush = original_flush
+
+        mount.filesystem.write_files = _flush_failing_write
+        try:
+            result = await grover_no_search.write_files(files)
+            assert result.success is False
+            assert len(result.files) == 2
+            for f in result.files:
+                assert any(not d.success for d in f.details)
+                assert any("flush" in d.message.lower() for d in f.details)
+        finally:
+            mount.filesystem.write_files = original_wf

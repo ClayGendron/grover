@@ -24,7 +24,6 @@ def model_to_file(
     """Convert a FileModel (+ optional chunks/versions) to a File."""
     return File(
         path=model.path,
-        is_directory=model.is_directory,
         content=model.content,
         embedding=list(model.embedding) if model.embedding is not None else None,
         tokens=model.tokens,
@@ -86,7 +85,6 @@ def file_to_model(file: File) -> FileModel:
     """
     return FileModel(
         path=file.path,
-        is_directory=file.is_directory,
         content=file.content,
         lines=file.lines,
         current_version=file.current_version,

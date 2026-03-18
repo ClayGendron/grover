@@ -8,6 +8,12 @@ __version__ = "0.0.9"
 from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import Grover, GroverAsync
 from grover.models.config import EngineConfig, SessionConfig, create_async_engine_factory
+from grover.models.internal.detail import (
+    DeleteDetail,
+    Detail,
+    ReadDetail,
+    WriteDetail,
+)
 from grover.models.internal.evidence import (
     Evidence,
     GlobEvidence,
@@ -24,12 +30,13 @@ from grover.models.internal.evidence import (
     VectorEvidence,
     VersionEvidence,
 )
-from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion
+from grover.models.internal.ref import Directory, File, FileChunk, FileConnection, FileVersion
 from grover.models.internal.results import (
     BatchResult,
     FileOperationResult,
     FileSearchResult,
     FileSearchSet,
+    GroverResult,
 )
 from grover.mount import Mount
 from grover.providers import (
@@ -68,6 +75,9 @@ __all__ = [
     "ChunkProvider",
     "DefaultChunkProvider",
     "DefaultVersionProvider",
+    "DeleteDetail",
+    "Detail",
+    "Directory",
     "DiskStorageProvider",
     "EmbeddingProvider",
     "EngineConfig",
@@ -88,6 +98,7 @@ __all__ = [
     "GrepEvidence",
     "Grover",
     "GroverAsync",
+    "GroverResult",
     "HybridEvidence",
     "IndexConfig",
     "IndexingMode",
@@ -95,6 +106,7 @@ __all__ = [
     "LineMatch",
     "ListDirEvidence",
     "Mount",
+    "ReadDetail",
     "Ref",
     "SearchProvider",
     "SessionConfig",
@@ -107,6 +119,7 @@ __all__ = [
     "VectorEvidence",
     "VersionEvidence",
     "VersionProvider",
+    "WriteDetail",
     "__version__",
     "and_",
     "create_async_engine_factory",

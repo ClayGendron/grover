@@ -1,21 +1,26 @@
-"""New internal result types — FileSearchSet, FileSearchResult, FileOperationResult.
+"""Internal result types — GroverResult, FileSearchSet, FileSearchResult, FileOperationResult.
 
-``FileSearchSet`` carries candidates (files + connections) with set algebra,
-iteration, and path transformations — but no success/message semantics.
+``GroverResult`` is the unified result type that replaces the four older
+types (``FileOperationResult``, ``BatchResult``, ``FileSearchSet``,
+``FileSearchResult``).  It works as both output and candidate input, and
+carries per-file outcome detail via ``Detail`` objects on each ``File``.
 
-``FileSearchResult`` inherits from ``FileSearchSet`` and adds ``success``,
-``message``, and factory methods, collapsing the 30+ old result subclasses
-into a single type.  Operations differentiate via Evidence types on Files,
-not separate result classes.
+The older types remain for backward compatibility during incremental
+migration.
 """
 
-import copy
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
-from typing import Self
+from __future__ import annotations
 
+import copy
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Self
+
+from grover.models.internal.detail import Detail
 from grover.models.internal.evidence import Evidence
-from grover.models.internal.ref import File, FileConnection, Ref
+from grover.models.internal.ref import Directory, File, FileConnection, Ref
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 
 @dataclass(slots=True)
@@ -116,7 +121,6 @@ class FileSearchSet:
         """Merge two files with the same path, combining evidence."""
         return File(
             path=f1.path,
-            is_directory=f1.is_directory or f2.is_directory,
             content=f1.content if f1.content is not None else f2.content,
             embedding=f1.embedding if f1.embedding is not None else f2.embedding,
             tokens=max(f1.tokens, f2.tokens),
@@ -163,7 +167,6 @@ class FileSearchSet:
         result.files = [
             File(
                 path=(prefix + f.path if f.path != "/" else prefix),
-                is_directory=f.is_directory,
                 content=f.content,
                 embedding=f.embedding,
                 tokens=f.tokens,
@@ -205,7 +208,6 @@ class FileSearchSet:
             new_path = fn(f.path)
             new_file = File(
                 path=new_path,
-                is_directory=f.is_directory,
                 content=f.content,
                 embedding=f.embedding,
                 tokens=f.tokens,
@@ -433,4 +435,397 @@ class FileSearchResult(FileSearchSet):
             success=True,
             message=f"{len(refs)} refs",
             files=files,
+        )
+
+
+# =====================================================================
+# GroverResult — unified result type
+# =====================================================================
+
+
+@dataclass(slots=True)
+class GroverResult:
+    """Unified result type for all Grover operations.
+
+    Replaces ``FileOperationResult``, ``BatchResult``, ``FileSearchSet``,
+    and ``FileSearchResult``.  Works as both output **and** candidate input
+    (enabling chaining like ``await g.glob("*.py") & await g.grep("import")``).
+
+    Per-file outcomes live in ``file.details`` (a list of ``Detail`` objects).
+    The top-level ``success`` / ``message`` summarize the overall operation.
+    """
+
+    files: list[File] = field(default_factory=list)
+    directories: list[Directory] = field(default_factory=list)
+    connections: list[FileConnection] = field(default_factory=list)
+    message: str = ""
+    success: bool = True
+
+    # -----------------------------------------------------------------
+    # Convenience properties
+    # -----------------------------------------------------------------
+
+    @property
+    def file(self) -> File:
+        """First file — for single-file operations."""
+        return self.files[0] if self.files else File(path="")
+
+    @property
+    def content(self) -> str | None:
+        """First file's content."""
+        return self.file.content
+
+    @property
+    def succeeded(self) -> int:
+        """Count of entities (files, directories, connections) where all details report success."""
+        count = sum(1 for f in self.files if all(d.success for d in f.details))
+        count += sum(1 for d in self.directories if all(dt.success for dt in d.details))
+        count += sum(1 for c in self.connections if all(d.success for d in c.details))
+        return count
+
+    @property
+    def failed(self) -> int:
+        """Count of entities where any detail reports failure."""
+        total = len(self.files) + len(self.directories) + len(self.connections)
+        return total - self.succeeded
+
+    # -----------------------------------------------------------------
+    # Factories
+    # -----------------------------------------------------------------
+
+    @classmethod
+    def from_paths(cls, paths: list[str], *, operation: str = "unknown") -> GroverResult:
+        """Create a result from a list of paths with default detail."""
+        files = [File(path=p, evidence=[Detail(operation=operation)]) for p in paths]
+        return cls(success=True, message=f"{len(paths)} paths", files=files)
+
+    @classmethod
+    def from_refs(cls, refs: list[Ref], *, operation: str = "unknown") -> GroverResult:
+        """Create a result from a list of ``Ref`` objects."""
+        files = [File(path=ref.path, evidence=[Detail(operation=operation)]) for ref in refs]
+        return cls(success=True, message=f"{len(refs)} refs", files=files)
+
+    # -----------------------------------------------------------------
+    # Properties and iteration
+    # -----------------------------------------------------------------
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        """All file paths."""
+        return tuple(f.path for f in self.files)
+
+    @property
+    def connection_paths(self) -> tuple[str, ...]:
+        """All connection ref-format paths (``source[type]target``)."""
+        return tuple(f"{c.source_path}[{c.type}]{c.target_path}" for c in self.connections)
+
+    def __len__(self) -> int:
+        return len(self.files)
+
+    def __bool__(self) -> bool:
+        return self.success and len(self.files) > 0
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(f.path for f in self.files)
+
+    def __contains__(self, path: object) -> bool:
+        return any(f.path == path for f in self.files)
+
+    # -----------------------------------------------------------------
+    # Query helpers
+    # -----------------------------------------------------------------
+
+    def explain(self, path: str) -> list[Detail]:
+        """Return the detail chain for *path*, or ``[]`` if absent."""
+        for f in self.files:
+            if f.path == path:
+                return list(f.details)
+        return []
+
+    def to_refs(self) -> list[Ref]:
+        """Convert file paths to a list of ``Ref`` objects."""
+        return [Ref(path=f.path) for f in self.files]
+
+    # -----------------------------------------------------------------
+    # Internal helpers
+    # -----------------------------------------------------------------
+
+    def _as_dict(self) -> dict[str, File]:
+        return {f.path: f for f in self.files}
+
+    def _dirs_as_dict(self) -> dict[str, Directory]:
+        return {d.path: d for d in self.directories}
+
+    def _connections_as_dict(self) -> dict[str, FileConnection]:
+        result: dict[str, FileConnection] = {}
+        for c in self.connections:
+            key = f"{c.source_path}[{c.type}]{c.target_path}"
+            result[key] = c
+        return result
+
+    @staticmethod
+    def _merge_files(f1: File, f2: File) -> File:
+        return File(
+            path=f1.path,
+            content=f1.content if f1.content is not None else f2.content,
+            embedding=f1.embedding if f1.embedding is not None else f2.embedding,
+            tokens=max(f1.tokens, f2.tokens),
+            lines=max(f1.lines, f2.lines),
+            size_bytes=max(f1.size_bytes, f2.size_bytes),
+            mime_type=f1.mime_type or f2.mime_type,
+            current_version=max(f1.current_version, f2.current_version),
+            chunks=f1.chunks or f2.chunks,
+            versions=f1.versions or f2.versions,
+            evidence=list(f1.evidence) + list(f2.evidence),
+            created_at=f1.created_at or f2.created_at,
+            updated_at=f1.updated_at or f2.updated_at,
+        )
+
+    @staticmethod
+    def _merge_dirs(d1: Directory, d2: Directory) -> Directory:
+        return Directory(
+            path=d1.path,
+            details=list(d1.details) + list(d2.details),
+            created_at=d1.created_at or d2.created_at,
+            updated_at=d1.updated_at or d2.updated_at,
+        )
+
+    @staticmethod
+    def _merge_connections(c1: FileConnection, c2: FileConnection) -> FileConnection:
+        return FileConnection(
+            path=c1.path,
+            source_path=c1.source_path,
+            target_path=c1.target_path,
+            type=c1.type,
+            weight=c1.weight,
+            distance=c1.distance,
+            evidence=list(c1.evidence) + list(c2.evidence),
+            created_at=c1.created_at or c2.created_at,
+            updated_at=c1.updated_at or c2.updated_at,
+        )
+
+    # -----------------------------------------------------------------
+    # Path transformations
+    # -----------------------------------------------------------------
+
+    def rebase(self, prefix: str) -> GroverResult:
+        """Return a new result with all paths prefixed by *prefix*."""
+
+        def _rebase_path(p: str) -> str:
+            return prefix + p if p != "/" else prefix
+
+        files = [
+            File(
+                path=_rebase_path(f.path),
+                content=f.content,
+                embedding=f.embedding,
+                tokens=f.tokens,
+                lines=f.lines,
+                size_bytes=f.size_bytes,
+                mime_type=f.mime_type,
+                current_version=f.current_version,
+                chunks=f.chunks,
+                versions=f.versions,
+                evidence=list(f.evidence),
+                created_at=f.created_at,
+                updated_at=f.updated_at,
+            )
+            for f in self.files
+        ]
+        directories = [
+            Directory(
+                path=_rebase_path(d.path),
+                details=list(d.details),
+                created_at=d.created_at,
+                updated_at=d.updated_at,
+            )
+            for d in self.directories
+        ]
+        connections = [
+            FileConnection(
+                path=c.path,
+                source_path=_rebase_path(c.source_path),
+                target_path=_rebase_path(c.target_path),
+                type=c.type,
+                weight=c.weight,
+                distance=c.distance,
+                evidence=list(c.evidence),
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+            )
+            for c in self.connections
+        ]
+        return GroverResult(
+            files=files,
+            directories=directories,
+            connections=connections,
+            message=self.message,
+            success=self.success,
+        )
+
+    def remap_paths(self, fn: Callable[[str], str]) -> GroverResult:
+        """Return a new result with all paths transformed by *fn*."""
+        merged: dict[str, File] = {}
+        for f in self.files:
+            new_path = fn(f.path)
+            new_file = File(
+                path=new_path,
+                content=f.content,
+                embedding=f.embedding,
+                tokens=f.tokens,
+                lines=f.lines,
+                size_bytes=f.size_bytes,
+                mime_type=f.mime_type,
+                current_version=f.current_version,
+                chunks=f.chunks,
+                versions=f.versions,
+                evidence=list(f.evidence),
+                created_at=f.created_at,
+                updated_at=f.updated_at,
+            )
+            if new_path in merged:
+                merged[new_path] = self._merge_files(merged[new_path], new_file)
+            else:
+                merged[new_path] = new_file
+
+        merged_dirs: dict[str, Directory] = {}
+        for d in self.directories:
+            new_path = fn(d.path)
+            new_dir = Directory(
+                path=new_path,
+                details=list(d.details),
+                created_at=d.created_at,
+                updated_at=d.updated_at,
+            )
+            if new_path in merged_dirs:
+                merged_dirs[new_path] = self._merge_dirs(merged_dirs[new_path], new_dir)
+            else:
+                merged_dirs[new_path] = new_dir
+
+        connections = [
+            FileConnection(
+                path=c.path,
+                source_path=fn(c.source_path),
+                target_path=fn(c.target_path),
+                type=c.type,
+                weight=c.weight,
+                distance=c.distance,
+                evidence=list(c.evidence),
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+            )
+            for c in self.connections
+        ]
+        return GroverResult(
+            files=list(merged.values()),
+            directories=list(merged_dirs.values()),
+            connections=connections,
+            message=self.message,
+            success=self.success,
+        )
+
+    # -----------------------------------------------------------------
+    # Set algebra
+    # -----------------------------------------------------------------
+
+    def _algebra(
+        self,
+        other: GroverResult,
+        file_op: Callable[[dict[str, File], dict[str, File]], list[File]],
+        dir_op: Callable[[dict[str, Directory], dict[str, Directory]], list[Directory]],
+        conn_op: Callable[
+            [dict[str, FileConnection], dict[str, FileConnection]],
+            list[FileConnection],
+        ],
+        success_op: Callable[[bool, bool], bool],
+    ) -> GroverResult:
+        """Shared implementation for set algebra operators."""
+        return GroverResult(
+            files=file_op(self._as_dict(), other._as_dict()),
+            directories=dir_op(self._dirs_as_dict(), other._dirs_as_dict()),
+            connections=conn_op(self._connections_as_dict(), other._connections_as_dict()),
+            success=success_op(self.success, other.success),
+            message="",
+        )
+
+    def __and__(self, other: object) -> GroverResult:
+        """Intersection — paths in both, details merged."""
+        if not isinstance(other, GroverResult):
+            return NotImplemented
+        return self._algebra(
+            other,
+            lambda d1, d2: [self._merge_files(d1[p], d2[p]) for p in set(d1) & set(d2)],
+            lambda d1, d2: [self._merge_dirs(d1[p], d2[p]) for p in set(d1) & set(d2)],
+            lambda d1, d2: [self._merge_connections(d1[p], d2[p]) for p in set(d1) & set(d2)],
+            lambda a, b: a and b,
+        )
+
+    def __or__(self, other: object) -> GroverResult:
+        """Union — paths from either, details merged where overlapping."""
+        if not isinstance(other, GroverResult):
+            return NotImplemented
+
+        def _union_files(d1: dict[str, File], d2: dict[str, File]) -> list[File]:
+            files: list[File] = []
+            seen: set[str] = set()
+            for p, f in d1.items():
+                files.append(self._merge_files(f, d2[p]) if p in d2 else f)
+                seen.add(p)
+            for p, f in d2.items():
+                if p not in seen:
+                    files.append(f)
+            return files
+
+        def _union_dirs(d1: dict[str, Directory], d2: dict[str, Directory]) -> list[Directory]:
+            dirs: list[Directory] = []
+            seen: set[str] = set()
+            for p, d in d1.items():
+                dirs.append(self._merge_dirs(d, d2[p]) if p in d2 else d)
+                seen.add(p)
+            for p, d in d2.items():
+                if p not in seen:
+                    dirs.append(d)
+            return dirs
+
+        def _union_conns(d1: dict[str, FileConnection], d2: dict[str, FileConnection]) -> list[FileConnection]:
+            conns: list[FileConnection] = []
+            seen: set[str] = set()
+            for p, c in d1.items():
+                conns.append(self._merge_connections(c, d2[p]) if p in d2 else c)
+                seen.add(p)
+            for p, c in d2.items():
+                if p not in seen:
+                    conns.append(c)
+            return conns
+
+        return GroverResult(
+            files=_union_files(self._as_dict(), other._as_dict()),
+            directories=_union_dirs(self._dirs_as_dict(), other._dirs_as_dict()),
+            connections=_union_conns(self._connections_as_dict(), other._connections_as_dict()),
+            success=self.success or other.success,
+            message="",
+        )
+
+    def __sub__(self, other: object) -> GroverResult:
+        """Difference — paths in LHS not in RHS."""
+        if not isinstance(other, GroverResult):
+            return NotImplemented
+        return self._algebra(
+            other,
+            lambda d1, d2: [d1[p] for p in set(d1) - set(d2)],
+            lambda d1, d2: [d1[p] for p in set(d1) - set(d2)],
+            lambda d1, d2: [d1[p] for p in set(d1) - set(d2)],
+            lambda a, b: a,
+        )
+
+    def __rshift__(self, other: object) -> GroverResult:
+        """Pipeline — passes LHS paths as candidates to RHS."""
+        if not isinstance(other, GroverResult):
+            return NotImplemented
+        return self._algebra(
+            other,
+            lambda d1, d2: [self._merge_files(d1[p], d2[p]) for p in set(d1) & set(d2)],
+            lambda d1, d2: [self._merge_dirs(d1[p], d2[p]) for p in set(d1) & set(d2)],
+            lambda d1, d2: [self._merge_connections(d1[p], d2[p]) for p in set(d1) & set(d2)],
+            lambda a, b: a and b,
         )

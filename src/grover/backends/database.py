@@ -16,6 +16,7 @@ from grover.models.database.chunk import FileChunkModel
 from grover.models.database.connection import FileConnectionModel
 from grover.models.database.file import FileModel
 from grover.models.database.version import FileVersionModel
+from grover.models.internal.detail import DeleteDetail, ReadDetail, WriteDetail
 from grover.models.internal.evidence import (
     GlobEvidence,
     GrepEvidence,
@@ -27,18 +28,22 @@ from grover.models.internal.evidence import (
     LineMatch as SearchLineMatch,
 )
 from grover.models.internal.ref import File, FileConnection, Ref
-from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult, FileSearchSet
+from grover.models.internal.results import (
+    BatchResult,
+    FileOperationResult,
+    FileSearchResult,
+    FileSearchSet,
+    GroverResult,
+)
 from grover.providers.chunks import DefaultChunkProvider
 from grover.providers.versioning import DefaultVersionProvider
+from grover.providers.versioning.diff import SNAPSHOT_INTERVAL, compute_diff
 from grover.util.content import (
     compute_content_hash,
-    guess_mime_type,
     has_binary_extension,
-    is_text_file,
 )
 from grover.util.dialect import upsert_file
 from grover.util.operations import (
-    check_external_edit,
     copy_file,
     delete_file,
     edit_file,
@@ -103,7 +108,6 @@ class DatabaseFileSystem:
         # Config defaults — overwritten by _configure() when mounting via
         # EngineConfig / SessionConfig.
         self.dialect: str = "sqlite"
-        self.schema: str | None = None
         self.file_model: type[FileModelBase] = FileModel
         self.file_version_model: type[FileVersionModelBase] = FileVersionModel
         self.file_chunk_model: type[FileChunkModelBase] = FileChunkModel
@@ -132,7 +136,6 @@ class DatabaseFileSystem:
         """Apply config from EngineConfig or SessionConfig. Called by add_mount."""
 
         self.dialect = dialect
-        self.schema = config.schema
         self.file_model = config.file_model
         self.file_version_model = config.file_version_model
         self.file_chunk_model = config.file_chunk_model
@@ -276,8 +279,8 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
-        return await read_file(
+    ) -> GroverResult:
+        op = await read_file(
             path,
             offset,
             limit,
@@ -285,6 +288,15 @@ class DatabaseFileSystem:
             get_file_record=self._get_file_record,
             read_content=self._read_content,
         )
+        if not op.success:
+            return GroverResult(success=False, message=op.message)
+        op.file.evidence = [ReadDetail(
+            operation="read",
+            success=True,
+            message=op.message,
+            offset=offset,
+        )]
+        return GroverResult(success=True, message=op.message, files=[op.file])
 
     async def write(
         self,
@@ -322,8 +334,8 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
-        return await edit_file(
+    ) -> GroverResult:
+        op = await edit_file(
             path,
             old_string,
             new_string,
@@ -335,6 +347,15 @@ class DatabaseFileSystem:
             read_content=self._read_content,
             write_content=self._write_content,
         )
+        if not op.success:
+            return GroverResult(success=False, message=op.message)
+        op.file.evidence = [WriteDetail(
+            operation="edit",
+            success=True,
+            message=op.message,
+            version=op.file.current_version,
+        )]
+        return GroverResult(success=True, message=op.message, files=[op.file])
 
     async def delete(
         self,
@@ -343,8 +364,8 @@ class DatabaseFileSystem:
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
-        return await delete_file(
+    ) -> GroverResult:
+        op = await delete_file(
             path,
             permanent,
             session,
@@ -353,6 +374,15 @@ class DatabaseFileSystem:
             file_model=self.file_model,
             delete_content=self._delete_content,
         )
+        if not op.success:
+            return GroverResult(success=False, message=op.message)
+        op.file.evidence = [DeleteDetail(
+            operation="delete",
+            success=True,
+            message=op.message,
+            permanent=permanent,
+        )]
+        return GroverResult(success=True, message=op.message, files=[op.file])
 
     async def mkdir(
         self,
@@ -1203,7 +1233,6 @@ class DatabaseFileSystem:
                 values=values,
                 conflict_keys=["path"],
                 model=self.file_model,
-                schema=self.schema,
                 update_keys=["updated_at"],
             )
 
@@ -1265,7 +1294,6 @@ class DatabaseFileSystem:
                 values=values,
                 conflict_keys=["path"],
                 model=self.file_model,
-                schema=self.schema,
             )
             if rowcount > 0:
                 created_dirs.append(dir_path)
@@ -1318,211 +1346,178 @@ class DatabaseFileSystem:
     ) -> BatchResult:
         return await self.chunk_provider.write_chunks(session, chunks)
 
-    # ------------------------------------------------------------------
-    # Batch file write (write_file / write_files)
-    # ------------------------------------------------------------------
-
-    async def write_file(
-        self,
-        file: FileModelBase,
-        *,
-        overwrite: bool = True,
-        created_by: str = "agent",
-        session: AsyncSession,
-        owner_id: str | None = None,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        """Write a single file from a model instance. Delegates to write_files."""
-        batch = await self.write_files(
-            [file],
-            overwrite=overwrite,
-            created_by=created_by,
-            session=session,
-            owner_id=owner_id,
-        )
-        if batch.results:
-            return batch.results[0]
-        return FileOperationResult(success=batch.success, message=batch.message)
-
     async def write_files(
         self,
         files: list[FileModelBase],
         *,
         overwrite: bool = True,
-        created_by: str = "agent",
         session: AsyncSession,
-        owner_id: str | None = None,
-        user_id: str | None = None,
-    ) -> BatchResult:
-        """Batch write files from model instances with minimized DB queries.
+    ) -> GroverResult:
+        """Batch write files from model instances.
 
-        One SELECT IN for existing records, per-file versioning, one flush.
-        System manages hashes, sizes, versions, and timestamps.
+        Three-phase approach:
+        1. Prepare — batch-fetch existing records, classify each file (per-file errors)
+        2. Mutate  — parent dirs, session adds/merges, versions, storage
+        3. Results — only built after flush succeeds
+
+        Results are returned in input order.  Per-file outcomes are carried
+        as ``WriteDetail`` objects on each ``File.details``.
         """
-        now = datetime.now(UTC)
-        results_by_idx: dict[int, FileOperationResult] = {}
-
         if not files:
-            return BatchResult(success=True, message="No files to write")
+            return GroverResult(success=True, message="No files to write")
 
-        # Extract and validate paths, tracking original index
-        valid_items: list[tuple[int, str, str, FileModelBase]] = []  # (idx, path, content, model)
-        for i, f in enumerate(files):
-            valid, error = validate_path(f.path)
-            if not valid:
-                results_by_idx[i] = FileOperationResult(success=False, message=error, file=File(path=f.path))
-                continue
+        # --- Phase 1: Prepare (no side effects) ---
+        # Results indexed by input position to preserve ordering.
+        file_results: dict[int, File] = {}
+        pending: list[tuple[int, FileModelBase, FileModelBase | None]] = []  # (idx, incoming, existing|None)
 
-            path = normalize_path(f.path)
-            _, name = split_path(path)
-            if not is_text_file(name):
-                results_by_idx[i] = FileOperationResult(
-                    success=False,
-                    message=f"Cannot write non-text file: {name}",
-                    file=File(path=path),
-                )
-                continue
+        all_paths = [f.path for f in files]
+        existing_map = await self._batch_get_file_records(session, all_paths, include_deleted=True)
 
-            valid_items.append((i, path, f.content if f.content else "", f))
-
-        # Deduplicate paths: last-write-wins for same path in batch
-        seen_paths: dict[str, int] = {}  # path -> index in valid_items
-        deduped_items: list[tuple[int, str, str, FileModelBase]] = []
-        for item in valid_items:
-            idx, path, content, model = item
-            if path in seen_paths:
-                # Supersede earlier entry
-                prev_idx = valid_items[seen_paths[path]][0]
-                results_by_idx[prev_idx] = FileOperationResult(
-                    success=False,
-                    message=f"Superseded by later entry in batch: {path}",
-                    file=File(path=path),
-                )
-            seen_paths[path] = len(deduped_items)
-            deduped_items.append(item)
-        valid_items = deduped_items
-
-        if not valid_items:
-            # All failed validation
-            results = [results_by_idx[i] for i in range(len(files))]
-            succeeded = sum(1 for r in results if r.success)
-            failed = len(results) - succeeded
-            return BatchResult(
-                success=failed == 0,
-                message=f"Wrote {succeeded} file(s), {failed} failed",
-                results=results,
-                succeeded=succeeded,
-                failed=failed,
-            )
-
-        # ONE query: batch lookup existing records
-        paths = [path for _, path, _, _ in valid_items]
-        existing_map = await self._batch_get_file_records(session, paths, include_deleted=True)
-
-        # Per-file processing
-        for idx, path, content, model in valid_items:
+        for idx, f in enumerate(files):
             try:
-                content_hash, size_bytes = compute_content_hash(content)
-                existing = existing_map.get(path)
-
-                if existing:
-                    if existing.is_directory:
-                        results_by_idx[idx] = FileOperationResult(
-                            success=False,
-                            message=f"Path is a directory: {path}",
-                            file=File(path=path),
-                        )
-                        continue
-
-                    if not overwrite and not existing.deleted_at:
-                        results_by_idx[idx] = FileOperationResult(
-                            success=False,
-                            message=f"File already exists: {path}",
-                            file=File(path=path),
-                        )
-                        continue
-
-                    # Handle soft-deleted files
-                    if existing.deleted_at:
-                        existing.deleted_at = None
-                        existing.path = existing.original_path or path
-                        existing.original_path = None
-
-                    # Read current content for external edit check + versioning
-                    old_content = await self._read_content(path, session)
-
-                    if old_content is not None:
-                        await check_external_edit(
-                            existing,
-                            old_content,
-                            session,
-                            versioning=self.version_provider,
-                        )
-
-                    existing.current_version += 1
-                    existing.content_hash = content_hash
-                    existing.size_bytes = size_bytes
-                    existing.updated_at = now
-                    if model.embedding is not None:
-                        existing.embedding = model.embedding
-                    if model.tokens:
-                        existing.tokens = model.tokens
-
-                    if old_content is not None:
-                        await self.version_provider.save_version(session, existing, old_content, content, created_by)
-
-                    await self._write_content(path, content, session)
-                    results_by_idx[idx] = FileOperationResult(
-                        success=True,
-                        message=f"Updated: {path} (v{existing.current_version})",
-                        file=File(path=path, current_version=existing.current_version),
+                existing = existing_map.get(f.path)
+                if existing and not overwrite and not existing.deleted_at:
+                    file_results[idx] = File(
+                        path=f.path,
+                        evidence=[
+                            WriteDetail(
+                                operation="write",
+                                success=False,
+                                message=f"File already exists: {f.path}",
+                            )
+                        ],
                     )
                 else:
-                    # New file — trust model fields, fill in gaps
-                    await self._ensure_parent_dirs(session, path, model.owner_id or owner_id)
-
-                    new_file = self.file_model.model_validate(model.model_dump())
-                    new_file.path = path
-                    new_file.parent_path = split_path(path)[0]
-                    if not new_file.owner_id:
-                        new_file.owner_id = owner_id
-                    if not new_file.created_at:
-                        new_file.created_at = now
-                    if not new_file.updated_at:
-                        new_file.updated_at = now
-                    # System always recomputes hash/size from actual content
-                    new_file.content_hash = content_hash
-                    new_file.size_bytes = size_bytes
-                    if not new_file.mime_type or new_file.mime_type == "text/plain":
-                        _, name = split_path(path)
-                        new_file.mime_type = guess_mime_type(name)
-                    session.add(new_file)
-
-                    await self.version_provider.save_version(session, new_file, "", content, created_by)
-                    await self._write_content(path, content, session)
-                    results_by_idx[idx] = FileOperationResult(
-                        success=True,
-                        message=f"Created: {path} (v1)",
-                        file=File(path=path, current_version=1),
-                    )
+                    # Validate into concrete table model early to catch bad data
+                    self.file_model.model_validate(f.model_dump())
+                    pending.append((idx, f, existing))
             except Exception as e:
-                results_by_idx[idx] = FileOperationResult(
-                    success=False,
-                    message=f"Write failed: {e}",
-                    file=File(path=path),
+                file_results[idx] = File(
+                    path=f.path,
+                    evidence=[
+                        WriteDetail(
+                            operation="write",
+                            success=False,
+                            message=f"Validation failed: {e}",
+                        )
+                    ],
                 )
 
-        await session.flush()
+        # --- Phase 2: Mutate (all session mutations, no results yet) ---
+        records_by_idx: dict[int, FileModelBase] = {}
+        version_records = []
 
-        results = [results_by_idx[i] for i in range(len(files))]
-        succeeded = sum(1 for r in results if r.success)
-        failed = len(results) - succeeded
-        return BatchResult(
+        try:
+            # Parent dirs — deduplicated across new files
+            seen_parents: set[str] = set()
+            for _idx, f, existing in pending:
+                if existing is None:
+                    parent = split_path(f.path)[0]
+                    if parent not in seen_parents:
+                        seen_parents.add(parent)
+                        await self._ensure_parent_dirs(session, f.path, f.owner_id)
+
+            for idx, f, existing in pending:
+                record = self.file_model.model_validate(f.model_dump())
+
+                if existing is not None:
+                    # Update — copy identity from existing, merge incoming
+                    old_content = existing.content or ""
+                    record.id = existing.id
+                    record.current_version = existing.current_version + 1
+                    record.created_at = existing.created_at
+                    record.deleted_at = None
+                    record.original_path = None
+                    await session.merge(record)
+
+                    # Build version record
+                    version_num = record.current_version
+                    new_content = record.content or ""
+                    is_snap = (version_num % SNAPSHOT_INTERVAL == 0) or (version_num == 1)
+                    stored = new_content if is_snap or not old_content else compute_diff(old_content, new_content)
+                    content_hash, size_bytes = compute_content_hash(new_content)
+                    version_records.append(
+                        self.file_version_model(
+                            file_path=record.path,
+                            path=f"{record.path}@{version_num}",
+                            version=version_num,
+                            is_snapshot=is_snap or not old_content,
+                            content=stored,
+                            content_hash=content_hash,
+                            size_bytes=size_bytes,
+                        )
+                    )
+                else:
+                    # Create
+                    session.add(record)
+
+                    new_content = record.content or ""
+                    content_hash, size_bytes = compute_content_hash(new_content)
+                    version_records.append(
+                        self.file_version_model(
+                            file_path=record.path,
+                            path=f"{record.path}@1",
+                            version=1,
+                            is_snapshot=True,
+                            content=new_content,
+                            content_hash=content_hash,
+                            size_bytes=size_bytes,
+                        )
+                    )
+
+                records_by_idx[idx] = record
+
+            if version_records:
+                session.add_all(version_records)
+
+            # Storage provider writes (content-before-commit)
+            if self.storage_provider is not None:
+                for record in records_by_idx.values():
+                    await self.storage_provider.write_content(record.path, record.content or "")
+
+            await session.flush()
+
+            # --- Phase 3: Results (only after flush succeeds) ---
+            for idx, record in records_by_idx.items():
+                is_create = any(existing is None for i, _, existing in pending if i == idx)
+                version = 1 if is_create else record.current_version
+                msg = f"Created: {record.path} (v1)" if is_create else f"Updated: {record.path} (v{version})"
+                file_results[idx] = File(
+                    path=record.path,
+                    current_version=version,
+                    evidence=[
+                        WriteDetail(
+                            operation="write",
+                            success=True,
+                            message=msg,
+                            version=version,
+                        )
+                    ],
+                )
+
+        except Exception as e:
+            for idx, f, _ in pending:
+                if idx not in file_results:
+                    file_results[idx] = File(
+                        path=f.path,
+                        evidence=[
+                            WriteDetail(
+                                operation="write",
+                                success=False,
+                                message=str(e),
+                            )
+                        ],
+                    )
+
+        # Build results in input order
+        result_files = [file_results[i] for i in range(len(files))]
+        succeeded = sum(1 for f in result_files if all(d.success for d in f.details))
+        failed = len(result_files) - succeeded
+        return GroverResult(
             success=failed == 0,
             message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
-            results=results,
-            succeeded=succeeded,
-            failed=failed,
+            files=result_files,
         )
 
     # ------------------------------------------------------------------

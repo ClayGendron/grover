@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
 from grover.exceptions import MountNotFoundError
+from grover.models.internal.results import GroverResult
 from grover.permissions import Permission
 from grover.worker import IndexingMode
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.analyzers import AnalyzerRegistry
+    from grover.models.internal.ref import Directory, File, FileConnection
     from grover.models.internal.results import FileOperationResult
     from grover.mount import Mount, MountRegistry
     from grover.providers.graph.protocol import GraphProvider
@@ -132,3 +135,84 @@ class GroverContext:
         """Get graph for a specific path, or first available mount's graph."""
         gp, _mount = self.resolve_graph_any_with_mount(path)
         return gp
+
+    # ------------------------------------------------------------------
+    # Dispatch helpers
+    # ------------------------------------------------------------------
+
+    def group_by_mount_writable(
+        self,
+        items: list[T],
+        path_fn: Callable[[T], str],
+    ) -> tuple[dict[str, list[T]], str | None]:
+        """Group *items* by mount and verify all mounts are writable.
+
+        *path_fn* extracts the path used to resolve each item's mount.
+
+        Returns ``(groups, None)`` on success, or ``({}, error_message)``
+        if any resolved mount is read-only.
+        """
+        from collections import defaultdict
+
+        groups: dict[str, list[T]] = defaultdict(list)
+        for item in items:
+            mount, _rel = self.registry.resolve(path_fn(item))
+            groups[mount.path].append(item)
+
+        for mount_path in groups:
+            if err := self.check_writable(mount_path):
+                return {}, err
+
+        return dict(groups), None
+
+    @asynccontextmanager
+    async def mount_session(self, path: str) -> AsyncGenerator[tuple[Mount, str, AsyncSession]]:
+        """Resolve path to mount and yield ``(mount, rel_path, session)``.
+
+        Eliminates the three-line dispatch boilerplate
+        (resolve → assert → session) common to single-path operations.
+        """
+        mount, rel_path = self.registry.resolve(path)
+        assert mount.filesystem is not None
+        async with self.session_for(mount) as session:
+            yield mount, rel_path, session
+
+    async def dispatch_to_mounts(
+        self,
+        groups: dict[str, list],
+        handler: Callable[..., Awaitable[GroverResult]],
+    ) -> GroverResult:
+        """Dispatch grouped items to mounts in parallel, merge results.
+
+        *groups* maps mount paths to lists of items.  *handler* is called
+        as ``handler(mount, items, session)`` for each group.
+
+        Results are concatenated (not union-merged by path).  ``success``
+        is ``False`` if any mount result has ``success=False``.  ``message``
+        is left empty — the caller sets it based on method-specific semantics.
+        """
+
+        async def _run(mount_path: str, items: list) -> GroverResult:
+            mount = self.registry.mounts[mount_path]
+            async with self.session_for(mount) as session:
+                return await handler(mount, items, session)
+
+        results = await asyncio.gather(*(_run(mp, items) for mp, items in groups.items()))
+
+        all_files: list[File] = []
+        all_dirs: list[Directory] = []
+        all_conns: list[FileConnection] = []
+        all_success = True
+        for r in results:
+            all_files.extend(r.files)
+            all_dirs.extend(r.directories)
+            all_conns.extend(r.connections)
+            if not r.success:
+                all_success = False
+
+        return GroverResult(
+            files=all_files,
+            directories=all_dirs,
+            connections=all_conns,
+            success=all_success,
+        )

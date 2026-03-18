@@ -27,7 +27,12 @@ if TYPE_CHECKING:
 
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
-    from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
+    from grover.models.internal.results import (
+        FileOperationResult,
+        FileSearchResult,
+        FileSearchSet,
+        GroverResult,
+    )
     from grover.providers.search.extractors import EmbeddableChunk
 
 
@@ -107,10 +112,7 @@ class GroverFileSystem(Protocol):
         file: FileModelBase,
         *,
         overwrite: bool = True,
-        created_by: str = "agent",
         session: AsyncSession,
-        owner_id: str | None = None,
-        user_id: str | None = None,
     ) -> FileOperationResult: ...
 
     async def write_files(
@@ -118,11 +120,8 @@ class GroverFileSystem(Protocol):
         files: list[FileModelBase],
         *,
         overwrite: bool = True,
-        created_by: str = "agent",
         session: AsyncSession,
-        owner_id: str | None = None,
-        user_id: str | None = None,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def edit(
         self,

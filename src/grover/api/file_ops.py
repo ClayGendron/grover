@@ -2,21 +2,33 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from grover.backends.protocol import SupportsReconcile
 from grover.exceptions import MountNotFoundError
+from grover.models.database.file import FileModel
+from grover.models.internal.detail import WriteDetail
 from grover.models.internal.evidence import ListDirEvidence, TreeEvidence
 from grover.models.internal.ref import File
-from grover.models.internal.results import BatchResult, FileOperationResult, FileSearchResult, FileSearchSet
+from grover.models.internal.results import (
+    BatchResult,
+    FileOperationResult,
+    FileSearchResult,
+    FileSearchSet,
+    GroverResult,
+)
 from grover.permissions import Permission
 from grover.ref import Ref
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from grover.api.context import GroverContext
     from grover.models.database.chunk import FileChunkModelBase
     from grover.models.database.file import FileModelBase
+    from grover.mount import Mount
 
 
 class FileOpsMixin:
@@ -43,48 +55,71 @@ class FileOpsMixin:
         offset: int = 0,
         limit: int = 2000,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         path = normalize_path(path)
-        mount, rel_path = self._ctx.registry.resolve(path)
-        assert mount.filesystem is not None
-        async with self._ctx.session_for(mount) as sess:
+        async with self._ctx.mount_session(path) as (mount, rel_path, sess):
             result = await mount.filesystem.read(rel_path, offset, limit, session=sess, user_id=user_id)
-        result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
-        return result
+        return result.rebase(mount.path)
 
     async def write(
         self,
         path: str,
         content: str,
-        *,
         overwrite: bool = True,
+        *,
         user_id: str | None = None,
     ) -> FileOperationResult:
-        path = normalize_path(path)
-        if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+        f = FileModel(path=path, content=content)
+        result = await self.write_files([f], overwrite=overwrite, user_id=user_id)
+        if result.files:
+            file = result.files[0]
+            detail = file.details[0] if file.details else None
+            return FileOperationResult(
+                file=file,
+                success=detail.success if detail else result.success,
+                message=detail.message if detail else result.message,
+            )
+        return FileOperationResult(success=result.success, message=result.message)
 
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.write(
-                    rel_path,
-                    content,
-                    "agent",
+    async def write_files(self,
+        files: list[FileModelBase],
+        overwrite: bool = True,
+        *,
+        user_id: str | None = None,
+    ) -> GroverResult:
+        """Batch write files from model instances."""
+        if not files:
+            return GroverResult(success=True, message="No files to write")
+
+        groups, err = self._ctx.group_by_mount_writable(files, lambda f: f.path)
+        if err:
+            return GroverResult(success=False, message=err)
+
+        async def _handler(mount: Mount, group: list[FileModelBase], session: AsyncSession) -> GroverResult:
+            backend_files = [f.model_copy(update={"path": f.path.removeprefix(mount.path) or "/"}) for f in group]
+            try:
+                result = await mount.filesystem.write_files(
+                    backend_files,
                     overwrite=overwrite,
-                    session=sess,
-                    user_id=user_id,
+                    session=session,
                 )
-            result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
-            if result.success:
-                self._ctx.worker.schedule(
-                    path,
-                    lambda p=path, c=content, u=user_id: self._process_write(p, c, u),  # type: ignore[attr-defined]
+                return result.rebase(mount.path)
+            except Exception as e:
+                return GroverResult(
+                    success=False,
+                    message=str(e),
+                    files=[
+                        File(
+                            path=f.path,
+                            evidence=[WriteDetail(operation="write", success=False, message=str(e))],
+                        )
+                        for f in group
+                    ],
                 )
-            return result
-        except Exception as e:
-            return FileOperationResult(success=False, message=f"Write failed: {e}")
+
+        result = await self._ctx.dispatch_to_mounts(groups, _handler)
+        result.message = f"Wrote {result.succeeded} file(s)" + (f", {result.failed} failed" if result.failed else "")
+        return result
 
     async def edit(
         self,
@@ -94,52 +129,41 @@ class FileOpsMixin:
         *,
         replace_all: bool = False,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+            return GroverResult(success=False, message=err)
 
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.edit(
-                    rel_path,
-                    old,
-                    new,
-                    replace_all,
-                    "agent",
-                    session=sess,
-                    user_id=user_id,
-                )
-            result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
-            if result.success:
-                self._ctx.worker.schedule(
-                    path,
-                    lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
-                )
-            return result
-        except Exception as e:
-            return FileOperationResult(success=False, message=f"Edit failed: {e}")
+        async with self._ctx.mount_session(path) as (mount, rel_path, sess):
+            result = await mount.filesystem.edit(
+                rel_path,
+                old,
+                new,
+                replace_all,
+                "agent",
+                session=sess,
+                user_id=user_id,
+            )
+        result = result.rebase(mount.path)
+        if result.success:
+            self._ctx.worker.schedule(
+                path,
+                lambda p=path, u=user_id: self._process_write(p, None, u),  # type: ignore[attr-defined]
+            )
+        return result
 
-    async def delete(self, path: str, permanent: bool = False, *, user_id: str | None = None) -> FileOperationResult:
+    async def delete(self, path: str, permanent: bool = False, *, user_id: str | None = None) -> GroverResult:
         path = normalize_path(path)
         if err := self._ctx.check_writable(path):
-            return FileOperationResult(success=False, message=err)
+            return GroverResult(success=False, message=err)
 
-        try:
-            mount, rel_path = self._ctx.registry.resolve(path)
-            assert mount.filesystem is not None
-
-            async with self._ctx.session_for(mount) as sess:
-                result = await mount.filesystem.delete(rel_path, permanent, session=sess, user_id=user_id)
-            result.file.path = self._ctx.prefix_path(result.file.path, mount.path) or result.file.path
-            if result.success:
-                self._ctx.worker.cancel(path)
-                self._ctx.worker.schedule_immediate(self._process_delete(path, user_id))  # type: ignore[attr-defined]
-            return result
-        except Exception as e:
-            return FileOperationResult(success=False, message=f"Delete failed: {e}")
+        async with self._ctx.mount_session(path) as (mount, rel_path, sess):
+            result = await mount.filesystem.delete(rel_path, permanent, session=sess, user_id=user_id)
+        result = result.rebase(mount.path)
+        if result.success:
+            self._ctx.worker.cancel(path)
+            self._ctx.worker.schedule_immediate(self._process_delete(path, user_id))  # type: ignore[attr-defined]
+        return result
 
     async def mkdir(
         self,
@@ -226,7 +250,7 @@ class FileOpsMixin:
             for mount in self._ctx.registry.list_mounts():
                 if mount.path == path:
                     return FileOperationResult(
-                        file=File(path=mount.path, is_directory=True),
+                        file=File(path=mount.path),
                         success=True,
                     )
 
@@ -248,11 +272,8 @@ class FileOpsMixin:
 
     def get_permission_info(self, path: str) -> tuple[str, bool]:
         path = normalize_path(path)
-        mount, rel_path = self._ctx.registry.resolve(path)
         permission = self._ctx.registry.get_permission(path)
-        rel_normalized = normalize_path(rel_path)
-        is_override = rel_normalized in mount.read_only_paths
-        return permission.value, is_override
+        return permission.value, False
 
     async def move(
         self, src: str, dest: str, *, user_id: str | None = None, follow: bool = False
@@ -633,7 +654,6 @@ class FileOpsMixin:
         results_by_idx: dict[int, FileOperationResult] = {}
 
         # Group chunks by mount, keeping original indices
-        from collections import defaultdict
 
         mount_groups: dict[str, list[tuple[int, FileChunkModelBase]]] = defaultdict(list)
         for idx, chunk in enumerate(chunks):
@@ -716,131 +736,3 @@ class FileOpsMixin:
             succeeded=succeeded,
             failed=failed,
         )
-
-    # ------------------------------------------------------------------
-    # File write from model (write_file / write_files)
-    # ------------------------------------------------------------------
-
-    async def write_file(
-        self,
-        file: FileModelBase,
-        *,
-        overwrite: bool = True,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        """Write a single file from a model instance."""
-        result = await self.write_files([file], overwrite=overwrite, user_id=user_id)
-        if result.results:
-            return result.results[0]
-        return FileOperationResult(success=result.success, message=result.message, file=File(path=file.path))
-
-    _BATCH_SIZE = 100
-
-    async def write_files(
-        self,
-        files: list[FileModelBase],
-        *,
-        overwrite: bool = True,
-        user_id: str | None = None,
-    ) -> BatchResult:
-        """Batch write files from model instances."""
-        if not files:
-            return BatchResult(success=True, message="No files to write")
-
-        all_results: list[FileOperationResult] = []
-        for start in range(0, len(files), self._BATCH_SIZE):
-            batch = files[start : start + self._BATCH_SIZE]
-            batch_result = await self._write_files_batch(batch, overwrite=overwrite, user_id=user_id)
-            all_results.extend(batch_result.results)
-
-        succeeded = sum(1 for r in all_results if r.success)
-        failed = len(all_results) - succeeded
-        return BatchResult(
-            success=failed == 0,
-            message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
-            results=all_results,
-            succeeded=succeeded,
-            failed=failed,
-        )
-
-    async def _write_files_batch(
-        self,
-        files: list[FileModelBase],
-        *,
-        overwrite: bool,
-        user_id: str | None,
-    ) -> BatchResult:
-        """Process a single batch of <= _BATCH_SIZE files."""
-        try:
-            # Track results by original index
-            results_by_idx: dict[int, FileOperationResult] = {}
-
-            # Group files by mount, keeping original indices
-            from collections import defaultdict
-
-            mount_groups: dict[str, list[tuple[int, FileModelBase]]] = defaultdict(list)
-            for idx, f in enumerate(files):
-                path = normalize_path(f.path)
-                try:
-                    mount, _rel = self._ctx.registry.resolve(path)
-                    mount_groups[mount.path].append((idx, f))
-                except Exception as e:
-                    results_by_idx[idx] = FileOperationResult(success=False, message=str(e), file=File(path=f.path))
-
-            for mount_path, group in mount_groups.items():
-                mount, _ = self._ctx.registry.resolve(mount_path + "/dummy")
-
-                # Check writable
-                if err := self._ctx.check_writable(mount_path + "/dummy"):
-                    for idx, f in group:
-                        results_by_idx[idx] = FileOperationResult(success=False, message=err, file=File(path=f.path))
-                    continue
-
-                assert mount.filesystem is not None
-                async with self._ctx.session_for(mount) as sess:
-                    # Strip mount prefix from paths for backend
-                    backend_files = []
-                    idx_order: list[int] = []
-                    for idx, f in group:
-                        rel_path = normalize_path(f.path).removeprefix(mount.path) or "/"
-                        bf = f.model_copy(update={"path": rel_path})
-                        backend_files.append(bf)
-                        idx_order.append(idx)
-
-                    batch_result = await mount.filesystem.write_files(
-                        backend_files,
-                        overwrite=overwrite,
-                        session=sess,
-                        user_id=user_id,
-                    )
-
-                    # Re-prefix paths and map back to original indices
-                    batch_results_list: list[FileOperationResult] = getattr(batch_result, "results", [])
-                    for i, r in enumerate(batch_results_list):
-                        r.file.path = self._ctx.prefix_path(r.file.path, mount.path) or r.file.path
-                        results_by_idx[idx_order[i]] = r
-
-            # Build ordered results list
-            all_results = [results_by_idx[i] for i in range(len(files))]
-
-            # Schedule background processing for successful writes
-            for f, result in zip(files, all_results, strict=True):
-                if result.success:
-                    path = normalize_path(f.path)
-                    content = f.content if f.content else ""
-                    self._ctx.worker.schedule(
-                        path,
-                        lambda p=path, c=content, u=user_id: self._process_write(p, c, u),  # type: ignore[attr-defined]
-                    )
-
-            succeeded = sum(1 for r in all_results if r.success)
-            failed = len(all_results) - succeeded
-            return BatchResult(
-                success=failed == 0,
-                message=f"Wrote {succeeded} file(s)" + (f", {failed} failed" if failed else ""),
-                results=all_results,
-                succeeded=succeeded,
-                failed=failed,
-            )
-        except Exception as e:
-            return BatchResult(success=False, message=f"Batch write failed: {e}")
