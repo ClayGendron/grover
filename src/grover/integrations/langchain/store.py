@@ -349,7 +349,7 @@ class GroverStore(BaseStore):
         prefix_len = len(self.prefix) + 1  # +1 for trailing /
 
         for f in tree_result.files:  # type: ignore[union-attr]
-            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             if is_dir:
                 continue
             if not f.path.startswith(self.prefix + "/"):
@@ -402,7 +402,7 @@ class GroverStore(BaseStore):
 
         items: list[SearchItem] = []
         for f in tree_result.files:
-            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             if is_dir:
                 continue
             if not f.path.endswith(".json"):
@@ -455,7 +455,7 @@ class GroverStore(BaseStore):
 
         items: list[SearchItem] = []
         for f in tree_result.files:
-            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             if is_dir:
                 continue
             if not f.path.endswith(".json"):

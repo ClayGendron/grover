@@ -50,7 +50,7 @@ async def grover(workspace: Path, tmp_path: Path) -> GroverAsync:
 
 
 def _get_mount(g: GroverAsync, mount_path: str):
-    return next(m for m in g._ctx.registry.list_visible_mounts() if m.path == mount_path)
+    return next(m for m in g._ctx.registry.list_mounts() if m.path == mount_path)
 
 
 PYTHON_CODE = """\

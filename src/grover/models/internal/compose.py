@@ -8,7 +8,7 @@ from grover.models.database.connection import FileConnectionModel
 from grover.models.database.file import FileModel
 from grover.models.database.vector import Vector
 from grover.models.database.version import FileVersionModel
-from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion, Ref
+from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion
 
 # =====================================================================
 # DB model → internal type
@@ -62,8 +62,9 @@ def model_to_version(model: FileVersionModel) -> FileVersion:
 def model_to_connection(model: FileConnectionModel) -> FileConnection:
     """Convert a FileConnectionModel to a FileConnection."""
     return FileConnection(
-        source=Ref(path=model.source_path),
-        target=Ref(path=model.target_path),
+        path=model.path,
+        source_path=model.source_path,
+        target_path=model.target_path,
         type=model.type,
         weight=model.weight,
         created_at=model.created_at,
@@ -112,9 +113,9 @@ def chunk_to_model(chunk: FileChunk, file_path: str) -> FileChunkModel:
 def connection_to_model(conn: FileConnection) -> FileConnectionModel:
     """Convert a FileConnection to a FileConnectionModel."""
     return FileConnectionModel(
-        source_path=conn.source.path,
-        target_path=conn.target.path,
+        source_path=conn.source_path,
+        target_path=conn.target_path,
         type=conn.type,
         weight=conn.weight,
-        path=f"{conn.source.path}[{conn.type}]{conn.target.path}",
+        path=conn.path,
     )

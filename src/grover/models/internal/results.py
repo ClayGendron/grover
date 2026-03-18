@@ -79,7 +79,7 @@ class FileSearchSet:
     @property
     def connection_paths(self) -> tuple[str, ...]:
         """All connection ref-format paths (``source[type]target``)."""
-        return tuple(f"{c.source.path}[{c.type}]{c.target.path}" for c in self.connections)
+        return tuple(f"{c.source_path}[{c.type}]{c.target_path}" for c in self.connections)
 
     def __len__(self) -> int:
         return len(self.files)
@@ -139,7 +139,7 @@ class FileSearchSet:
         """Convert connections to dict keyed by source[type]target."""
         result: dict[str, FileConnection] = {}
         for c in self.connections:
-            key = f"{c.source.path}[{c.type}]{c.target.path}"
+            key = f"{c.source_path}[{c.type}]{c.target_path}"
             result[key] = c
         return result
 
@@ -147,8 +147,9 @@ class FileSearchSet:
     def _merge_connections(c1: FileConnection, c2: FileConnection) -> FileConnection:
         """Merge two connections, combining evidence."""
         return FileConnection(
-            source=c1.source,
-            target=c1.target,
+            path=c1.path,
+            source_path=c1.source_path,
+            target_path=c1.target_path,
             type=c1.type,
             weight=c1.weight,
             distance=c1.distance,
@@ -184,8 +185,9 @@ class FileSearchSet:
         ]
         result.connections = [
             FileConnection(
-                source=Ref(path=(prefix + c.source.path if c.source.path != "/" else prefix)),
-                target=Ref(path=(prefix + c.target.path if c.target.path != "/" else prefix)),
+                path=c.path,
+                source_path=(prefix + c.source_path if c.source_path != "/" else prefix),
+                target_path=(prefix + c.target_path if c.target_path != "/" else prefix),
                 type=c.type,
                 weight=c.weight,
                 distance=c.distance,
@@ -228,8 +230,9 @@ class FileSearchSet:
         result.files = list(merged.values())
         result.connections = [
             FileConnection(
-                source=Ref(path=fn(c.source.path)),
-                target=Ref(path=fn(c.target.path)),
+                path=c.path,
+                source_path=fn(c.source_path),
+                target_path=fn(c.target_path),
                 type=c.type,
                 weight=c.weight,
                 distance=c.distance,
@@ -511,8 +514,8 @@ class GroverResult:
 
     @property
     def paths(self) -> tuple[str, ...]:
-        """All file paths."""
-        return tuple(f.path for f in self.files)
+        """All file and directory paths."""
+        return tuple(f.path for f in self.files) + tuple(d.path for d in self.directories)
 
     @property
     def connection_paths(self) -> tuple[str, ...]:
@@ -523,7 +526,7 @@ class GroverResult:
         return len(self.files)
 
     def __bool__(self) -> bool:
-        return self.success and len(self.files) > 0
+        return True
 
     def __iter__(self) -> Iterator[str]:
         return iter(f.path for f in self.files)

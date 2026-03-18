@@ -59,8 +59,6 @@ def _total_files(result: FileSearchResult) -> int:
     """Count of non-directory entries in a tree result."""
     count = 0
     for f in result.files:
-        if f.is_directory:
-            continue
         # Check TreeEvidence for is_directory (disk backend stores it there)
         tree_ev = next((e for e in f.evidence if isinstance(e, TreeEvidence)), None)
         if tree_ev is None or not tree_ev.is_directory:
@@ -72,9 +70,6 @@ def _total_dirs(result: FileSearchResult) -> int:
     """Count of directory entries in a tree result."""
     count = 0
     for f in result.files:
-        if f.is_directory:
-            count += 1
-            continue
         # Check TreeEvidence for is_directory (disk backend stores it there)
         tree_ev = next((e for e in f.evidence if isinstance(e, TreeEvidence)), None)
         if tree_ev is not None and tree_ev.is_directory:

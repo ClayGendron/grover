@@ -94,7 +94,7 @@ class TestReconcileChainErrors:
             await sess.commit()
 
         # verify_versions through the backend should detect the corruption
-        mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/project")
         assert mount.filesystem is not None
         async with lfs._session_factory() as sess2:
             result = await mount.filesystem.verify_versions("/f.py", session=sess2)

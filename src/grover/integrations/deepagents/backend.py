@@ -48,7 +48,7 @@ def _format_ls_info_entries(entries: object) -> list[FileInfo]:
 
     result: list[FileInfo] = []
     for f in entries.files:  # type: ignore[union-attr]
-        is_dir = f.is_directory or any(isinstance(e, ListDirEvidence) and e.is_directory for e in f.evidence)
+        is_dir = any(isinstance(e, ListDirEvidence) and e.is_directory for e in f.evidence)
         info: FileInfo = {
             "path": f.path,
             "is_dir": is_dir,
@@ -101,7 +101,7 @@ def _format_glob_info(result: object) -> list[FileInfo]:
         glob_ev = next((e for e in f.evidence if isinstance(e, GlobEvidence)), None)
         info: FileInfo = {
             "path": f.path,
-            "is_dir": glob_ev.is_directory if glob_ev else f.is_directory,
+            "is_dir": glob_ev.is_directory if glob_ev else False,
         }
         if glob_ev and glob_ev.size_bytes is not None:
             info["size"] = glob_ev.size_bytes

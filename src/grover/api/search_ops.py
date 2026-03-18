@@ -41,7 +41,7 @@ class SearchOpsMixin:
         try:
             if path == "/":
                 combined = FileSearchResult(success=True, message="")
-                for mount in self._ctx.registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_mounts():
                     assert mount.filesystem is not None
                     mount_candidates = self._split_candidates_for_mount(candidates, mount.path)
                     async with self._ctx.session_for(mount) as sess:
@@ -88,7 +88,7 @@ class SearchOpsMixin:
                 combined_entries: dict[str, list] = {}
                 total_matches = 0
 
-                for mount in self._ctx.registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_mounts():
                     if max_results > 0 and total_matches >= max_results:
                         break
                     assert mount.filesystem is not None
@@ -180,7 +180,7 @@ class SearchOpsMixin:
         has_search = any(
             getattr(mount.filesystem, "search_provider", None) is not None
             and getattr(mount.filesystem, "embedding_provider", None) is not None
-            for mount in self._ctx.registry.list_visible_mounts()
+            for mount in self._ctx.registry.list_mounts()
         )
         if not has_search:
             return FileSearchResult(
@@ -194,7 +194,7 @@ class SearchOpsMixin:
         try:
             if path == "/":
                 final = FileSearchResult(success=True, message="")
-                for mount in self._ctx.registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_mounts():
                     assert mount.filesystem is not None
                     if getattr(mount.filesystem, "search_provider", None) is None:
                         continue
@@ -238,7 +238,7 @@ class SearchOpsMixin:
         try:
             if path == "/":
                 combined = FileSearchResult(success=True, message="")
-                for mount in self._ctx.registry.list_visible_mounts():
+                for mount in self._ctx.registry.list_mounts():
                     assert mount.filesystem is not None
                     async with self._ctx.session_for(mount) as sess:
                         result = await mount.filesystem.lexical_search(query, k=k, session=sess)
@@ -287,9 +287,9 @@ class SearchOpsMixin:
         has_vector = any(
             getattr(mount.filesystem, "search_provider", None) is not None
             and getattr(mount.filesystem, "embedding_provider", None) is not None
-            for mount in self._ctx.registry.list_visible_mounts()
+            for mount in self._ctx.registry.list_mounts()
         )
-        has_lexical = any(mount.filesystem is not None for mount in self._ctx.registry.list_visible_mounts())
+        has_lexical = any(mount.filesystem is not None for mount in self._ctx.registry.list_mounts())
 
         if has_vector:
             vec_result = await self.vector_search(query, k=k, path=path, candidates=candidates, user_id=user_id)

@@ -79,7 +79,8 @@ class FileOpsMixin:
         f = FileModel(path=path, content=content)
         return await self.write_files([f], overwrite=overwrite, user_id=user_id)
 
-    async def write_files(self,
+    async def write_files(
+        self,
         files: list[FileModelBase],
         overwrite: bool = True,
         *,
@@ -176,7 +177,11 @@ class FileOpsMixin:
         return result.rebase(mount.path)
 
     async def move(
-        self, src: str, dest: str, *, user_id: str | None = None,
+        self,
+        src: str,
+        dest: str,
+        *,
+        user_id: str | None = None,
     ) -> GroverResult:
         return await self.move_files([(src, dest)], user_id=user_id)
 
@@ -270,10 +275,7 @@ class FileOpsMixin:
 
         # Files: true batch
         if file_pairs:
-            rel_pairs = [
-                (s.removeprefix(mount.path) or "/", d.removeprefix(mount.path) or "/")
-                for s, d in file_pairs
-            ]
+            rel_pairs = [(s.removeprefix(mount.path) or "/", d.removeprefix(mount.path) or "/") for s, d in file_pairs]
             async with self._ctx.session_for(mount) as session:
                 result = await mount.filesystem.move_files(rel_pairs, session=session)
             if not result.success:
@@ -380,7 +382,9 @@ class FileOpsMixin:
                     result = await src_mount.filesystem.copy(src_rel, dest_rel, session=session, user_id=user_id)
                 if not result.success:
                     return GroverResult(
-                        success=False, message=f"Copy failed: {src} -> {dest}: {result.message}", files=all_files,
+                        success=False,
+                        message=f"Copy failed: {src} -> {dest}: {result.message}",
+                        files=all_files,
                     )
                 result.file.path = self._ctx.prefix_path(result.file.path, dest_mount.path) or result.file.path
                 all_files.append(result.file)
@@ -395,10 +399,7 @@ class FileOpsMixin:
         for mount_path, file_pairs in same_mount_file_pairs.items():
             mount = self._ctx.registry.mounts[mount_path]
             assert mount.filesystem is not None
-            rel_pairs = [
-                (s.removeprefix(mount.path) or "/", d.removeprefix(mount.path) or "/")
-                for s, d in file_pairs
-            ]
+            rel_pairs = [(s.removeprefix(mount.path) or "/", d.removeprefix(mount.path) or "/") for s, d in file_pairs]
             async with self._ctx.session_for(mount) as session:
                 result = await mount.filesystem.copy_files(rel_pairs, session=session)
             if not result.success:
@@ -444,10 +445,7 @@ class FileOpsMixin:
         return result.rebase(mount.path)
 
     def _list_root(self) -> GroverResult:
-        dirs = [
-            Directory(path=mount.path)
-            for mount in self._ctx.registry.list_mounts()
-        ]
+        dirs = [Directory(path=mount.path) for mount in self._ctx.registry.list_mounts()]
         return GroverResult(
             success=True,
             message=f"Found {len(dirs)} mount(s)",
@@ -473,7 +471,10 @@ class FileOpsMixin:
                     async with self._ctx.session_for(mount) as session:
                         mount_depth = max_depth - 1 if max_depth is not None else None
                         result = await mount.filesystem.tree(
-                            "/", max_depth=mount_depth, session=session, user_id=user_id,
+                            "/",
+                            max_depth=mount_depth,
+                            session=session,
+                            user_id=user_id,
                         )
                     if result.success:
                         combined = combined | result.rebase(mount.path)
@@ -482,7 +483,10 @@ class FileOpsMixin:
 
         async with self._ctx.mount_session(path) as (mount, rel_path, session):
             result = await mount.filesystem.tree(
-                rel_path, max_depth=max_depth, session=session, user_id=user_id,
+                rel_path,
+                max_depth=max_depth,
+                session=session,
+                user_id=user_id,
             )
         return result.rebase(mount.path)
 
@@ -530,7 +534,7 @@ class FileOpsMixin:
 
     async def restore_version(self, path: str, version: int, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)
-        if err := self._ctx.check_writable(path):
+        if (err := self._ctx.check_writable(path)) is not None:
             return FileOperationResult(success=False, message=err.message)
 
         mount, rel_path = self._ctx.registry.resolve(path)
@@ -564,7 +568,7 @@ class FileOpsMixin:
 
     async def restore_from_trash(self, path: str, *, user_id: str | None = None) -> FileOperationResult:
         path = normalize_path(path)
-        if err := self._ctx.check_writable(path):
+        if (err := self._ctx.check_writable(path)) is not None:
             return FileOperationResult(success=False, message=err.message)
 
         mount, rel_path = self._ctx.registry.resolve(path)
@@ -678,7 +682,9 @@ class FileOpsMixin:
             if err := self._ctx.check_writable(mount_path + "/dummy"):
                 for idx, c in group:
                     results_by_idx[idx] = FileOperationResult(
-                        success=False, message=err.message, file=File(path=c.path),
+                        success=False,
+                        message=err.message,
+                        file=File(path=c.path),
                     )
                 continue
 

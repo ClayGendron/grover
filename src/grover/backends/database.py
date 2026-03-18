@@ -290,12 +290,14 @@ class DatabaseFileSystem:
         )
         if not op.success:
             return GroverResult(success=False, message=op.message)
-        op.file.evidence = [ReadDetail(
-            operation="read",
-            success=True,
-            message=op.message,
-            offset=offset,
-        )]
+        op.file.evidence = [
+            ReadDetail(
+                operation="read",
+                success=True,
+                message=op.message,
+                offset=offset,
+            )
+        ]
         return GroverResult(success=True, message=op.message, files=[op.file])
 
     async def read_files(
@@ -316,21 +318,37 @@ class DatabaseFileSystem:
             rec = records.get(path)
             if rec is None or rec.is_directory:
                 msg = f"File not found: {path}" if rec is None else f"Path is a directory: {path}"
-                result_files.append(File(path=path, evidence=[
-                    ReadDetail(operation="read", success=False, message=msg),
-                ]))
+                result_files.append(
+                    File(
+                        path=path,
+                        evidence=[
+                            ReadDetail(operation="read", success=False, message=msg),
+                        ],
+                    )
+                )
                 continue
 
             content = rec.content if self.storage_provider is None else await self._read_content(path, session)
             if content is None:
-                result_files.append(File(path=path, evidence=[
-                    ReadDetail(operation="read", success=False, message=f"Content not found: {path}"),
-                ]))
+                result_files.append(
+                    File(
+                        path=path,
+                        evidence=[
+                            ReadDetail(operation="read", success=False, message=f"Content not found: {path}"),
+                        ],
+                    )
+                )
                 continue
 
-            result_files.append(File(path=path, content=content, evidence=[
-                ReadDetail(operation="read", success=True, message=f"Read {path}"),
-            ]))
+            result_files.append(
+                File(
+                    path=path,
+                    content=content,
+                    evidence=[
+                        ReadDetail(operation="read", success=True, message=f"Read {path}"),
+                    ],
+                )
+            )
 
         succeeded = sum(1 for f in result_files if all(d.success for d in f.details))
         failed = len(result_files) - succeeded
@@ -391,12 +409,14 @@ class DatabaseFileSystem:
         )
         if not op.success:
             return GroverResult(success=False, message=op.message)
-        op.file.evidence = [WriteDetail(
-            operation="edit",
-            success=True,
-            message=op.message,
-            version=op.file.current_version,
-        )]
+        op.file.evidence = [
+            WriteDetail(
+                operation="edit",
+                success=True,
+                message=op.message,
+                version=op.file.current_version,
+            )
+        ]
         return GroverResult(success=True, message=op.message, files=[op.file])
 
     async def delete(
@@ -418,12 +438,14 @@ class DatabaseFileSystem:
         )
         if not op.success:
             return GroverResult(success=False, message=op.message)
-        op.file.evidence = [DeleteDetail(
-            operation="delete",
-            success=True,
-            message=op.message,
-            permanent=permanent,
-        )]
+        op.file.evidence = [
+            DeleteDetail(
+                operation="delete",
+                success=True,
+                message=op.message,
+                permanent=permanent,
+            )
+        ]
         return GroverResult(success=True, message=op.message, files=[op.file])
 
     async def mkdir(
@@ -479,7 +501,7 @@ class DatabaseFileSystem:
     ) -> GroverResult:
         path = normalize_path(path)
         if path == "/":
-            return GroverResult(success=True, directories=[Directory(path=path)])
+            return GroverResult(success=True, message="exists", directories=[Directory(path=path)])
 
         ref = Ref(path)
 
@@ -487,69 +509,85 @@ class DatabaseFileSystem:
             model = self.file_connection_model
             record = (await session.execute(select(model).where(model.path == path))).scalar_one_or_none()
             if record is None:
-                return GroverResult(success=False)
+                return GroverResult(success=False, message="not found")
             return GroverResult(
                 success=True,
-                connections=[FileConnection(
-                    path=record.path,
-                    source_path=record.source_path,
-                    target_path=record.target_path,
-                    type=record.type,
-                    weight=record.weight,
-                )],
+                message="exists",
+                connections=[
+                    FileConnection(
+                        path=record.path,
+                        source_path=record.source_path,
+                        target_path=record.target_path,
+                        type=record.type,
+                        weight=record.weight,
+                    )
+                ],
             )
 
         if ref.is_chunk:
             model = self.file_chunk_model
             record = (await session.execute(select(model).where(model.path == path))).scalar_one_or_none()
             if record is None:
-                return GroverResult(success=False)
+                return GroverResult(success=False, message="not found")
             return GroverResult(
                 success=True,
-                files=[File(
-                    path=ref.base_path,
-                    chunks=[FileChunk(
-                        path=record.path,
-                        name=ref.chunk or "",
-                        content=record.content,
-                        line_start=record.line_start,
-                        line_end=record.line_end,
-                    )],
-                )],
+                message="exists",
+                files=[
+                    File(
+                        path=ref.base_path,
+                        chunks=[
+                            FileChunk(
+                                path=record.path,
+                                name=ref.chunk or "",
+                                content=record.content,
+                                line_start=record.line_start,
+                                line_end=record.line_end,
+                            )
+                        ],
+                    )
+                ],
             )
 
         if ref.is_version:
             model = self.file_version_model
             record = (await session.execute(select(model).where(model.path == path))).scalar_one_or_none()
             if record is None:
-                return GroverResult(success=False)
+                return GroverResult(success=False, message="not found")
             return GroverResult(
                 success=True,
-                files=[File(
-                    path=ref.base_path,
-                    versions=[FileVersion(
-                        path=record.path,
-                        number=record.version,
-                    )],
-                )],
+                message="exists",
+                files=[
+                    File(
+                        path=ref.base_path,
+                        versions=[
+                            FileVersion(
+                                path=record.path,
+                                number=record.version,
+                            )
+                        ],
+                    )
+                ],
             )
 
         # File or directory
         file = await self._get_file_record(session, path)
         if file is None:
-            return GroverResult(success=False)
+            return GroverResult(success=False, message="not found")
         if file.is_directory:
-            return GroverResult(success=True, directories=[Directory(path=path)])
+            return GroverResult(success=True, message="exists", directories=[Directory(path=path)])
         return GroverResult(
             success=True,
-            files=[File(
-                path=file.path,
-                size_bytes=file.size_bytes,
-                mime_type=file.mime_type,
-                current_version=file.current_version,
-                created_at=file.created_at,
-                updated_at=file.updated_at,
-            )],
+            message="exists",
+            files=[
+                File(
+                    path=file.path,
+                    size_bytes=file.size_bytes,
+                    mime_type=file.mime_type,
+                    current_version=file.current_version,
+                    created_at=file.created_at,
+                    updated_at=file.updated_at,
+                )
+            ],
         )
 
     async def move(
@@ -569,6 +607,7 @@ class DatabaseFileSystem:
             versioning=self.version_provider,
             ensure_parent_dirs=self._ensure_parent_dirs,
             file_model=self.file_model,
+            file_version_model=self.file_version_model,
             read_content=self._read_content,
             write_content=self._write_content,
             delete_content=self._delete_content,
@@ -680,39 +719,62 @@ class DatabaseFileSystem:
                     v = dest_rec.current_version
                     is_snap = (v % SNAPSHOT_INTERVAL == 0) or (v == 1)
                     stored = content if is_snap or not old_dest_content else compute_diff(old_dest_content, content)
-                    version_records.append(self.file_version_model(
-                        file_path=dest, path=f"{dest}@{v}", version=v,
-                        is_snapshot=is_snap or not old_dest_content,
-                        content=stored, content_hash=content_hash, size_bytes=size_bytes,
-                    ))
+                    version_records.append(
+                        self.file_version_model(
+                            file_path=dest,
+                            path=f"{dest}@{v}",
+                            version=v,
+                            is_snapshot=is_snap or not old_dest_content,
+                            content=stored,
+                            content_hash=content_hash,
+                            size_bytes=size_bytes,
+                        )
+                    )
                     version = v
                 else:
                     dest_parent, dest_name = split_path(dest)
                     new_file = self.file_model(
-                        path=dest, parent_path=dest_parent, owner_id=src_rec.owner_id,
-                        content_hash=content_hash, size_bytes=size_bytes,
+                        path=dest,
+                        parent_path=dest_parent,
+                        owner_id=src_rec.owner_id,
+                        content_hash=content_hash,
+                        size_bytes=size_bytes,
                         mime_type=guess_mime_type(dest_name),
-                        created_at=now, updated_at=now,
+                        created_at=now,
+                        updated_at=now,
                     )
                     session.add(new_file)
-                    version_records.append(self.file_version_model(
-                        file_path=dest, path=f"{dest}@1", version=1,
-                        is_snapshot=True, content=content,
-                        content_hash=content_hash, size_bytes=size_bytes,
-                    ))
+                    version_records.append(
+                        self.file_version_model(
+                            file_path=dest,
+                            path=f"{dest}@1",
+                            version=1,
+                            is_snapshot=True,
+                            content=content,
+                            content_hash=content_hash,
+                            size_bytes=size_bytes,
+                        )
+                    )
                     version = 1
 
                 if self.storage_provider is not None:
                     await self.storage_provider.write_content(dest, content)
 
-                file_results.append(File(
-                    path=dest, current_version=version,
-                    evidence=[MoveDetail(
-                        operation="move", success=True,
-                        message=f"Moved {src} -> {dest}",
-                        source_path=src, version=version,
-                    )],
-                ))
+                file_results.append(
+                    File(
+                        path=dest,
+                        current_version=version,
+                        evidence=[
+                            MoveDetail(
+                                operation="move",
+                                success=True,
+                                message=f"Moved {src} -> {dest}",
+                                source_path=src,
+                                version=version,
+                            )
+                        ],
+                    )
+                )
 
             if version_records:
                 session.add_all(version_records)
@@ -720,10 +782,22 @@ class DatabaseFileSystem:
 
         except Exception as e:
             return GroverResult(
-                success=False, message=str(e),
-                files=[File(path=d, evidence=[MoveDetail(
-                    operation="move", success=False, message=str(e), source_path=s,
-                )]) for s, d in normalized],
+                success=False,
+                message=str(e),
+                files=[
+                    File(
+                        path=d,
+                        evidence=[
+                            MoveDetail(
+                                operation="move",
+                                success=False,
+                                message=str(e),
+                                source_path=s,
+                            )
+                        ],
+                    )
+                    for s, d in normalized
+                ],
             )
 
         return GroverResult(
@@ -770,9 +844,14 @@ class DatabaseFileSystem:
             src_path = src_by_dest.get(f.path, "")
             f.evidence = [
                 CopyDetail(
-                    operation="copy", success=d.success, message=d.message,
-                    source_path=src_path, version=d.version,
-                ) if isinstance(d, WriteDetail) else d
+                    operation="copy",
+                    success=d.success,
+                    message=d.message,
+                    source_path=src_path,
+                    version=d.version,
+                )
+                if isinstance(d, WriteDetail)
+                else d
                 for d in f.evidence
             ]
 
@@ -858,16 +937,18 @@ class DatabaseFileSystem:
         files: list[File] = []
         for f in matched:
             info = file_to_info(f)
+            is_dir = isinstance(info, Directory)
+            size = 0 if is_dir else info.size_bytes
+            mime = "" if is_dir else info.mime_type
             files.append(
                 File(
                     path=info.path,
-                    is_directory=info.is_directory,
                     evidence=[
                         GlobEvidence(
                             operation="glob",
-                            is_directory=info.is_directory,
-                            size_bytes=info.size_bytes,
-                            mime_type=info.mime_type,
+                            is_directory=is_dir,
+                            size_bytes=size,
+                            mime_type=mime,
                         )
                     ],
                 )
@@ -948,7 +1029,11 @@ class DatabaseFileSystem:
                     message=glob_result.message,
                 )
             # Extract non-directory paths from glob result
-            candidate_paths = [f.path for f in glob_result.files if not f.is_directory]
+            candidate_paths = [
+                f.path
+                for f in glob_result.files
+                if not any(isinstance(e, GlobEvidence) and e.is_directory for e in f.evidence)
+            ]
         else:
             model = self.file_model
             if path != "/":
@@ -1107,14 +1192,16 @@ class DatabaseFileSystem:
             if f.is_directory:
                 directories.append(Directory(path=f.path))
             else:
-                files.append(File(
-                    path=f.path,
-                    size_bytes=f.size_bytes,
-                    mime_type=f.mime_type,
-                    current_version=f.current_version,
-                    created_at=f.created_at,
-                    updated_at=f.updated_at,
-                ))
+                files.append(
+                    File(
+                        path=f.path,
+                        size_bytes=f.size_bytes,
+                        mime_type=f.mime_type,
+                        current_version=f.current_version,
+                        created_at=f.created_at,
+                        updated_at=f.updated_at,
+                    )
+                )
 
         files.sort(key=lambda f: f.path)
         directories.sort(key=lambda d: d.path)
@@ -1251,8 +1338,9 @@ class DatabaseFileSystem:
 
         count = len(db_files)
         for file in db_files:
-            await self.version_provider.delete_versions(session, file.id)
-            await self._delete_content(file.original_path or file.path, session)
+            original = file.original_path or file.path
+            await self.version_provider.delete_versions(session, original)
+            await self._delete_content(original, session)
             await session.delete(file)
 
         await session.flush()
@@ -1410,8 +1498,9 @@ class DatabaseFileSystem:
         db_connections = list(result.scalars().all())
         connections = [
             FileConnection(
-                source=Ref(path=c.source_path),
-                target=Ref(path=c.target_path),
+                path=c.path,
+                source_path=c.source_path,
+                target_path=c.target_path,
                 type=c.type,
                 weight=c.weight,
             )

@@ -270,7 +270,7 @@ class IndexMixin:
         if mount_path is not None:
             await self._walk_and_index(mount_path, stats)
         else:
-            for mount in self._ctx.registry.list_visible_mounts():
+            for mount in self._ctx.registry.list_mounts():
                 await self._walk_and_index(mount.path, stats)
 
         return stats

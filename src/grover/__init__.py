@@ -9,8 +9,10 @@ from grover.backends.user_scoped import UserScopedFileSystem
 from grover.client import Grover, GroverAsync
 from grover.models.config import EngineConfig, SessionConfig, create_async_engine_factory
 from grover.models.internal.detail import (
+    CopyDetail,
     DeleteDetail,
     Detail,
+    MoveDetail,
     ReadDetail,
     WriteDetail,
 )
@@ -73,6 +75,7 @@ from grover.worker import IndexingMode
 __all__ = [
     "BatchResult",
     "ChunkProvider",
+    "CopyDetail",
     "DefaultChunkProvider",
     "DefaultVersionProvider",
     "DeleteDetail",
@@ -106,6 +109,7 @@ __all__ = [
     "LineMatch",
     "ListDirEvidence",
     "Mount",
+    "MoveDetail",
     "ReadDetail",
     "Ref",
     "SearchProvider",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from grover.models.internal.ref import File
 from grover.providers.chunks.protocol import ChunkProvider
 from grover.providers.graph import RustworkxGraph
 from grover.providers.graph.protocol import GraphProvider
@@ -166,14 +167,14 @@ class TestDiskStorageGetInfo:
         info = await dsp.get_info("/info.txt")
         assert info.success
         assert info.file.path == "/info.txt"
-        assert not info.file.is_directory
+        assert isinstance(info.file, File)
 
     async def test_get_info_directory(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)
         await dsp.mkdir("/mydir")
         info = await dsp.get_info("/mydir")
         assert info.success
-        assert info.file.is_directory
+        assert info.file.path == "/mydir"
 
     async def test_get_info_missing(self, tmp_path: Path) -> None:
         dsp = DiskStorageProvider(tmp_path)

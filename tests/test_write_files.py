@@ -66,8 +66,8 @@ class TestWrite:
     async def test_write_creates_new(self, grover: GroverAsync):
         result = await grover.write("/project/a.py", "print('hi')\n")
         assert result.success is True
-        assert "Created" in result.message
         assert result.file.current_version == 1
+        assert "Created" in result.file.details[0].message
 
         read = await grover.read("/project/a.py")
         assert read.success is True
@@ -78,7 +78,7 @@ class TestWrite:
 
         result = await grover.write("/project/a.py", "v2\n")
         assert result.success is True
-        assert "Created" not in result.message
+        assert "Created" not in result.file.details[0].message
         assert result.file.current_version == 2
 
         read = await grover.read("/project/a.py")
@@ -253,7 +253,7 @@ class TestWriteFilesSync:
     def test_write_sync(self, grover_sync: Grover):
         result = grover_sync.write("/project/a.py", "print('hi')\n")
         assert result.success is True
-        assert "Created" in result.message
+        assert "Created" in result.file.details[0].message
 
     def test_write_files_sync(self, grover_sync: Grover):
         files = [
@@ -321,8 +321,8 @@ class TestWriteFilesModelFlowThrough:
         result = await grover_no_search.write_files([f])
         assert result.succeeded == 1
 
-        info = await grover_no_search.get_info("/project/embed.py")
-        assert info.success is True
+        exists = await grover_no_search.exists("/project/embed.py")
+        assert exists.success is True
 
     async def test_write_files_preserves_tokens(self, grover_no_search: GroverAsync):
         """Tokens set on model is persisted to DB."""

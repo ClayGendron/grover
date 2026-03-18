@@ -283,8 +283,7 @@ class TestVectorSearchQueryApi:
         )
         try:
             has_search = any(
-                getattr(m.filesystem, "search_provider", None) is not None
-                for m in g._ctx.registry.list_visible_mounts()
+                getattr(m.filesystem, "search_provider", None) is not None for m in g._ctx.registry.list_mounts()
             )
             if has_search:
                 pytest.skip("search provider is installed; search available")

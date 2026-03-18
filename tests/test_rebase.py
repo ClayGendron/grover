@@ -10,7 +10,7 @@ from grover.models.internal.evidence import (
     ListDirEvidence,
     TreeEvidence,
 )
-from grover.models.internal.ref import File, FileConnection, Ref
+from grover.models.internal.ref import File, FileConnection
 from grover.models.internal.results import FileSearchResult
 
 # =====================================================================
@@ -23,7 +23,6 @@ def _glob(paths: dict[str, bool], *, pattern: str = "*.py") -> FileSearchResult:
     files = [
         File(
             path=p,
-            is_directory=is_d,
             evidence=[GlobEvidence(operation="glob", is_directory=is_d, size_bytes=100)],
         )
         for p, is_d in paths.items()
@@ -62,7 +61,6 @@ def _tree(paths: dict[str, tuple[int, bool]]) -> FileSearchResult:
     files = [
         File(
             path=p,
-            is_directory=is_d,
             evidence=[TreeEvidence(operation="tree", depth=depth, is_directory=is_d)],
         )
         for p, (depth, is_d) in paths.items()
@@ -79,7 +77,6 @@ def _list_dir(paths: dict[str, bool]) -> FileSearchResult:
     files = [
         File(
             path=p,
-            is_directory=is_d,
             evidence=[ListDirEvidence(operation="list_dir", is_directory=is_d)],
         )
         for p, is_d in paths.items()
@@ -201,8 +198,9 @@ class TestRebase:
 
     def test_rebase_transforms_connections(self) -> None:
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
             evidence=[Evidence(operation="graph")],
         )
@@ -210,8 +208,8 @@ class TestRebase:
         rebased = r.rebase("/mount")
         assert len(rebased.connections) == 1
         rc = rebased.connections[0]
-        assert rc.source.path == "/mount/a.py"
-        assert rc.target.path == "/mount/b.py"
+        assert rc.source_path == "/mount/a.py"
+        assert rc.target_path == "/mount/b.py"
 
 
 # =====================================================================
@@ -283,8 +281,9 @@ class TestRemapPaths:
 
     def test_remap_paths_transforms_connections(self) -> None:
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
             evidence=[Evidence(operation="graph")],
         )
@@ -292,5 +291,5 @@ class TestRemapPaths:
         remapped = r.remap_paths(lambda p: "/new" + p)
         assert len(remapped.connections) == 1
         rc = remapped.connections[0]
-        assert rc.source.path == "/new/a.py"
-        assert rc.target.path == "/new/b.py"
+        assert rc.source_path == "/new/a.py"
+        assert rc.target_path == "/new/b.py"

@@ -45,7 +45,7 @@ class GraphOpsMixin:
         """Return all mounts that have a graph provider."""
         return [
             m
-            for m in self._ctx.registry.list_visible_mounts()
+            for m in self._ctx.registry.list_mounts()
             if m.filesystem is not None and getattr(m.filesystem, "graph_provider", None) is not None
         ]
 
@@ -94,7 +94,7 @@ class GraphOpsMixin:
         if err := self._ctx.check_writable(source_path):
             return None, FileOperationResult(
                 success=False,
-                message=err,
+                message=err.message,
             )
 
         try:

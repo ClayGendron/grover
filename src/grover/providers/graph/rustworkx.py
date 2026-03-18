@@ -12,7 +12,7 @@ import rustworkx
 
 from grover.models.database.connection import FileConnectionModel, FileConnectionModelBase
 from grover.models.internal.evidence import Evidence, GraphCentralityEvidence, GraphRelationshipEvidence
-from grover.models.internal.ref import File, FileConnection, Ref
+from grover.models.internal.ref import File, FileConnection
 from grover.models.internal.results import FileSearchResult, FileSearchSet
 from grover.ref import Ref as LegacyRef
 
@@ -461,7 +461,7 @@ class RustworkxGraph:
         connections: list[FileConnection] = []
         for s in visited:
             connections.extend(
-                FileConnection(source=Ref(path=s), target=Ref(path=t), type="", weight=1.0, evidence=ev)
+                FileConnection(path=f"{s}[]{t}", source_path=s, target_path=t, type="", weight=1.0, evidence=ev)
                 for t in self.edges_out.get(s, ())
                 if t in visited
             )
@@ -486,7 +486,7 @@ class RustworkxGraph:
         connections: list[FileConnection] = []
         for s in node_set:
             connections.extend(
-                FileConnection(source=Ref(path=s), target=Ref(path=t), type="", weight=1.0, evidence=ev)
+                FileConnection(path=f"{s}[]{t}", source_path=s, target_path=t, type="", weight=1.0, evidence=ev)
                 for t in edges_out.get(s, ())
                 if t in node_set
             )
@@ -612,7 +612,7 @@ class RustworkxGraph:
         connections: list[FileConnection] = []
         for s in kept:
             connections.extend(
-                FileConnection(source=Ref(path=s), target=Ref(path=t), type="", weight=1.0, evidence=ev)
+                FileConnection(path=f"{s}[]{t}", source_path=s, target_path=t, type="", weight=1.0, evidence=ev)
                 for t in edges_out.get(s, ())
                 if t in kept
             )
@@ -692,7 +692,7 @@ class RustworkxGraph:
         node_set = {f.path for f in meeting.files}
         edges_out: dict[str, set[str]] = {}
         for c in meeting.connections:
-            edges_out.setdefault(c.source.path, set()).add(c.target.path)
+            edges_out.setdefault(c.source_path, set()).add(c.target_path)
 
         return await asyncio.to_thread(self._min_meeting_impl, node_set, edges_out, candidate_paths)
 
@@ -778,7 +778,7 @@ class RustworkxGraph:
             sub_nodes = frozenset(f.path for f in candidates.files)
             sub_edges_out: dict[str, frozenset[str]] = {}
             for cc in candidates.connections:
-                s, t = cc.source.path, cc.target.path
+                s, t = cc.source_path, cc.target_path
                 existing = sub_edges_out.get(s, frozenset())
                 sub_edges_out[s] = existing | frozenset([t])
             return RustworkxGraph._build_graph_from(sub_nodes, sub_edges_out)

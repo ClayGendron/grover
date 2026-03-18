@@ -18,7 +18,7 @@ from grover.models.internal.compose import (
     model_to_file,
     model_to_version,
 )
-from grover.models.internal.ref import File, FileChunk, FileConnection, Ref
+from grover.models.internal.ref import File, FileChunk, FileConnection
 
 
 class TestModelToFile:
@@ -26,7 +26,7 @@ class TestModelToFile:
         m = FileModel(path="/a.py", is_directory=False, content="x = 1", lines=1)
         f = model_to_file(m)
         assert f.path == "/a.py"
-        assert f.is_directory is False
+        assert isinstance(f, File)
         assert f.content == "x = 1"
         assert f.lines == 1
         assert f.embedding is None
@@ -69,7 +69,7 @@ class TestModelToFile:
     def test_directory(self):
         m = FileModel(path="/src", is_directory=True)
         f = model_to_file(m)
-        assert f.is_directory is True
+        assert f.path == "/src"
 
     def test_current_version(self):
         m = FileModel(path="/a.py", current_version=5)
@@ -152,8 +152,8 @@ class TestModelToConnection:
             weight=0.8,
         )
         c = model_to_connection(m)
-        assert c.source.path == "/a.py"
-        assert c.target.path == "/b.py"
+        assert c.source_path == "/a.py"
+        assert c.target_path == "/b.py"
         assert c.type == "imports"
         assert c.weight == 0.8
 
@@ -194,9 +194,9 @@ class TestFileToModel:
         assert m.embedding is None
 
     def test_directory(self):
-        f = File(path="/src", is_directory=True)
+        f = File(path="/src")
         m = file_to_model(f)
-        assert m.is_directory is True
+        assert m.path == "/src"
 
 
 class TestChunkToModel:
@@ -225,8 +225,9 @@ class TestChunkToModel:
 class TestConnectionToModel:
     def test_basic(self):
         c = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
             weight=0.5,
         )
@@ -275,15 +276,16 @@ class TestRoundTrip:
 
     def test_connection_round_trip(self):
         original = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
             weight=0.7,
         )
         model = connection_to_model(original)
         restored = model_to_connection(model)
-        assert restored.source.path == original.source.path
-        assert restored.target.path == original.target.path
+        assert restored.source_path == original.source_path
+        assert restored.target_path == original.target_path
         assert restored.type == original.type
         assert restored.weight == original.weight
 

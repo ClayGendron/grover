@@ -167,7 +167,7 @@ class GroverLoader(BaseLoader):
 
         entries = []
         for f in result.files:
-            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             entries.append({"path": f.path, "is_directory": is_dir, "size_bytes": None})
         return entries
 
@@ -181,6 +181,6 @@ class GroverLoader(BaseLoader):
 
         entries = []
         for f in result.files:
-            is_dir = f.is_directory or any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
+            is_dir = any(isinstance(e, TreeEvidence) and e.is_directory for e in f.evidence)
             entries.append({"path": f.path, "is_directory": is_dir, "size_bytes": None})
         return entries

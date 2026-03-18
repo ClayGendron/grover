@@ -50,8 +50,9 @@ class TestFileSearchResultConstruction:
 
     def test_with_connections(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
         r = FileSearchResult(connections=[conn])
@@ -181,8 +182,9 @@ class TestFileSearchResultSetAlgebra:
 
     def test_connection_intersection(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
             evidence=[Evidence(operation="graph")],
         )
@@ -194,13 +196,15 @@ class TestFileSearchResultSetAlgebra:
 
     def test_connection_union(self):
         conn1 = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
         conn2 = FileConnection(
-            source=Ref(path="/c.py"),
-            target=Ref(path="/d.py"),
+            path="/c.py[imports]/d.py",
+            source_path="/c.py",
+            target_path="/d.py",
             type="imports",
         )
         r1 = FileSearchResult(connections=[conn1])
@@ -222,14 +226,15 @@ class TestFileSearchResultRebase:
 
     def test_rebase_connections(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
         r = FileSearchResult(connections=[conn])
         rebased = r.rebase("/mount")
-        assert rebased.connections[0].source.path == "/mount/a.py"
-        assert rebased.connections[0].target.path == "/mount/b.py"
+        assert rebased.connections[0].source_path == "/mount/a.py"
+        assert rebased.connections[0].target_path == "/mount/b.py"
 
     def test_rebase_preserves_evidence(self):
         r = FileSearchResult(files=[File(path="/a.py", evidence=[Evidence(operation="glob")])])
@@ -265,14 +270,15 @@ class TestFileSearchResultRemapPaths:
 
     def test_remap_connections(self):
         conn = FileConnection(
-            source=Ref(path="/src/a.py"),
-            target=Ref(path="/src/b.py"),
+            path="/src/a.py[imports]/src/b.py",
+            source_path="/src/a.py",
+            target_path="/src/b.py",
             type="imports",
         )
         r = FileSearchResult(connections=[conn])
         result = r.remap_paths(lambda p: p.replace("/src", "/dst"))
-        assert result.connections[0].source.path == "/dst/a.py"
-        assert result.connections[0].target.path == "/dst/b.py"
+        assert result.connections[0].source_path == "/dst/a.py"
+        assert result.connections[0].target_path == "/dst/b.py"
 
 
 class TestFileSearchResultWithEvidence:
@@ -398,8 +404,9 @@ class TestFileSearchSetToRefs:
 class TestFileSearchSetConnectionPaths:
     def test_connection_paths(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
         s = FileSearchSet(connections=[conn])
@@ -432,8 +439,9 @@ class TestFileSearchResultIsAFileSearchSet:
 
     def test_result_connection_paths(self):
         conn = FileConnection(
-            source=Ref(path="/x.py"),
-            target=Ref(path="/y.py"),
+            path="/x.py[calls]/y.py",
+            source_path="/x.py",
+            target_path="/y.py",
             type="calls",
         )
         r = FileSearchResult(connections=[conn])

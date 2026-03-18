@@ -85,14 +85,14 @@ class TestMountInjection:
     @pytest.mark.asyncio
     async def test_mount_injects_graph(self, grover: GroverAsync):
         """After mount, mount should have a RustworkxGraph."""
-        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_mounts() if m.path == "/project")
         assert mount.filesystem.graph_provider is not None
         assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
 
     @pytest.mark.asyncio
     async def test_mount_has_search_provider(self, grover: GroverAsync):
         """After mount with explicit search_provider, filesystem should have it."""
-        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_mounts() if m.path == "/project")
         assert mount.filesystem.search_provider is not None
         assert isinstance(mount.filesystem.search_provider, LocalVectorStore)
 
@@ -104,14 +104,14 @@ class TestMountInjection:
     @pytest.mark.asyncio
     async def test_get_graph_returns_mount_graph(self, grover: GroverAsync):
         """get_graph() returns the mount's graph."""
-        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_mounts() if m.path == "/project")
         assert grover.get_graph() is mount.filesystem.graph_provider
 
     @pytest.mark.asyncio
     async def test_get_graph_with_path(self, multi_grover: GroverAsync):
         """get_graph(path) returns the correct mount's graph."""
-        m1 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1")
-        m2 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2")
+        m1 = next(m for m in multi_grover._ctx.registry.list_mounts() if m.path == "/mount1")
+        m2 = next(m for m in multi_grover._ctx.registry.list_mounts() if m.path == "/mount2")
         assert multi_grover.get_graph("/mount1/file.py") is m1.filesystem.graph_provider
         assert multi_grover.get_graph("/mount2/file.py") is m2.filesystem.graph_provider
 
@@ -161,7 +161,7 @@ class TestSearchRouting:
     @pytest.mark.asyncio
     async def test_mount_has_search_provider(self, grover: GroverAsync):
         """Mounts with explicit search_provider should have it on filesystem."""
-        mount = next(m for m in grover._ctx.registry.list_visible_mounts() if m.path == "/project")
+        mount = next(m for m in grover._ctx.registry.list_mounts() if m.path == "/project")
         assert mount.filesystem.search_provider is not None
         assert isinstance(mount.filesystem.search_provider, LocalVectorStore)
 
@@ -177,8 +177,8 @@ class TestPerMountIndexing:
         """Writing a file should populate the correct mount's graph."""
         await multi_grover.write("/mount1/code.py", "def foo():\n    pass\n")
         await multi_grover.flush()
-        m1 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1")
-        m2 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount2")
+        m1 = next(m for m in multi_grover._ctx.registry.list_mounts() if m.path == "/mount1")
+        m2 = next(m for m in multi_grover._ctx.registry.list_mounts() if m.path == "/mount2")
         assert m1.filesystem.graph_provider.has_node("/mount1/code.py")
         assert not m2.filesystem.graph_provider.has_node("/mount1/code.py")
 
@@ -187,7 +187,7 @@ class TestPerMountIndexing:
         """Deleting a file should clean up the correct mount's graph."""
         await multi_grover.write("/mount1/gone.py", "def gone():\n    pass\n")
         await multi_grover.flush()
-        m1 = next(m for m in multi_grover._ctx.registry.list_visible_mounts() if m.path == "/mount1")
+        m1 = next(m for m in multi_grover._ctx.registry.list_mounts() if m.path == "/mount1")
         assert m1.filesystem.graph_provider.has_node("/mount1/gone.py")
         await multi_grover.delete("/mount1/gone.py")
         await multi_grover.flush()
@@ -254,7 +254,7 @@ class TestEngineMountGraphSearch:
                 embedding_provider=FakeProvider(),
                 search_provider=LocalVectorStore(dimension=FAKE_DIM),
             )
-            mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/db")
+            mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/db")
             assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
             assert isinstance(mount.filesystem.search_provider, LocalVectorStore)
 
@@ -286,7 +286,7 @@ class TestEngineMountGraphSearch:
                 session_config=SessionConfig(session_factory=factory, dialect="sqlite"),
                 embedding_provider=FakeProvider(),
             )
-            mount = next(m for m in g._ctx.registry.list_visible_mounts() if m.path == "/sf")
+            mount = next(m for m in g._ctx.registry.list_mounts() if m.path == "/sf")
             assert isinstance(mount.filesystem.graph_provider, RustworkxGraph)
         finally:
             await g.close()

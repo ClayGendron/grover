@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select
 
-from grover.models.internal.evidence import ListDirEvidence
 from grover.models.internal.ref import Directory, File
-from grover.models.internal.results import FileOperationResult, FileSearchResult, GroverResult
+from grover.models.internal.results import FileOperationResult, GroverResult
 
 from .content import compute_content_hash, guess_mime_type, is_text_file
 from .paths import is_trash_path, normalize_path, split_path, to_trash_path, validate_path
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.database.file import FileModelBase
+    from grover.models.database.version import FileVersionModelBase
     from grover.providers.versioning.protocol import VersionProvider
 
     ContentReader = Callable[[str, AsyncSession], Awaitable[str | None]]
@@ -41,11 +41,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_READ_LIMIT = 2000
 
 
-def file_to_info(f: FileModelBase) -> File:
-    """Convert a FileModelBase model to a File."""
+def file_to_info(f: FileModelBase) -> File | Directory:
+    """Convert a FileModelBase model to a File or Directory."""
+    if f.is_directory:
+        return Directory(path=f.path, created_at=f.created_at, updated_at=f.updated_at)
     return File(
         path=f.path,
-        is_directory=f.is_directory,
         size_bytes=f.size_bytes,
         mime_type=f.mime_type,
         current_version=f.current_version,
@@ -398,11 +399,11 @@ async def delete_file(
                 )
             )
             for child in result.scalars().all():
-                await versioning.delete_versions(session, child.id)
+                await versioning.delete_versions(session, child.path)
                 await delete_content(child.path, session)
                 await session.delete(child)
 
-        await versioning.delete_versions(session, file.id)
+        await versioning.delete_versions(session, file.path)
         await delete_content(path, session)
         await session.delete(file)
     else:
@@ -441,6 +442,7 @@ async def move_file(
     versioning: VersionProvider,
     ensure_parent_dirs: EnsureParentDirs,
     file_model: type[FileModelBase],
+    file_version_model: type[FileVersionModelBase],
     read_content: ContentReader,
     write_content: ContentWriter,
     delete_content: ContentDeleter,
@@ -575,6 +577,18 @@ async def move_file(
         src_file.path = dest
         src_file.parent_path = split_path(dest)[0]
         src_file.updated_at = datetime.now(UTC)
+
+        # Update version records to follow the rename
+        for old_path in old_paths:
+            new_path = dest + old_path[len(src) :] if old_path != src else dest
+            ver_result = await session.execute(
+                select(file_version_model).where(
+                    file_version_model.file_path == old_path,
+                )
+            )
+            for ver in ver_result.scalars().all():
+                ver.file_path = new_path
+                ver.path = f"{new_path}@{ver.version}"
 
         await session.flush()
 
@@ -782,14 +796,16 @@ async def list_dir_db(
         if f.is_directory:
             directories.append(Directory(path=f.path))
         else:
-            files.append(File(
-                path=f.path,
-                size_bytes=f.size_bytes,
-                mime_type=f.mime_type,
-                current_version=f.current_version,
-                created_at=f.created_at,
-                updated_at=f.updated_at,
-            ))
+            files.append(
+                File(
+                    path=f.path,
+                    size_bytes=f.size_bytes,
+                    mime_type=f.mime_type,
+                    current_version=f.current_version,
+                    created_at=f.created_at,
+                    updated_at=f.updated_at,
+                )
+            )
 
     total = len(files) + len(directories)
     return GroverResult(

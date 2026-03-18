@@ -578,11 +578,11 @@ class TestMoveCopy:
 
 
 # ---------------------------------------------------------------------------
-# Exists / GetInfo
+# Exists
 # ---------------------------------------------------------------------------
 
 
-class TestExistsGetInfo:
+class TestExists:
     async def test_exists(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
@@ -591,19 +591,19 @@ class TestExistsGetInfo:
             assert (await fs.exists("/f.py", session=session)).message == "exists"
         await engine.dispose()
 
-    async def test_get_info(self):
+    async def test_exists_file(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
             await fs.write("/f.py", "hello\n", session=session)
-            info = await fs.get_info("/f.py", session=session)
+            info = await fs.exists("/f.py", session=session)
             assert info.success
-            assert info.file.is_directory is False
+            assert info.message == "exists"
         await engine.dispose()
 
-    async def test_get_info_nonexistent(self):
+    async def test_exists_nonexistent(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            info = await fs.get_info("/nope.py", session=session)
+            info = await fs.exists("/nope.py", session=session)
             assert not info.success
         await engine.dispose()
 
@@ -637,21 +637,15 @@ class TestHashValidation:
 
 
 # ---------------------------------------------------------------------------
-# Path Validation on exists / get_info
+# Path Validation on exists
 # ---------------------------------------------------------------------------
 
 
-class TestPathValidationExistsGetInfo:
+class TestPathValidationExists:
     async def test_exists_null_byte_path(self):
         fs, factory, engine = await _make_fs()
         async with factory() as session:
-            assert (await fs.exists("/foo\x00bar", session=session)).message == "not found"
-        await engine.dispose()
-
-    async def test_get_info_null_byte_path(self):
-        fs, factory, engine = await _make_fs()
-        async with factory() as session:
-            info = await fs.get_info("/foo\x00bar", session=session)
+            info = await fs.exists("/foo\x00bar", session=session)
             assert not info.success
         await engine.dispose()
 
@@ -749,7 +743,7 @@ class TestParentPath:
         async with factory() as session:
             await fs.write("/src/main.py", "content\n", session=session)
 
-            info = await fs.get_info("/src/main.py", session=session)
+            info = await fs.exists("/src/main.py", session=session)
             assert info.success
 
             file = await fs._get_file_record(session, "/src/main.py")

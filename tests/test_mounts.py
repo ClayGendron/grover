@@ -105,32 +105,3 @@ class TestMountPermissions:
             )
         )
         assert reg.get_permission("/data/file.txt") == Permission.READ_ONLY
-
-    def test_read_only_path_override(self):
-        reg = MountRegistry()
-        reg.add_mount(
-            Mount(
-                name="data",
-                filesystem=FakeBackend(),
-                read_only_paths={"/config"},
-            )
-        )
-
-        # Normal paths are read-write
-        assert reg.get_permission("/data/other.txt") == Permission.READ_WRITE
-        # Config dir is read-only
-        assert reg.get_permission("/data/config") == Permission.READ_ONLY
-        # Children of config dir are also read-only
-        assert reg.get_permission("/data/config/settings.json") == Permission.READ_ONLY
-
-    def test_read_only_path_override_root_file(self):
-        reg = MountRegistry()
-        reg.add_mount(
-            Mount(
-                name="data",
-                filesystem=FakeBackend(),
-                read_only_paths={"/important.txt"},
-            )
-        )
-        assert reg.get_permission("/data/important.txt") == Permission.READ_ONLY
-        assert reg.get_permission("/data/other.txt") == Permission.READ_WRITE

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from grover.models.internal.evidence import VersionEvidence
-from grover.models.internal.ref import File
+from grover.models.internal.ref import Directory, File
 from grover.models.internal.results import FileOperationResult
 
 
@@ -13,31 +13,34 @@ class TestFileFields:
     """Test File model with size_bytes, mime_type, and other fields."""
 
     def test_required_fields(self):
-        f = File(path="/hello.txt", is_directory=False)
+        f = File(path="/hello.txt")
         assert f.path == "/hello.txt"
-        assert f.is_directory is False
 
     def test_defaults(self):
-        f = File(path="/x", is_directory=True)
+        f = File(path="/x.py")
         assert f.size_bytes == 0
         assert f.mime_type == ""
         assert f.current_version == 0
         assert f.created_at is None
         assert f.updated_at is None
 
+    def test_directory_type(self):
+        d = Directory(path="/src")
+        assert isinstance(d, Directory)
+        assert d.path == "/src"
+
     def test_all_fields(self):
         now = datetime.now(UTC)
         f = File(
-            path="/src",
-            is_directory=True,
+            path="/src.py",
             size_bytes=4096,
-            mime_type="inode/directory",
+            mime_type="text/x-python",
             current_version=3,
             created_at=now,
             updated_at=now,
         )
         assert f.size_bytes == 4096
-        assert f.mime_type == "inode/directory"
+        assert f.mime_type == "text/x-python"
         assert f.current_version == 3
 
 

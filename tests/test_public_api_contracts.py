@@ -14,7 +14,7 @@ from _helpers import FakeProvider
 from grover.client import Grover, GroverAsync
 from grover.models.config import SessionConfig
 from grover.models.internal.ref import File
-from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
+from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet, GroverResult
 
 
 class InMemoryBackend:
@@ -61,24 +61,13 @@ class InMemoryBackend:
         *,
         session: object | None = None,
         user_id: str | None = None,
-    ) -> FileOperationResult:
-        exists = path in self._files
-        return FileOperationResult(
-            success=True,
-            message="exists" if exists else "not found",
-            file=File(path=path),
+    ) -> GroverResult:
+        found = path in self._files
+        return GroverResult(
+            success=found,
+            message="exists" if found else "not found",
+            files=[File(path=path)] if found else [],
         )
-
-    async def get_info(
-        self,
-        path: str,
-        *,
-        session: object | None = None,
-        user_id: str | None = None,
-    ) -> FileOperationResult:
-        if path not in self._files:
-            return FileOperationResult(success=False, message="Not found", file=File(path=path))
-        return FileOperationResult(success=True, message="OK", file=File(path=path, is_directory=False))
 
     async def write(
         self,
@@ -132,7 +121,7 @@ class InMemoryBackend:
         session: object | None = None,
         user_id: str | None = None,
     ) -> FileOperationResult:
-        f = File(path=path, is_directory=True)
+        f = File(path=path)
         return FileOperationResult(success=True, message="OK", file=f)
 
     async def move(
@@ -345,7 +334,7 @@ async def test_grover_async_capability_check(tmp_path: Path) -> None:
     try:
         await ga.add_mount("app", filesystem=InMemoryBackend(), embedding_provider=FakeProvider())
         # Inject MinimalGraph onto the mounted backend
-        mount = next(m for m in ga._ctx.registry.list_visible_mounts() if m.path == "/app")
+        mount = next(m for m in ga._ctx.registry.list_mounts() if m.path == "/app")
         mount.filesystem.graph_provider = MinimalGraph()
         with pytest.raises(AttributeError):
             await ga.pagerank(FileSearchSet.from_paths(["/app"]))

@@ -116,7 +116,7 @@ class GroverContext:
         """Get ``(graph_provider, mount)`` for a path, or first available."""
         if path is not None:
             return self.resolve_graph_with_mount(path)
-        for mount in self.registry.list_visible_mounts():
+        for mount in self.registry.list_mounts():
             gp = getattr(mount.filesystem, "graph_provider", None)
             if gp is not None:
                 return gp, mount

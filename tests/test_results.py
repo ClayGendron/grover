@@ -215,25 +215,25 @@ class TestFileSearchResult:
         assert r.connections == []
 
     def test_connection_paths_property(self):
-        conn1 = FileConnection(source=Ref(path="/a.py"), target=Ref(path="/b.py"), type="imports")
-        conn2 = FileConnection(source=Ref(path="/c.py"), target=Ref(path="/d.py"), type="calls")
+        conn1 = FileConnection(path="/a.py[imports]/b.py", source_path="/a.py", target_path="/b.py", type="imports")
+        conn2 = FileConnection(path="/c.py[calls]/d.py", source_path="/c.py", target_path="/d.py", type="calls")
         r = FileSearchResult(success=True, message="ok", connections=[conn1, conn2])
         assert r.connection_paths == ("/a.py[imports]/b.py", "/c.py[calls]/d.py")
 
     def test_len_counts_files_only(self):
         files = [File(path="/a.py")]
-        conns = [FileConnection(source=Ref(path="/a.py"), target=Ref(path="/b.py"), type="imports")]
+        conns = [FileConnection(path="/a.py[imports]/b.py", source_path="/a.py", target_path="/b.py", type="imports")]
         r = FileSearchResult(success=True, message="ok", files=files, connections=conns)
         assert len(r) == 1  # only files count
 
     def test_bool_checks_files_only(self):
-        conns = [FileConnection(source=Ref(path="/a.py"), target=Ref(path="/b.py"), type="imports")]
+        conns = [FileConnection(path="/a.py[imports]/b.py", source_path="/a.py", target_path="/b.py", type="imports")]
         r = FileSearchResult(success=True, message="ok", connections=conns)
         assert not r  # no files → falsy
 
     def test_iter_yields_file_paths_only(self):
         files = [File(path="/a.py")]
-        conns = [FileConnection(source=Ref(path="/c.py"), target=Ref(path="/d.py"), type="imports")]
+        conns = [FileConnection(path="/c.py[imports]/d.py", source_path="/c.py", target_path="/d.py", type="imports")]
         r = FileSearchResult(success=True, message="ok", files=files, connections=conns)
         assert list(r) == ["/a.py"]
 
@@ -356,8 +356,9 @@ class TestSetAlgebra:
 class TestSetAlgebraConnections:
     def _make_conn(self, src: str, tgt: str, conn_type: str = "imports", operation: str = "test") -> FileConnection:
         return FileConnection(
-            source=Ref(path=src),
-            target=Ref(path=tgt),
+            path=f"{src}[{conn_type}]{tgt}",
+            source_path=src,
+            target_path=tgt,
             type=conn_type,
             evidence=[Evidence(operation=operation)],
         )
@@ -379,7 +380,7 @@ class TestSetAlgebraConnections:
         result = a & b
         assert len(result.connections) == 1
         c = result.connections[0]
-        assert f"{c.source.path}[{c.type}]{c.target.path}" == "/a.py[imports]/b.py"
+        assert f"{c.source_path}[{c.type}]{c.target_path}" == "/a.py[imports]/b.py"
 
     def test_difference_connections(self):
         conn1 = self._make_conn("/a.py", "/b.py")
@@ -390,7 +391,7 @@ class TestSetAlgebraConnections:
         result = a - b
         assert len(result.connections) == 1
         c = result.connections[0]
-        assert f"{c.source.path}[{c.type}]{c.target.path}" == "/c.py[imports]/d.py"
+        assert f"{c.source_path}[{c.type}]{c.target_path}" == "/c.py[imports]/d.py"
 
     def test_pipeline_connections(self):
         conn1 = self._make_conn("/a.py", "/b.py", operation="glob")
@@ -427,8 +428,9 @@ class TestGraphStyleSetAlgebra:
             ],
             connections=[
                 FileConnection(
-                    source=Ref(path="/a.py"),
-                    target=Ref(path="/b.py"),
+                    path="/a.py[imports]/b.py",
+                    source_path="/a.py",
+                    target_path="/b.py",
                     type="imports",
                     evidence=[GraphRelationshipEvidence(operation="op1")],
                 )
@@ -443,8 +445,9 @@ class TestGraphStyleSetAlgebra:
             ],
             connections=[
                 FileConnection(
-                    source=Ref(path="/b.py"),
-                    target=Ref(path="/c.py"),
+                    path="/b.py[calls]/c.py",
+                    source_path="/b.py",
+                    target_path="/c.py",
                     type="calls",
                     evidence=[GraphRelationshipEvidence(operation="op2")],
                 )

@@ -19,9 +19,9 @@ from sqlmodel import select
 
 from grover.backends.database import DatabaseFileSystem
 from grover.exceptions import AuthenticationRequiredError
-from grover.models.internal.evidence import ListDirEvidence, ShareEvidence
-from grover.models.internal.ref import File
-from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
+from grover.models.internal.evidence import ShareEvidence
+from grover.models.internal.ref import Directory, File
+from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet, GroverResult
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
@@ -359,7 +359,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         segments: list[str],
         user_id: str,
         session: AsyncSession,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         """List virtual ``@shared/`` directories.
 
         - ``/@shared`` → list distinct owners who shared with *user_id*
@@ -367,7 +367,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         - ``/@shared/{owner}/sub/...`` → list sub-path (permission-checked)
         """
         if self._share_model is None:
-            return FileSearchResult(
+            return GroverResult(
                 success=True,
                 message="No sharing configured",
             )
@@ -380,24 +380,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 parts = share.path.strip("/").split("/")
                 if parts:
                     owners.add(parts[0])
-            result_files: list[File] = []
+            result_dirs: list[Directory] = []
             for owner in sorted(owners):
                 entry_path = f"/@shared/{owner}"
-                result_files.append(
-                    File(
-                        path=entry_path,
-                        evidence=[
-                            ListDirEvidence(
-                                operation="list_dir",
-                                is_directory=True,
-                            )
-                        ],
-                    )
-                )
-            return FileSearchResult(
+                result_dirs.append(Directory(path=entry_path))
+            return GroverResult(
                 success=True,
-                message=f"Found {len(result_files)} shared owner(s)",
-                files=result_files,
+                message=f"Found {len(result_dirs)} shared owner(s)",
+                directories=result_dirs,
             )
 
         # /@shared/{owner}/... — resolve to /{owner}/... and list
@@ -438,6 +428,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
                 direct_files.add(remainder)
 
         result_files: list[File] = []
+        result_directories: list[Directory] = []
         base = shared_prefix if sub_path == "/" else f"{shared_prefix}{sub_path}"
 
         for name in sorted(direct_files):
@@ -450,37 +441,18 @@ class UserScopedFileSystem(DatabaseFileSystem):
             except Exception:
                 pass
             entry_path = f"{base}/{name}"
-            result_files.append(
-                File(
-                    path=entry_path,
-                    evidence=[
-                        ListDirEvidence(
-                            operation="list_dir",
-                            is_directory=False,
-                            size_bytes=size_bytes,
-                        )
-                    ],
-                )
-            )
+            result_files.append(File(path=entry_path, size_bytes=size_bytes or 0))
 
         for name in sorted(child_dirs):
             entry_path = f"{base}/{name}"
-            result_files.append(
-                File(
-                    path=entry_path,
-                    evidence=[
-                        ListDirEvidence(
-                            operation="list_dir",
-                            is_directory=True,
-                        )
-                    ],
-                )
-            )
+            result_directories.append(Directory(path=entry_path))
 
-        return FileSearchResult(
+        total = len(result_files) + len(result_directories)
+        return GroverResult(
             success=True,
-            message=f"Found {len(result_files)} shared item(s)",
+            message=f"Found {total} shared item(s)",
             files=result_files,
+            directories=result_directories,
         )
 
     # ------------------------------------------------------------------
@@ -495,7 +467,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -503,7 +475,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(session, stored, uid, "read")
         result = await super().read(stored, offset, limit, session=session)
         orig = path if is_shared else None
-        if result.file:
+        if result.files:
             result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
@@ -546,7 +518,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -561,7 +533,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             session=session,
         )
         orig = path if is_shared else None
-        if result.file:
+        if result.files:
             result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
@@ -572,7 +544,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -580,7 +552,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             await self._check_share_access(session, stored, uid, "write")
         result = await super().delete(stored, permanent, session=session)
         orig = path if is_shared else None
-        if result.file:
+        if result.files:
             result.file.path = self._restore_path(result.file.path, uid, orig) or ""
         return result
 
@@ -591,7 +563,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared, _owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
@@ -604,31 +576,30 @@ class UserScopedFileSystem(DatabaseFileSystem):
             owner_id=uid,
         )
         if error is not None:
-            return FileOperationResult(success=False, message=error)
+            return GroverResult(success=False, message=error)
         stored = normalize_path(stored)
         # For shared paths, display the @shared path; for own paths, strip prefix
         display_path = path if is_shared else self._strip_user_prefix(stored, uid)
 
         if created_dirs:
-            return FileOperationResult(
+            return GroverResult(
                 success=True,
                 message=f"Created directory: {display_path}",
-                file=File(path=display_path, is_directory=True),
+                directories=[Directory(path=display_path)],
             )
-        return FileOperationResult(
+        return GroverResult(
             success=True,
             message=f"Directory already exists: {display_path}",
-            file=File(path=display_path, is_directory=True),
+            directories=[Directory(path=display_path)],
         )
 
     async def list_dir(
         self,
         path: str = "/",
         *,
-        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
 
         # Handle @shared virtual directories
@@ -637,29 +608,14 @@ class UserScopedFileSystem(DatabaseFileSystem):
             return await self._list_shared_dir(segments, uid, session)
 
         stored = self._resolve_path(path, uid)
-        # Resolve candidates to stored paths
-        resolved_candidates: FileSearchSet | None = None
-        if candidates is not None:
-            resolved_candidates = FileSearchSet.from_paths([self._resolve_path(p, uid) for p in candidates.paths])
-        result = await super().list_dir(stored, candidates=resolved_candidates, session=session)
+        result = await super().list_dir(stored, session=session)
 
         # Remap stored paths back to user-facing paths
         result = result.remap_paths(lambda p: self._restore_path(p, uid) or p)
 
         # At root, add virtual @shared/ entry
         if path == "/":
-            result.files.append(
-                File(
-                    path="/@shared",
-                    evidence=[
-                        ListDirEvidence(
-                            operation="list_dir",
-                            is_directory=True,
-                            size_bytes=None,
-                        )
-                    ],
-                )
-            )
+            result.directories.append(Directory(path="/@shared"))
 
         return result
 
@@ -669,7 +625,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared = self._is_shared_access(path)[0]
         stored = self._resolve_path(path, uid)
@@ -677,7 +633,7 @@ class UserScopedFileSystem(DatabaseFileSystem):
             try:
                 await self._check_share_access(session, stored, uid, "read")
             except PermissionError:
-                return FileOperationResult(success=False, message="Not found")
+                return GroverResult(success=False, message="Not found")
         return await super().exists(stored, session=session)
 
     async def get_info(
@@ -921,23 +877,17 @@ class UserScopedFileSystem(DatabaseFileSystem):
         path: str = "/",
         *,
         max_depth: int | None = None,
-        candidates: FileSearchSet | None = None,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileSearchResult:
+    ) -> GroverResult:
         uid = self._require_user_id(user_id)
         is_shared, owner, _rest = self._is_shared_access(path)
         stored = self._resolve_path(path, uid)
         if is_shared:
             await self._check_share_access(session, stored, uid, "read")
-        # Resolve candidates to stored paths
-        resolved_candidates: FileSearchSet | None = None
-        if candidates is not None:
-            resolved_candidates = FileSearchSet.from_paths([self._resolve_path(p, uid) for p in candidates.paths])
         result = await super().tree(
             stored,
             max_depth=max_depth,
-            candidates=resolved_candidates,
             session=session,
         )
         if is_shared and owner is not None:

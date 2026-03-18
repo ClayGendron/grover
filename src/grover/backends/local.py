@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from grover.backends.database import DatabaseFileSystem
+from grover.models.internal.detail import ReadDetail
 from grover.models.internal.results import FileOperationResult, GroverResult
 from grover.providers.storage.disk import DiskStorageProvider
 from grover.util.content import get_similar_files, is_binary_file
@@ -164,19 +165,19 @@ class LocalFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Read file with binary detection and similar file suggestions."""
 
         valid, error = validate_path(path)
         if not valid:
-            return FileOperationResult(success=False, message=error)
+            return GroverResult(success=False, message=error)
 
         path = normalize_path(path)
 
         try:
             actual_path = await self._disk._resolve_path(path)
         except PermissionError as e:
-            return FileOperationResult(success=False, message=str(e))
+            return GroverResult(success=False, message=str(e))
 
         exists = await asyncio.to_thread(actual_path.exists)
         if not exists:
@@ -185,24 +186,35 @@ class LocalFileSystem(DatabaseFileSystem):
                 suggestions = await asyncio.to_thread(get_similar_files, actual_path.parent, actual_path.name)
                 if suggestions:
                     suggestion_text = "\n".join(f"  {s}" for s in suggestions)
-                    return FileOperationResult(
+                    return GroverResult(
                         success=False,
                         message=f"File not found: {path}\n\nDid you mean?\n{suggestion_text}",
                     )
-            return FileOperationResult(success=False, message=f"File not found: {path}")
+            return GroverResult(success=False, message=f"File not found: {path}")
 
         if await asyncio.to_thread(is_binary_file, actual_path):
-            return FileOperationResult(success=False, message=f"Cannot read binary file: {path}")
+            return GroverResult(success=False, message=f"Cannot read binary file: {path}")
 
         if await asyncio.to_thread(actual_path.is_dir):
-            return FileOperationResult(success=False, message=f"Path is a directory, not a file: {path}")
+            return GroverResult(success=False, message=f"Path is a directory, not a file: {path}")
 
         content = await self._read_content(path, session)
 
         if content is None:
-            return FileOperationResult(success=False, message=f"Could not read file: {path}")
+            return GroverResult(success=False, message=f"Could not read file: {path}")
 
-        return paginate_content(content, path, offset, limit)
+        op = paginate_content(content, path, offset, limit)
+        if not op.success:
+            return GroverResult(success=False, message=op.message)
+        op.file.evidence = [
+            ReadDetail(
+                operation="read",
+                success=True,
+                message=op.message,
+                offset=offset,
+            )
+        ]
+        return GroverResult(success=True, message=op.message, files=[op.file])
 
     # ------------------------------------------------------------------
     # Override: delete — backup disk-only files before delete
@@ -215,7 +227,7 @@ class LocalFileSystem(DatabaseFileSystem):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult:
+    ) -> GroverResult:
         """Delete file, backing up content to the database first.
 
         Content-before-commit: DB soft-delete -> flush -> unlink disk -> return.

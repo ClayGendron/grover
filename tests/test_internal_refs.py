@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime
 
-from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion, Ref
+from grover.models.internal.ref import Directory, File, FileChunk, FileConnection, FileVersion, Ref
 
 
 class TestRef:
@@ -25,7 +25,7 @@ class TestFile:
     def test_defaults(self):
         f = File(path="/hello.py")
         assert f.path == "/hello.py"
-        assert f.is_directory is False
+        assert isinstance(f, File)
         assert f.content is None
         assert f.embedding is None
         assert f.tokens == 0
@@ -61,8 +61,9 @@ class TestFile:
         assert f.versions[0].number == 1
 
     def test_directory(self):
-        f = File(path="/src", is_directory=True)
-        assert f.is_directory is True
+        d = Directory(path="/src")
+        assert isinstance(d, Directory)
+        assert d.path == "/src"
 
     def test_serialization(self):
         f = File(path="/a.py", content="x = 1", lines=1)
@@ -132,20 +133,22 @@ class TestFileVersion:
 class TestFileConnection:
     def test_construction(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
-        assert conn.source.path == "/a.py"
-        assert conn.target.path == "/b.py"
+        assert conn.source_path == "/a.py"
+        assert conn.target_path == "/b.py"
         assert conn.type == "imports"
         assert conn.weight == 1.0
         assert conn.distance == 1.0
 
     def test_with_weight(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
             weight=0.5,
             distance=2.0,
@@ -155,26 +158,29 @@ class TestFileConnection:
 
     def test_serialization(self):
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
         data = dataclasses.asdict(conn)
-        assert data["source"]["path"] == "/a.py"
-        assert data["target"]["path"] == "/b.py"
+        assert data["source_path"] == "/a.py"
+        assert data["target_path"] == "/b.py"
         # Reconstruct from dict
         conn2 = FileConnection(
-            source=Ref(**data["source"]),
-            target=Ref(**data["target"]),
+            path=data["path"],
+            source_path=data["source_path"],
+            target_path=data["target_path"],
             type=data["type"],
         )
-        assert conn2.source.path == "/a.py"
+        assert conn2.source_path == "/a.py"
 
     def test_not_ref_subclass(self):
         """FileConnection is not a Ref — it's a standalone dataclass."""
         conn = FileConnection(
-            source=Ref(path="/a.py"),
-            target=Ref(path="/b.py"),
+            path="/a.py[imports]/b.py",
+            source_path="/a.py",
+            target_path="/b.py",
             type="imports",
         )
         assert not isinstance(conn, Ref)

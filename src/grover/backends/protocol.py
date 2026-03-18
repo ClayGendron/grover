@@ -64,7 +64,7 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def list_dir(
         self,
@@ -124,7 +124,7 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def delete(
         self,
@@ -133,7 +133,7 @@ class GroverFileSystem(Protocol):
         *,
         session: AsyncSession,
         user_id: str | None = None,
-    ) -> FileOperationResult: ...
+    ) -> GroverResult: ...
 
     async def mkdir(
         self,

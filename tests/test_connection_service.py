@@ -215,7 +215,7 @@ class TestConnectionMethods:
             result = await fs.list_connections("/a.py", direction="out", session=sess)
 
         assert len(result.connections) == 1
-        assert result.connections[0].target.path == "/b.py"
+        assert result.connections[0].target_path == "/b.py"
 
     async def test_list_connections_incoming(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
@@ -231,7 +231,7 @@ class TestConnectionMethods:
             result = await fs.list_connections("/a.py", direction="in", session=sess)
 
         assert len(result.connections) == 1
-        assert result.connections[0].source.path == "/c.py"
+        assert result.connections[0].source_path == "/c.py"
 
     async def test_list_connections_filter_by_type(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
@@ -247,7 +247,7 @@ class TestConnectionMethods:
             result = await fs.list_connections("/a.py", direction="out", connection_type="imports", session=sess)
 
         assert len(result.connections) == 1
-        assert result.connections[0].target.path == "/b.py"
+        assert result.connections[0].target_path == "/b.py"
 
     async def test_connection_result_shape(
         self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]

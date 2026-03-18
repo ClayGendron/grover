@@ -181,12 +181,12 @@ class TestStorageProviderDelegation:
 
 
 # ------------------------------------------------------------------
-# Storage provider delegation — exists / get_info
+# Storage provider delegation — exists
 # ------------------------------------------------------------------
 
 
-class TestStorageProviderExistsGetInfo:
-    """exists() and get_info() delegate to storage_provider when set."""
+class TestStorageProviderExists:
+    """exists() delegates to storage_provider when set."""
 
     async def test_exists_delegates_to_storage(self):
         mock_sp = AsyncMock()
@@ -208,19 +208,6 @@ class TestStorageProviderExistsGetInfo:
             result = await fs.exists("/exists.py", session=session)
             assert result.message == "exists"
         await engine.dispose()
-
-    async def test_get_info_delegates_to_storage(self):
-        from grover.models.internal.results import FileOperationResult
-
-        mock_sp = AsyncMock()
-        mock_info = FileOperationResult(success=True, message="OK", file=File(path="/file.py"))
-        mock_sp.get_info = AsyncMock(return_value=mock_info)
-        fs = DatabaseFileSystem(storage_provider=mock_sp)
-
-        result = await fs.get_info("/file.py", session=AsyncMock())
-
-        assert result.success is True
-        mock_sp.get_info.assert_called_once_with("/file.py")
 
 
 # ------------------------------------------------------------------

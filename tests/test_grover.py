@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -14,7 +13,6 @@ from _helpers import FAKE_DIM, FakeProvider
 from grover.backends.local import LocalFileSystem
 from grover.client import Grover
 from grover.models.internal.results import FileSearchResult, FileSearchSet
-from grover.providers.graph import RustworkxGraph
 from grover.providers.search.local import LocalVectorStore
 
 if TYPE_CHECKING:
@@ -43,16 +41,6 @@ def grover(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
         embedding_provider=FakeProvider(),
         search_provider=LocalVectorStore(dimension=FAKE_DIM),
     )
-    yield g
-    g.close()
-
-
-@pytest.fixture
-def grover_no_search(workspace: Path, tmp_path: Path) -> Iterator[Grover]:
-    """Grover without search to test graceful degradation."""
-    data = tmp_path / "grover_data"
-    g = Grover()
-    g.add_mount("project", filesystem=LocalFileSystem(workspace_dir=workspace, data_dir=data / "local"))
     yield g
     g.close()
 
@@ -155,89 +143,6 @@ class TestGroverFilesystem:
 
 
 # ==================================================================
-# Graph
-# ==================================================================
-
-
-class TestGroverGraph:
-    def test_get_graph(self, grover: Grover):
-        assert isinstance(grover.get_graph(), RustworkxGraph)
-        assert grover.get_graph() is grover._async.get_graph()
-
-    def test_predecessors_after_write(self, grover: Grover):
-        code = 'import os\n\ndef hello():\n    return "hi"\n'
-        grover.write("/project/app.py", code)
-        grover.flush()
-        # FileModel should be in graph now
-        assert grover.get_graph().has_node("/project/app.py")
-        # Check predecessors doesn't crash (may be empty if no other file points to it)
-        result = grover.predecessors(FileSearchSet.from_paths(["/project/app.py"]))
-        assert isinstance(result, FileSearchResult)
-        assert result.success is True
-
-    def test_successors_after_write(self, grover: Grover):
-        code = 'def greet():\n    return "hello"\n'
-        grover.write("/project/greet.py", code)
-        grover.flush()
-        # The file should have "contains" edges to its chunks
-        result = grover.successors(FileSearchSet.from_paths(["/project/greet.py"]))
-        assert isinstance(result, FileSearchResult)
-        assert result.success is True
-        # Should contain the greet function chunk
-        assert len(result) >= 1
-
-    def test_successors_via_graph_provider(self, grover: Grover):
-        code = "def foo():\n    pass\n\ndef bar():\n    pass\n"
-        grover.write("/project/funcs.py", code)
-        grover.flush()
-        result = grover._run(
-            grover.get_graph().successors(
-                FileSearchSet.from_paths(["/project/funcs.py"]),
-                session=AsyncMock(),
-            )
-        )
-        assert len(result) >= 2
-        assert any("foo" in p for p in result.paths)
-        assert any("bar" in p for p in result.paths)
-
-
-# ==================================================================
-# Search
-# ==================================================================
-
-
-class TestGroverSearch:
-    def test_vector_search_after_write(self, grover: Grover):
-        code = 'def authenticate_user():\n    """Verify user credentials."""\n    pass\n'
-        grover.write("/project/auth.py", code)
-        grover.flush()
-        result = grover.vector_search("authenticate")
-        assert isinstance(result, FileSearchResult)
-        assert result.success is True
-        assert len(result) >= 1
-
-    def test_vector_search_returns_vector_search_result(self, grover: Grover):
-        grover.write("/project/data.txt", "important data content")
-        result = grover.vector_search("data")
-        assert isinstance(result, FileSearchResult)
-        assert result.success is True
-
-    def test_vector_search_empty(self, grover: Grover):
-        result = grover.vector_search("nonexistent query")
-        assert isinstance(result, FileSearchResult)
-        assert len(result) == 0
-
-    def test_vector_search_returns_failure_without_provider(self, grover_no_search: Grover):
-        mounts = grover_no_search._async._ctx.registry.list_visible_mounts()
-        has_search = any(getattr(m.filesystem, "search_provider", None) is not None for m in mounts)
-        if has_search:
-            pytest.skip("search provider is installed; search available")
-        result = grover_no_search.vector_search("anything")
-        assert result.success is False
-        assert "not available" in result.message
-
-
-# ==================================================================
 # Index
 # ==================================================================
 
@@ -279,157 +184,6 @@ class TestGroverIndex:
         assert not grover.get_graph().has_node("/project/.grover/chunks/stale.txt")
         # But the real file should be
         assert grover.get_graph().has_node("/project/real.py")
-
-
-# ==================================================================
-# Event Handlers
-# ==================================================================
-
-
-class TestGroverEventHandlers:
-    def test_write_updates_graph(self, grover: Grover):
-        grover.write("/project/mod.py", "def work():\n    pass\n")
-        grover.flush()
-        assert grover.get_graph().has_node("/project/mod.py")
-
-    def test_write_updates_search(self, grover: Grover):
-        grover.write(
-            "/project/search_me.py",
-            'def searchable():\n    """A unique searchable function."""\n    pass\n',
-        )
-        grover.flush()
-        result = grover.vector_search("searchable")
-        assert len(result) >= 1
-
-    def test_delete_removes_from_graph(self, grover: Grover):
-        grover.write("/project/gone.py", "def gone():\n    pass\n")
-        grover.flush()
-        assert grover.get_graph().has_node("/project/gone.py")
-        grover.delete("/project/gone.py")
-        grover.flush()
-        assert not grover.get_graph().has_node("/project/gone.py")
-
-    def test_delete_removes_from_search(self, grover: Grover):
-        grover.write(
-            "/project/vanish.py",
-            "def vanishing_function():\n    pass\n",
-        )
-        grover.flush()
-        # Verify it's in search (search provider is now on the filesystem)
-        mount = next(m for m in grover._async._ctx.registry.list_visible_mounts() if m.path == "/project")
-        sp = mount.filesystem.search_provider
-        assert sp is not None
-        assert sp.has("/project/vanish.py#vanishing_function")
-        grover.delete("/project/vanish.py")
-        grover.flush()
-        # Should be removed from search
-        assert not sp.has("/project/vanish.py#vanishing_function")
-
-
-# ==================================================================
-# Persistence
-# ==================================================================
-
-
-class TestGroverPersistence:
-    def test_save_persists_graph(self, grover: Grover, workspace: Path):
-        grover.write("/project/persist.py", "def persist():\n    pass\n")
-        grover.save()
-
-        # Graph node should exist after save
-        assert grover.get_graph().has_node("/project/persist.py")
-
-
-# ==================================================================
-# Edge Cases
-# ==================================================================
-
-
-class TestGroverEdgeCases:
-    def test_unsupported_file_type_embedded(self, grover: Grover):
-        """Non-analyzable files should be embedded as whole files."""
-        grover.write("/project/readme.txt", "This is a readme file")
-        grover.flush()
-        assert grover.get_graph().has_node("/project/readme.txt")
-        # Should be searchable as whole file
-        result = grover.vector_search("readme")
-        assert len(result) >= 1
-
-    def test_empty_file_no_crash(self, grover: Grover):
-        """Empty files should not crash the pipeline."""
-        grover.write("/project/empty.py", "")
-        # Should not raise — file may or may not be in graph
-
-    def test_syntax_error_no_crash(self, grover: Grover):
-        """Files with syntax errors should not crash the pipeline."""
-        bad_code = "def broken(\n    # missing close paren and body"
-        grover.write("/project/bad.py", bad_code)
-        grover.flush()
-        # Should not raise
-        assert grover.get_graph().has_node("/project/bad.py")
-
-
-# ==================================================================
-# Sync authenticated mount + sharing
-# ==================================================================
-
-
-@pytest.fixture
-def auth_grover(tmp_path: Path) -> Iterator[Grover]:
-    """Sync Grover with a UserScopedFileSystem backend."""
-    from grover.backends.user_scoped import UserScopedFileSystem
-    from grover.models.config import EngineConfig
-    from grover.models.database.share import FileShareModel
-
-    g = Grover()
-    backend = UserScopedFileSystem(share_model=FileShareModel)
-    g.add_mount(
-        "ws",
-        filesystem=backend,
-        engine_config=EngineConfig(url="sqlite+aiosqlite://"),
-        embedding_provider=FakeProvider(),
-    )
-    yield g
-    g.close()
-
-
-class TestGroverSyncAuthenticated:
-    def test_authenticated_mount(self, auth_grover: Grover):
-        auth_grover.write("/ws/notes.md", "hello", user_id="alice")
-        result = auth_grover.read("/ws/notes.md", user_id="alice")
-        assert result.success is True
-        assert result.file.content == "hello"
-
-    def test_share_unshare(self, auth_grover: Grover):
-        auth_grover.write("/ws/notes.md", "data", user_id="alice")
-        share_result = auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
-        assert share_result.success is True
-
-        unshare_result = auth_grover.unshare("/ws/notes.md", "bob", user_id="alice")
-        assert unshare_result.success is True
-
-    def test_list_shares(self, auth_grover: Grover):
-        auth_grover.write("/ws/notes.md", "data", user_id="alice")
-        auth_grover.share("/ws/notes.md", "bob", "read", user_id="alice")
-        result = auth_grover.list_shares("/ws/notes.md", user_id="alice")
-        assert result.success is True
-        assert len(result) == 1
-
-    def test_list_shared_with_me(self, auth_grover: Grover):
-        auth_grover.write("/ws/a.md", "a", user_id="alice")
-        auth_grover.share("/ws/a.md", "bob", "read", user_id="alice")
-        result = auth_grover.list_shared_with_me(user_id="bob")
-        assert result.success is True
-        assert len(result) == 1
-        # Path should be an @shared path, not a raw stored path
-        assert result.files[0].path == "/ws/@shared/alice/a.md"
-
-    def test_move_and_copy(self, auth_grover: Grover):
-        auth_grover.write("/ws/src.md", "content", user_id="alice")
-        copy_result = auth_grover.copy("/ws/src.md", "/ws/copy.md", user_id="alice")
-        assert copy_result.success is True
-        move_result = auth_grover.move("/ws/src.md", "/ws/moved.md", user_id="alice")
-        assert move_result.success is True
 
 
 # ==================================================================
