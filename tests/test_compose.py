@@ -23,11 +23,11 @@ from grover.models.internal.ref import File, FileChunk, FileConnection
 
 class TestModelToFile:
     def test_basic(self):
-        m = FileModel(path="/a.py", is_directory=False, content="x = 1", lines=1)
+        m = FileModel(path="/a.py", is_directory=False, content="x = 1\n", lines=1)
         f = model_to_file(m)
         assert f.path == "/a.py"
         assert isinstance(f, File)
-        assert f.content == "x = 1"
+        assert f.content == "x = 1\n"
         assert f.lines == 1
         assert f.embedding is None
         assert f.chunks == []
@@ -172,11 +172,11 @@ class TestModelToConnection:
 
 class TestFileToModel:
     def test_basic(self):
-        f = File(path="/a.py", content="x = 1", lines=1, current_version=2)
+        f = File(path="/a.py", content="x = 1\n", lines=1, current_version=2)
         m = file_to_model(f)
         assert m.path == "/a.py"
-        assert m.content == "x = 1"
-        assert m.lines == 1
+        assert m.content == "x = 1\n"
+        assert m.lines == 1  # Validator recomputes from content
         assert m.current_version == 2
         assert m.embedding is None
 
@@ -192,10 +192,10 @@ class TestFileToModel:
         m = file_to_model(f)
         assert m.embedding is None
 
-    def test_directory(self):
-        f = File(path="/src")
+    def test_minimal_file(self):
+        f = File(path="/src/main.py")
         m = file_to_model(f)
-        assert m.path == "/src"
+        assert m.path == "/src/main.py"
 
 
 class TestChunkToModel:
@@ -242,7 +242,7 @@ class TestRoundTrip:
     def test_file_round_trip(self):
         original = File(
             path="/a.py",
-            content="hello",
+            content="hello\n",
             embedding=[0.1, 0.2],
             lines=1,
             current_version=3,

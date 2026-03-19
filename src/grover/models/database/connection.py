@@ -12,12 +12,14 @@ from datetime import UTC, datetime
 
 from pydantic import model_validator
 from sqlalchemy import DateTime
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from grover.util.paths import normalize_path
 
+from .base import ValidatedSQLModel
 
-class FileConnectionModelBase(SQLModel):
+
+class FileConnectionModelBase(ValidatedSQLModel):
     """Base fields for a graph edge. Subclass with ``table=True`` for a concrete table.
 
     The ``path`` field is the canonical edge identity in ``source[type]target``

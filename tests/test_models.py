@@ -42,7 +42,7 @@ class TestDefaultFactories:
         assert f.path == "/hello.txt"
         assert f.current_version == 1
         assert f.deleted_at is None
-        assert f.created_at is None
+        assert f.created_at is not None  # Set by validator at construction
         assert f.mime_type == "text/plain"
         assert f.is_directory is False
         assert f.content is None
@@ -131,7 +131,9 @@ class TestDefaultFactories:
         session.refresh(f)
 
         assert f.content == "# Hello"
-        assert f.content_hash == "abc123"
+        # Validator recomputes content_hash from content, ignoring the provided value
+        assert f.content_hash is not None
+        assert f.content_hash != "abc123"
 
     def test_file_vector_default_none(self, session: Session):
         f = FileModel(path="/vec.txt", parent_path="/")

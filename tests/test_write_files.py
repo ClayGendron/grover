@@ -99,8 +99,7 @@ class TestWrite:
         assert "hello" in read.file.content
 
     async def test_write_non_text_rejected(self, grover: GroverAsync):
-        f = FileModel(path="/project/image.png", content="data")
-        result = await grover.write_files([f])
+        result = await grover.write("/project/image.png", "data")
         assert result.success is False
 
     async def test_write_read_only_mount(self, workspace: Path, tmp_path: Path):
@@ -197,16 +196,14 @@ class TestWriteFiles:
         assert exists.message == "exists"
 
     async def test_write_files_batch_partial_failure(self, grover: GroverAsync):
-        """Binary extension fails, text succeeds."""
-        files = [
-            FileModel(path="/project/good.py", content="# good\n"),
-            FileModel(path="/project/bad.png", content="binary"),
-        ]
-        result = await grover.write_files(files)
-        assert result.succeeded == 1
-        assert result.failed == 1
-        assert all(d.success for d in result.files[0].details)
-        assert any(not d.success for d in result.files[1].details)
+        """Binary extension fails at construction, text succeeds."""
+        # With ValidatedSQLModel, binary extensions now raise at construction.
+        # Test via facade write() which catches the error gracefully.
+        good = await grover.write("/project/good.py", "# good\n")
+        assert good.success is True
+
+        bad = await grover.write("/project/bad.png", "binary")
+        assert bad.success is False
 
     async def test_write_files_returns_grover_result(self, grover: GroverAsync):
         """write_files returns GroverResult with WriteDetail on each file."""
@@ -223,9 +220,8 @@ class TestWriteFiles:
         assert detail.version == 1
 
     async def test_write_files_detail_on_failure(self, grover: GroverAsync):
-        """Failed writes have WriteDetail with success=False."""
-        files = [FileModel(path="/project/bad.png", content="binary")]
-        result = await grover.write_files(files)
+        """Failed writes via facade write() have WriteDetail with success=False."""
+        result = await grover.write("/project/bad.png", "binary")
         assert result.failed == 1
         detail = result.files[0].details[0]
         assert isinstance(detail, WriteDetail)
@@ -236,6 +232,58 @@ class TestWriteFiles:
 # ---------------------------------------------------------------------------
 # Sync wrapper tests
 # ---------------------------------------------------------------------------
+
+
+class TestWriteUnchangedContent:
+    async def test_write_unchanged_content_is_noop(self, grover: GroverAsync):
+        """Writing identical content should not create a new version."""
+        await grover.write("/project/a.py", "same\n")
+        result = await grover.write("/project/a.py", "same\n")
+        assert result.success is True
+        assert result.file.current_version == 1
+        assert "No changes" in result.file.details[0].message
+
+    async def test_write_unchanged_content_in_batch(self, grover: GroverAsync):
+        """In a batch, only changed files get new versions."""
+        await grover.write("/project/a.py", "unchanged\n")
+        await grover.write("/project/b.py", "will_change\n")
+
+        files = [
+            FileModel(path="/project/a.py", content="unchanged\n"),
+            FileModel(path="/project/b.py", content="changed\n"),
+        ]
+        result = await grover.write_files(files)
+        assert result.succeeded == 2
+        # a.py: unchanged, stays at v1
+        assert result.files[0].current_version == 1
+        assert "No changes" in result.files[0].details[0].message
+        # b.py: changed, bumped to v2
+        assert result.files[1].current_version == 2
+        assert "Updated" in result.files[1].details[0].message
+
+    async def test_write_changed_content_still_versions(self, grover: GroverAsync):
+        """Changing content still creates a new version (sanity check)."""
+        await grover.write("/project/a.py", "v1\n")
+        result = await grover.write("/project/a.py", "v2\n")
+        assert result.success is True
+        assert result.file.current_version == 2
+        assert "Updated" in result.file.details[0].message
+
+    async def test_write_unchanged_content_updates_metadata(self, grover_no_search: GroverAsync):
+        """Same content but new embedding still updates the DB record."""
+        f1 = FileModel.create("a.py", "x = 1\n", mount="project", embedding=[0.1, 0.2])
+        await grover_no_search.write_files([f1])
+
+        f2 = FileModel.create("a.py", "x = 1\n", mount="project", embedding=[0.9, 0.8])
+        result = await grover_no_search.write_files([f2])
+        assert result.succeeded == 1
+        assert result.files[0].current_version == 1
+        assert "No changes" in result.files[0].details[0].message
+
+        # Verify the record was actually updated (read still works, version unchanged)
+        read = await grover_no_search.read("/project/a.py")
+        assert read.success is True
+        assert read.file.content.strip() == "x = 1"
 
 
 class TestWriteFilesSync:
@@ -331,9 +379,9 @@ class TestWriteFilesModelFlowThrough:
         assert result.succeeded == 1
 
     async def test_write_files_timestamps_set_by_backend(self, grover_no_search: GroverAsync):
-        """Models without timestamps get them from the backend."""
+        """ValidatedSQLModel sets timestamps at construction time."""
         f = FileModel(path="/project/ts.py", content="x\n")
-        assert f.created_at is None  # None before write
+        assert f.created_at is not None  # Set by validator at construction
         result = await grover_no_search.write_files([f])
         assert result.succeeded == 1
 

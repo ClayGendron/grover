@@ -9,6 +9,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
 from sqlalchemy import func
 from sqlmodel import select
 
@@ -829,7 +830,10 @@ class DatabaseFileSystem:
             if content is None:
                 return GroverResult(success=False, message=f"Source content not found: {src}")
 
-            dest_files.append(self.file_model(path=dest, content=content))
+            try:
+                dest_files.append(self.file_model(path=dest, content=content))
+            except (ValueError, ValidationError) as e:
+                return GroverResult(success=False, message=f"Cannot copy to {dest}: {e}")
             src_by_dest[dest] = src
 
         result = await self.write_files(dest_files, overwrite=True, session=session)
@@ -1600,37 +1604,24 @@ class DatabaseFileSystem:
         existing_map = await self._batch_get_file_records(session, all_paths, include_deleted=True)
 
         for idx, f in enumerate(files):
-            try:
-                existing = existing_map.get(f.path)
-                if existing and not overwrite and not existing.deleted_at:
-                    file_results[idx] = File(
-                        path=f.path,
-                        evidence=[
-                            WriteDetail(
-                                operation="write",
-                                success=False,
-                                message=f"File already exists: {f.path}",
-                            )
-                        ],
-                    )
-                else:
-                    # Validate into concrete table model early to catch bad data
-                    self.file_model.model_validate(f.model_dump())
-                    pending.append((idx, f, existing))
-            except Exception as e:
+            existing = existing_map.get(f.path)
+            if existing and not overwrite and not existing.deleted_at:
                 file_results[idx] = File(
                     path=f.path,
                     evidence=[
                         WriteDetail(
                             operation="write",
                             success=False,
-                            message=f"Validation failed: {e}",
+                            message=f"File already exists: {f.path}",
                         )
                     ],
                 )
+            else:
+                pending.append((idx, f, existing))
 
         # --- Phase 2: Mutate (all session mutations, no results yet) ---
         records_by_idx: dict[int, FileModelBase] = {}
+        unchanged_idx: set[int] = set()
         version_records = []
 
         try:
@@ -1644,35 +1635,47 @@ class DatabaseFileSystem:
                         await self._ensure_parent_dirs(session, f.path, f.owner_id)
 
             for idx, f, existing in pending:
+                if not isinstance(f, self.file_model):
+                    raise TypeError(f"Expected {self.file_model.__name__}, got {type(f).__name__}")
+                # Re-create via model_validate to get a clean _sa_instance_state
+                # (model_copy in the facade shares state) and to recompute
+                # derived fields (parent_path) from the mount-stripped path.
                 record = self.file_model.model_validate(f.model_dump())
 
                 if existing is not None:
+                    content_unchanged = existing.content_hash == record.content_hash
+                    if content_unchanged:
+                        unchanged_idx.add(idx)
+
                     # Update — copy identity from existing, merge incoming
                     old_content = existing.content or ""
                     record.id = existing.id
-                    record.current_version = existing.current_version + 1
+                    record.current_version = (
+                        existing.current_version if content_unchanged else existing.current_version + 1
+                    )
                     record.created_at = existing.created_at
                     record.deleted_at = None
                     record.original_path = None
                     await session.merge(record)
 
-                    # Build version record
-                    version_num = record.current_version
-                    new_content = record.content or ""
-                    is_snap = (version_num % SNAPSHOT_INTERVAL == 0) or (version_num == 1)
-                    stored = new_content if is_snap or not old_content else compute_diff(old_content, new_content)
-                    content_hash, size_bytes = compute_content_hash(new_content)
-                    version_records.append(
-                        self.file_version_model(
-                            file_path=record.path,
-                            path=f"{record.path}@{version_num}",
-                            version=version_num,
-                            is_snapshot=is_snap or not old_content,
-                            content=stored,
-                            content_hash=content_hash,
-                            size_bytes=size_bytes,
+                    # Build version record only when content changed
+                    if not content_unchanged:
+                        version_num = record.current_version
+                        new_content = record.content or ""
+                        is_snap = (version_num % SNAPSHOT_INTERVAL == 0) or (version_num == 1)
+                        stored = new_content if is_snap or not old_content else compute_diff(old_content, new_content)
+                        content_hash, size_bytes = compute_content_hash(new_content)
+                        version_records.append(
+                            self.file_version_model(
+                                file_path=record.path,
+                                path=f"{record.path}@{version_num}",
+                                version=version_num,
+                                is_snapshot=is_snap or not old_content,
+                                content=stored,
+                                content_hash=content_hash,
+                                size_bytes=size_bytes,
+                            )
                         )
-                    )
                 else:
                     # Create
                     session.add(record)
@@ -1707,7 +1710,12 @@ class DatabaseFileSystem:
             for idx, record in records_by_idx.items():
                 is_create = any(existing is None for i, _, existing in pending if i == idx)
                 version = 1 if is_create else record.current_version
-                msg = f"Created: {record.path} (v1)" if is_create else f"Updated: {record.path} (v{version})"
+                if idx in unchanged_idx:
+                    msg = f"No changes: {record.path}"
+                elif is_create:
+                    msg = f"Created: {record.path} (v1)"
+                else:
+                    msg = f"Updated: {record.path} (v{version})"
                 file_results[idx] = File(
                     path=record.path,
                     current_version=version,

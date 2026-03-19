@@ -91,6 +91,18 @@ class GroverContext:
         return mount_path + path
 
     # ------------------------------------------------------------------
+    # Model resolution
+    # ------------------------------------------------------------------
+
+    def resolve_file_model(self, path: str) -> type:
+        """Return the file model class for the mount owning *path*."""
+        from grover.models.database.file import FileModel
+
+        mount, _rel = self.registry.resolve(path)
+        assert mount.filesystem is not None
+        return getattr(mount.filesystem, "file_model", FileModel)
+
+    # ------------------------------------------------------------------
     # Per-mount graph resolution
     # ------------------------------------------------------------------
 

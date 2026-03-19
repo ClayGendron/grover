@@ -5,7 +5,7 @@ These are pure mapping functions with no DB access or session management.
 
 from grover.models.database.chunk import FileChunkModel
 from grover.models.database.connection import FileConnectionModel
-from grover.models.database.file import FileModel
+from grover.models.database.file import FileModel, FileModelBase
 from grover.models.database.vector import Vector
 from grover.models.database.version import FileVersionModel
 from grover.models.internal.ref import File, FileChunk, FileConnection, FileVersion
@@ -77,14 +77,15 @@ def model_to_connection(model: FileConnectionModel) -> FileConnection:
 # =====================================================================
 
 
-def file_to_model(file: File) -> FileModel:
+def file_to_model(file: File, model_cls: type[FileModelBase] | None = None) -> FileModelBase:
     """Convert a File to a FileModel.
 
     Sets basic fields only. Caller is responsible for setting ``id``,
     ``parent_path``, ``content_hash``, ``mime_type``, ``size_bytes``,
     ``owner_id``, and other DB-specific fields.
     """
-    return FileModel(
+    cls = model_cls or FileModel
+    return cls(
         path=file.path,
         content=file.content,
         lines=file.lines,

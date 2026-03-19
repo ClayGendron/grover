@@ -12,15 +12,16 @@ from datetime import UTC, datetime
 
 from pydantic import model_validator
 from sqlalchemy import DateTime
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from grover.util.content import compute_content_hash
 from grover.util.paths import normalize_path
 
+from .base import ValidatedSQLModel
 from .vector import Vector, VectorType
 
 
-class FileChunkModelBase(SQLModel):
+class FileChunkModelBase(ValidatedSQLModel):
     """Base fields for a file chunk. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)

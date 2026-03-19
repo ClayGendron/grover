@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from grover.backends.protocol import SupportsReconcile
-from grover.models.database.file import FileModel
 from grover.models.internal.detail import WriteDetail
 from grover.models.internal.ref import Directory, File
 from grover.models.internal.results import (
@@ -71,7 +72,15 @@ class FileOpsMixin:
         *,
         user_id: str | None = None,
     ) -> GroverResult:
-        f = FileModel(path=path, content=content)
+        try:
+            file_model = self._ctx.resolve_file_model(path)
+            f = file_model(path=path, content=content)
+        except (ValueError, ValidationError) as e:
+            return GroverResult(
+                success=False,
+                message=str(e),
+                files=[File(path=path, evidence=[WriteDetail(operation="write", success=False, message=str(e))])],
+            )
         return await self.write_files([f], overwrite=overwrite, user_id=user_id)
 
     async def write_files(
@@ -427,13 +436,19 @@ class FileOpsMixin:
         for dest_mount_path, triples in cross_mount_file_pairs.items():
             dest_mount = self._ctx.registry.mounts[dest_mount_path]
             assert dest_mount.filesystem is not None
-            dest_files: list[FileModelBase] = [
-                FileModel(
-                    path=dest.removeprefix(dest_mount.path) or "/",
-                    content=content,
-                )
-                for _, dest, content in triples
-            ]
+            from grover.models.database.file import FileModel
+
+            dest_model_cls = getattr(dest_mount.filesystem, "file_model", FileModel)
+            try:
+                dest_files: list[FileModelBase] = [
+                    dest_model_cls(
+                        path=dest.removeprefix(dest_mount.path) or "/",
+                        content=content,
+                    )
+                    for _, dest, content in triples
+                ]
+            except (ValueError, ValidationError) as e:
+                return GroverResult(success=False, message=str(e), files=all_files)
             async with self._ctx.session_for(dest_mount) as session:
                 result = await dest_mount.filesystem.write_files(dest_files, overwrite=True, session=session)
             if not result.success:

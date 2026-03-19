@@ -90,7 +90,7 @@ class TestModelInheritance:
         assert wiki.path == "/test.md"
         assert wiki.current_version == 1
         assert wiki.deleted_at is None
-        assert wiki.mime_type == "text/plain"
+        assert wiki.mime_type == "text/markdown"  # Validator computes from .md extension
 
     def test_custom_version_inherits_fields(self):
         wv = WikiFileVersion(file_path="/test.txt", version=1, content="hello")

@@ -1,5 +1,6 @@
 """Database models (SQLModel) for Grover."""
 
+from grover.models.database.base import ValidatedSQLModel
 from grover.models.database.chunk import FileChunkModel, FileChunkModelBase
 from grover.models.database.connection import FileConnectionModel, FileConnectionModelBase
 from grover.models.database.file import (
@@ -21,6 +22,7 @@ __all__ = [
     "FileShareModelBase",
     "FileVersionModel",
     "FileVersionModelBase",
+    "ValidatedSQLModel",
     "Vector",
     "VectorType",
 ]

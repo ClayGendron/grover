@@ -10,11 +10,16 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from pydantic import model_validator
 from sqlalchemy import DateTime
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
+
+from grover.util.paths import normalize_path
+
+from .base import ValidatedSQLModel
 
 
-class FileShareModelBase(SQLModel):
+class FileShareModelBase(ValidatedSQLModel):
     """Base fields for a file share record. Subclass with ``table=True`` for a concrete table."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=1024, primary_key=True)
@@ -30,6 +35,14 @@ class FileShareModelBase(SQLModel):
         default=None,
         sa_type=DateTime(timezone=True),  # type: ignore[invalid-argument-type]
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_paths(cls, data: dict[str, object]) -> dict[str, object]:
+        path = data.get("path")
+        if isinstance(path, str):
+            data["path"] = normalize_path(path)
+        return data
 
 
 class FileShareModel(FileShareModelBase, table=True):
