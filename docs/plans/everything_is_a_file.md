@@ -1060,3 +1060,24 @@ Or more concisely: **Knowledge as a filesystem.**
 - Wanix — Plan 9's spirit in WebAssembly
 - AIOS — LLM-based Semantic File System
 - Redox OS — "everything is a URL"
+
+## 14. Decisions & Progress
+
+### 14.1 `Ref` deferred
+
+**Decision:** `Ref` (§4.2) will not be implemented in the initial build. Operations accept and return plain `str` paths. `Ref` can be introduced later as an ergonomic wrapper if needed.
+
+**Rationale:** The path utilities in `paths.py` already provide everything `Ref` would — `parse_kind()`, `base_path()`, `parent_path()`, `decompose_connection()`, and the path constructors. A frozen dataclass wrapping a string adds a layer of indirection without enabling anything new. If a uniform handle becomes valuable (e.g., for caching parsed properties or for type-safe API boundaries), it can be added without changing the data model or protocol — it's a presentation concern, not a storage or dispatch concern.
+
+### 14.2 Initial `src_new/` scaffolding — 2026-03-23
+
+**Commit:** `3f0dd20` — *Add design docs for Grover v2 rewrite*
+
+Files in `src_new/grover/`:
+
+| File | What it implements |
+|------|-------------------|
+| `paths.py` | §3 — Path normalization, validation, kind detection, parent/base resolution, path constructors (`chunk_path`, `version_path`, `connection_path`, `api_path`), `decompose_connection` |
+| `models.py` | §4 — `ValidatedSQLModel` base, `GroverObjectBase` with all kinded columns, `GroverObject` concrete table (`grover_objects`) with auto-derived `parent_path`, `kind`, `name`, content metrics, timestamps |
+| `vector.py` | Embedding column — `Vector` type with dimension/model-name enforcement, `VectorType` SQLAlchemy decorator (JSON serialization, dimension validation on read/write) |
+| `__init__.py` | Empty |

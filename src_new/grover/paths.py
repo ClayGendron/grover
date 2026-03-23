@@ -20,10 +20,12 @@ import posixpath
 import unicodedata
 from typing import Literal, NamedTuple
 
+
 class ConnectionParts(NamedTuple):
     source: str
     target: str
     connection_type: str
+
 
 ObjectKind = Literal["file", "directory", "chunk", "version", "connection", "api"]
 MetadataKind = Literal[".chunks", ".versions", ".connections", ".apis"]
@@ -35,114 +37,114 @@ METADATA_KIND_MAP: dict[MetadataKind, ObjectKind] = {
     ".apis": "api",
 }
 
-MARKER_KINDS: dict[str, ObjectKind] = {
-    f"/{name}/": kind for name, kind in METADATA_KIND_MAP.items()
-}
+MARKER_KINDS: dict[str, ObjectKind] = {f"/{name}/": kind for name, kind in METADATA_KIND_MAP.items()}
 
 METADATA_MARKERS = tuple(MARKER_KINDS.keys())
 
-EXTENSIONLESS_FILES = frozenset({
-    # Build / CI
-    "Makefile",
-    "GNUmakefile",
-    "BSDmakefile",
-    "Kbuild",
-    "Dockerfile",
-    "Containerfile",
-    "Jenkinsfile",
-    "Vagrantfile",
-    "Procfile",
-    "Justfile",
-    "Taskfile",
-    "Earthfile",
-    "Snakefile",
-    "Tiltfile",
-    "Caddyfile",
-    "BUILD",
-    "WORKSPACE",
-    # Ruby ecosystem
-    "Rakefile",
-    "Gemfile",
-    "Brewfile",
-    "Podfile",
-    "Fastfile",
-    "Appfile",
-    "Scanfile",
-    "Berksfile",
-    "Capfile",
-    "Guardfile",
-    "Thorfile",
-    "Dangerfile",
-    "Steepfile",
-    "Appraisals",
-    # Other language build files
-    "Emakefile",
-    "Nukefile",
-    # Documentation / metadata
-    "LICENSE",
-    "LICENCE",
-    "README",
-    "CHANGELOG",
-    "CHANGES",
-    "CONTRIBUTING",
-    "AUTHORS",
-    "CONTRIBUTORS",
-    "PATENTS",
-    "NOTICE",
-    "CREDITS",
-    "HISTORY",
-    "NEWS",
-    "THANKS",
-    "TODO",
-    "COPYING",
-    "COPYRIGHT",
-    "INSTALL",
-    "CODEOWNERS",
-    "MAINTAINERS",
-    "OWNERS",
-    "VERSION",
-    "MANIFEST",
-    # Git
-    ".gitignore",
-    ".gitattributes",
-    ".gitmodules",
-    ".gitkeep",
-    ".git-blame-ignore-revs",
-    ".mailmap",
-    # Container / orchestration
-    ".dockerignore",
-    ".helmignore",
-    # Editor / formatting
-    ".editorconfig",
-    ".clang-format",
-    ".clang-tidy",
-    ".dir-locals",
-    # JS / Node
-    ".eslintignore",
-    ".eslintrc",
-    ".prettierignore",
-    ".prettierrc",
-    ".stylelintignore",
-    ".stylelintrc",
-    ".babelrc",
-    ".browserslistrc",
-    ".npmignore",
-    ".npmrc",
-    ".nvmrc",
-    ".node-version",
-    # Python
-    ".python-version",
-    ".flaskenv",
-    # Ruby / other version managers
-    ".ruby-version",
-    ".java-version",
-    ".tool-versions",
-    # Environment
-    ".env",
-    ".envrc",
-    # YAML linting
-    ".yamllint",
-})
+EXTENSIONLESS_FILES = frozenset(
+    {
+        # Build / CI
+        "Makefile",
+        "GNUmakefile",
+        "BSDmakefile",
+        "Kbuild",
+        "Dockerfile",
+        "Containerfile",
+        "Jenkinsfile",
+        "Vagrantfile",
+        "Procfile",
+        "Justfile",
+        "Taskfile",
+        "Earthfile",
+        "Snakefile",
+        "Tiltfile",
+        "Caddyfile",
+        "BUILD",
+        "WORKSPACE",
+        # Ruby ecosystem
+        "Rakefile",
+        "Gemfile",
+        "Brewfile",
+        "Podfile",
+        "Fastfile",
+        "Appfile",
+        "Scanfile",
+        "Berksfile",
+        "Capfile",
+        "Guardfile",
+        "Thorfile",
+        "Dangerfile",
+        "Steepfile",
+        "Appraisals",
+        # Other language build files
+        "Emakefile",
+        "Nukefile",
+        # Documentation / metadata
+        "LICENSE",
+        "LICENCE",
+        "README",
+        "CHANGELOG",
+        "CHANGES",
+        "CONTRIBUTING",
+        "AUTHORS",
+        "CONTRIBUTORS",
+        "PATENTS",
+        "NOTICE",
+        "CREDITS",
+        "HISTORY",
+        "NEWS",
+        "THANKS",
+        "TODO",
+        "COPYING",
+        "COPYRIGHT",
+        "INSTALL",
+        "CODEOWNERS",
+        "MAINTAINERS",
+        "OWNERS",
+        "VERSION",
+        "MANIFEST",
+        # Git
+        ".gitignore",
+        ".gitattributes",
+        ".gitmodules",
+        ".gitkeep",
+        ".git-blame-ignore-revs",
+        ".mailmap",
+        # Container / orchestration
+        ".dockerignore",
+        ".helmignore",
+        # Editor / formatting
+        ".editorconfig",
+        ".clang-format",
+        ".clang-tidy",
+        ".dir-locals",
+        # JS / Node
+        ".eslintignore",
+        ".eslintrc",
+        ".prettierignore",
+        ".prettierrc",
+        ".stylelintignore",
+        ".stylelintrc",
+        ".babelrc",
+        ".browserslistrc",
+        ".npmignore",
+        ".npmrc",
+        ".nvmrc",
+        ".node-version",
+        # Python
+        ".python-version",
+        ".flaskenv",
+        # Ruby / other version managers
+        ".ruby-version",
+        ".java-version",
+        ".tool-versions",
+        # Environment
+        ".env",
+        ".envrc",
+        # YAML linting
+        ".yamllint",
+    }
+)
 
 _EXTENSIONLESS_FILES_LOWER = frozenset(name.lower() for name in EXTENSIONLESS_FILES)
 
@@ -189,7 +191,7 @@ def validate_path(path: str) -> tuple[bool, str]:
     Checks (in order):
 
     1. Null bytes
-    2. Control characters (0x01–0x1F, DEL 0x7F, C1 0x80–0x9F)
+    2. Control characters (0x01-0x1F, DEL 0x7F, C1 0x80-0x9F)
     3. Total path length (max 4096)
     4. Empty segments after normalization
     5. Segment length (max 255 per segment)

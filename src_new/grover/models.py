@@ -19,13 +19,14 @@ from sqlmodel._compat import finish_init
 from grover.paths import (
     decompose_connection,
     normalize_path,
-    parent_path as compute_parent_path,
     parse_kind,
     split_path,
     validate_path,
 )
+from grover.paths import (
+    parent_path as compute_parent_path,
+)
 from grover.vector import Vector, VectorType
-
 
 # ---------------------------------------------------------------------------
 # Base class — adds Pydantic validation back to SQLModel table models
