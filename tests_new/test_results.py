@@ -427,7 +427,7 @@ class TestGroverResultChainStubs:
 
     def test_all_crud_stubs_raise_without_grover(self):
         r = GroverResult(candidates=[Candidate(path="/a.py")])
-        for method_name in ("read", "delete", "stat", "exists", "ls"):
+        for method_name in ("read", "delete", "stat", "ls"):
             with pytest.raises(RuntimeError):
                 getattr(r, method_name)()
 

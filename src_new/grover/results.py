@@ -333,10 +333,6 @@ class GroverResult(BaseModel):
         """Chain: find-and-replace across all candidates (one batched query)."""
         return self._require_grover().edit(old=old, new=new, candidates=self)
 
-    def exists(self) -> GroverResult:
-        """Chain: check existence of all candidates (one batched query)."""
-        return self._require_grover().exists(candidates=self)
-
     def ls(self) -> GroverResult:
         """Chain: list children of each candidate directory.
 

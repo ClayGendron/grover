@@ -47,14 +47,6 @@ class GroverFileSystem(Protocol):
         session: AsyncSession | None = None,
     ) -> GroverResult: ...
 
-    async def exists(
-        self,
-        path: str | None = None,
-        candidates: GroverResult | None = None,
-        *,
-        session: AsyncSession | None = None,
-    ) -> GroverResult: ...
-
     async def edit(
         self,
         path: str | None = None,
