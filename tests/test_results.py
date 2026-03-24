@@ -148,7 +148,8 @@ class TestGroverResultBasics:
     def test_empty_result(self):
         r = GroverResult()
         assert r.success is True
-        assert r.message == ""
+        assert r.errors == []
+        assert r.error_message == ""
         assert r.candidates == []
         assert r.paths == ()
         assert r.file is None
@@ -218,11 +219,12 @@ class TestGroverResultConstruction:
                 _c("/a.py"),
                 _c("/b.py"),
             ],
-            message="test",
+            errors=["test"],
         )
         assert len(r) == 2
         assert r.paths == ("/a.py", "/b.py")
-        assert r.message == "test"
+        assert r.errors == ["test"]
+        assert r.error_message == "test"
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +553,7 @@ class TestGroverResultJSON:
     def test_json_round_trip(self):
         r = GroverResult(
             success=True,
-            message="Found 2 files",
+            errors=["Found 2 files"],
             candidates=[
                 _c("/a.py", details=[Detail(operation="glob", score=0.0)]),
                 _c("/b.py", details=[Detail(operation="glob", score=0.0)]),
@@ -561,7 +563,7 @@ class TestGroverResultJSON:
         restored = GroverResult.model_validate(data)
         assert restored.paths == r.paths
         assert restored.success == r.success
-        assert restored.message == r.message
+        assert restored.errors == r.errors
         assert len(restored.candidates) == 2
         assert restored.candidates[0].details[0].operation == "glob"
 

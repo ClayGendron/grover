@@ -25,6 +25,34 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 # ---------------------------------------------------------------------------
+# Operation models — batch inputs for public methods
+# ---------------------------------------------------------------------------
+
+
+class EditOperation(BaseModel):
+    """A single find-and-replace edit.
+
+    Multiple ``EditOperation`` objects are applied sequentially — each
+    sees the content left by the previous one.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    old: str
+    new: str
+    replace_all: bool = False
+
+
+class TwoPathOperation(BaseModel):
+    """A source/destination pair for move or copy."""
+
+    model_config = ConfigDict(frozen=True)
+
+    src: str
+    dest: str
+
+
+# ---------------------------------------------------------------------------
 # Detail — provenance for a single chain step
 # ---------------------------------------------------------------------------
 
@@ -127,7 +155,7 @@ class GroverResult(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     success: bool = True
-    message: str = ""
+    errors: list[str] = []
     candidates: list[Candidate] = []
 
     # Back-reference for chaining — not serialized
@@ -136,6 +164,11 @@ class GroverResult(BaseModel):
     # -------------------------------------------------------------------
     # Data access
     # -------------------------------------------------------------------
+
+    @property
+    def error_message(self) -> str:
+        """All errors joined as a single string."""
+        return "; ".join(self.errors)
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -220,6 +253,7 @@ class GroverResult(BaseModel):
         result = GroverResult(
             candidates=merged,
             success=self.success and other.success,
+            errors=self.errors + other.errors,
         )
         result._grover = self._grover or other._grover
         return result
@@ -237,6 +271,7 @@ class GroverResult(BaseModel):
         result = GroverResult(
             candidates=list(merged.values()),
             success=self.success and other.success,
+            errors=self.errors + other.errors,
         )
         result._grover = self._grover or other._grover
         return result
@@ -248,6 +283,7 @@ class GroverResult(BaseModel):
         result = GroverResult(
             candidates=remaining,
             success=self.success,
+            errors=self.errors,
         )
         result._grover = self._grover
         return result
@@ -261,7 +297,7 @@ class GroverResult(BaseModel):
         result = GroverResult(
             candidates=candidates,
             success=self.success,
-            message=self.message,
+            errors=self.errors,
         )
         result._grover = self._grover
         return result
@@ -333,9 +369,21 @@ class GroverResult(BaseModel):
         """Chain: populate metadata on all candidates (one batched query)."""
         return self._require_grover().stat(candidates=self)
 
-    def edit(self, old: str, new: str) -> GroverResult:
-        """Chain: find-and-replace across all candidates (one batched query)."""
-        return self._require_grover().edit(old=old, new=new, candidates=self)
+    def edit(
+        self,
+        old: str = "",
+        new: str = "",
+        replace_all: bool = False,
+        edits: list[EditOperation] | None = None,
+    ) -> GroverResult:
+        """Chain: find-and-replace across all candidates."""
+        return self._require_grover().edit(
+            old=old,
+            new=new,
+            replace_all=replace_all,
+            edits=edits,
+            candidates=self,
+        )
 
     def ls(self) -> GroverResult:
         """Chain: list children of each candidate directory.
