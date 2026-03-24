@@ -25,7 +25,7 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic_core import core_schema
 from sqlalchemy import Text
@@ -55,10 +55,10 @@ class Vector(list[float]):
     def __class_getitem__(cls, params: int | str | tuple[int, str]) -> type[Vector]:  # type: ignore[override]
         """Create a dimension/model-specific Vector subclass."""
         if isinstance(params, int):
-            return type(f"Vector[{params}]", (cls,), {"_dimension": params, "_model_name": None})
-        if isinstance(params, str):
-            return type(f"Vector['{params}']", (cls,), {"_dimension": None, "_model_name": params})
-        if isinstance(params, tuple):
+            name, attrs = f"Vector[{params}]", {"_dimension": params, "_model_name": None}
+        elif isinstance(params, str):
+            name, attrs = f"Vector['{params}']", {"_dimension": None, "_model_name": params}
+        elif isinstance(params, tuple):
             if len(params) != 2:
                 msg = f"Vector[...] tuple must be (int, str), got {len(params)} elements"
                 raise TypeError(msg)
@@ -66,10 +66,11 @@ class Vector(list[float]):
             if not isinstance(dim, int) or not isinstance(model, str):
                 msg = f"Vector[...] tuple must be (int, str), got ({type(dim).__name__}, {type(model).__name__})"
                 raise TypeError(msg)
-            attrs = {"_dimension": dim, "_model_name": model}
-            return type(f"Vector[{dim}, '{model}']", (cls,), attrs)
-        msg = f"Vector[...] requires int, str, or (int, str), got {type(params).__name__}"
-        raise TypeError(msg)
+            name, attrs = f"Vector[{dim}, '{model}']", {"_dimension": dim, "_model_name": model}
+        else:
+            msg = f"Vector[...] requires int, str, or (int, str), got {type(params).__name__}"
+            raise TypeError(msg)
+        return cast("type[Vector]", type(name, (cls,), attrs))
 
     def __init__(self, data: list[float] | None = None) -> None:
         super().__init__(data or [])
@@ -105,8 +106,10 @@ class Vector(list[float]):
     def _pydantic_validate(cls, value: object) -> Vector | None:
         if value is None:
             return None
-        if isinstance(value, Vector):
+        if isinstance(value, cls):
             return value
+        if isinstance(value, Vector):
+            return cls(list(value))
         if isinstance(value, list):
             return cls(value)  # type: ignore[arg-type]
         msg = f"Expected list or Vector, got {type(value)}"

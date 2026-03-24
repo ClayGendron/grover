@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
 
-from grover.protocol import GroverFileSystem
+from grover.base import GroverFileSystem
+from grover.results import Candidate, GroverResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -18,6 +20,53 @@ def _make_fs(name: str = "test") -> GroverFileSystem:
     fs = GroverFileSystem(session_factory=AsyncMock())
     fs._name = name  # tag for assertions
     return fs
+
+
+class _DummySession:
+    async def commit(self) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+
+def _session_factory():
+    @asynccontextmanager
+    async def _factory():
+        yield _DummySession()
+
+    return _factory
+
+
+def _candidate(path: str, *, content: str | None = None) -> Candidate:
+    return Candidate(id=path, path=path, kind="file", content=content)
+
+
+class _RoutingFS(GroverFileSystem):
+    def __init__(self, name: str = "test") -> None:
+        super().__init__(session_factory=_session_factory())
+        self._name = name
+        self.read_mock = AsyncMock(return_value=GroverResult())
+        self.write_mock = AsyncMock(return_value=GroverResult())
+        self.delete_mock = AsyncMock(return_value=GroverResult())
+        self.glob_mock = AsyncMock(return_value=GroverResult())
+
+    async def _read_impl(self, path=None, candidates=None, *, session):
+        return await self.read_mock(path=path, candidates=candidates, session=session)
+
+    async def _write_impl(self, path="", content="", overwrite=True, *, session):
+        return await self.write_mock(path=path, content=content, overwrite=overwrite, session=session)
+
+    async def _delete_impl(self, path=None, candidates=None, permanent=False, *, session):
+        return await self.delete_mock(
+            path=path,
+            candidates=candidates,
+            permanent=permanent,
+            session=session,
+        )
+
+    async def _glob_impl(self, pattern="", candidates=None, *, session):
+        return await self.glob_mock(pattern=pattern, candidates=candidates, session=session)
 
 
 # =========================================================================
@@ -277,3 +326,105 @@ class TestResolveTerminal:
         assert fs is root
         assert rel == "/webinar"
         assert prefix == ""
+
+
+# =========================================================================
+# Candidate routing regressions
+# =========================================================================
+
+
+class TestCandidateRouting:
+    async def test_empty_candidate_read_short_circuits_dispatch(self):
+        root = _RoutingFS("root")
+        child = _RoutingFS("child")
+        await root.add_mount("/data", child)
+
+        result = await root.read(candidates=GroverResult())
+
+        assert result.success is True
+        assert result.candidates == []
+        root.read_mock.assert_not_awaited()
+        child.read_mock.assert_not_awaited()
+
+    async def test_empty_candidate_glob_short_circuits_fanout(self):
+        root = _RoutingFS("root")
+        child = _RoutingFS("child")
+        await root.add_mount("/data", child)
+
+        result = await root.glob("*.py", candidates=GroverResult())
+
+        assert result.success is True
+        assert result.candidates == []
+        root.glob_mock.assert_not_awaited()
+        child.glob_mock.assert_not_awaited()
+
+
+# =========================================================================
+# Cross-mount transfer regressions
+# =========================================================================
+
+
+class TestCrossMountTransfers:
+    async def test_cross_mount_copy_rebases_source_read_failures_to_source_prefix(self):
+        root = _RoutingFS("root")
+        src = _RoutingFS("src")
+        dst = _RoutingFS("dst")
+        await root.add_mount("/src", src)
+        await root.add_mount("/dst", dst)
+
+        src.read_mock.return_value = GroverResult(
+            success=False,
+            errors=["read failed"],
+            candidates=[_candidate("/file.txt")],
+        )
+
+        result = await root.copy("/src/file.txt", "/dst/file.txt")
+
+        assert result.success is False
+        assert result.paths == ("/src/file.txt",)
+        dst.write_mock.assert_not_awaited()
+
+    async def test_cross_mount_move_rebases_delete_failures_to_source_prefix(self):
+        root = _RoutingFS("root")
+        src = _RoutingFS("src")
+        dst = _RoutingFS("dst")
+        await root.add_mount("/src", src)
+        await root.add_mount("/dst", dst)
+
+        src.read_mock.return_value = GroverResult(
+            candidates=[_candidate("/file.txt", content="hello")],
+        )
+        dst.write_mock.return_value = GroverResult(
+            candidates=[_candidate("/file.txt", content="hello")],
+        )
+        src.delete_mock.return_value = GroverResult(
+            success=False,
+            errors=["delete failed"],
+            candidates=[_candidate("/file.txt")],
+        )
+
+        result = await root.move("/src/file.txt", "/dst/file.txt")
+
+        assert result.success is False
+        assert result.paths == ("/src/file.txt",)
+
+    async def test_cross_mount_copy_keeps_destination_prefix_for_write_failures(self):
+        root = _RoutingFS("root")
+        src = _RoutingFS("src")
+        dst = _RoutingFS("dst")
+        await root.add_mount("/src", src)
+        await root.add_mount("/dst", dst)
+
+        src.read_mock.return_value = GroverResult(
+            candidates=[_candidate("/file.txt", content="hello")],
+        )
+        dst.write_mock.return_value = GroverResult(
+            success=False,
+            errors=["write failed"],
+            candidates=[_candidate("/file.txt")],
+        )
+
+        result = await root.copy("/src/file.txt", "/dst/file.txt")
+
+        assert result.success is False
+        assert result.paths == ("/dst/file.txt",)

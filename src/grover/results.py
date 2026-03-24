@@ -1,10 +1,13 @@
 """Composable result types for Grover.
 
-Every Grover operation returns ``GroverResult``.  Results carry candidates,
-provenance details, and an optional back-reference to the ``Grover`` instance
-that produced them — enabling method chaining:
+Every Grover operation returns ``GroverResult``.  Results carry candidates
+and provenance details.  Local enrichment methods (``sort``, ``top``,
+``filter``, ``kinds``) and set algebra (``&``, ``|``, ``-``) operate
+in-memory on resolved data:
 
-    g.semantic_search("auth", k=5).min_meeting_subgraph().pagerank().top(3)
+    result = await g.semantic_search("auth", k=5)
+    result = await g.pagerank(candidates=result)
+    top_3 = result.top(3)
 
 Results serialize cleanly to JSON via Pydantic's ``model_dump(exclude_none=True)``
 for use in REST APIs.
@@ -15,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime  # noqa: TC003 — Pydantic needs this at runtime for field resolution
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, PrivateAttr
+from pydantic import BaseModel, ConfigDict
 
 from grover.paths import split_path
 
@@ -147,7 +150,6 @@ class GroverResult(BaseModel):
     Supports:
     - **Data inspection:** ``.paths``, ``.content``, ``.file``, ``.explain()``
     - **Set algebra:** ``&`` (intersection), ``|`` (union), ``-`` (difference)
-    - **Method chaining:** ``.semantic_search()``, ``.pagerank()``, ``.read()``, etc.
     - **Enrichment:** ``.sort()``, ``.top()``, ``.filter()``, ``.kinds()``
     - **Serialization:** ``.model_dump(exclude_none=True)`` for REST APIs
     """
@@ -157,9 +159,6 @@ class GroverResult(BaseModel):
     success: bool = True
     errors: list[str] = []
     candidates: list[Candidate] = []
-
-    # Back-reference for chaining — not serialized
-    _grover: Any = PrivateAttr(default=None)
 
     # -------------------------------------------------------------------
     # Data access
@@ -196,7 +195,8 @@ class GroverResult(BaseModel):
     # Iteration / truthiness
     # -------------------------------------------------------------------
 
-    def __iter__(self) -> Iterator[Candidate]:
+    def iter_candidates(self) -> Iterator[Candidate]:
+        """Iterate over candidates without overriding BaseModel iteration."""
         return iter(self.candidates)
 
     def __len__(self) -> int:
@@ -250,13 +250,11 @@ class GroverResult(BaseModel):
         left = self._as_dict()
         right = other._as_dict()
         merged = [self._merge_candidate(left[p], right[p]) for p in left if p in right]
-        result = GroverResult(
+        return GroverResult(
             candidates=merged,
             success=self.success and other.success,
             errors=self.errors + other.errors,
         )
-        result._grover = self._grover or other._grover
-        return result
 
     def __or__(self, other: GroverResult) -> GroverResult:
         """Union — candidates from either, details merged where overlap."""
@@ -268,39 +266,33 @@ class GroverResult(BaseModel):
         for p, c in right.items():
             if p not in merged:
                 merged[p] = c
-        result = GroverResult(
+        return GroverResult(
             candidates=list(merged.values()),
             success=self.success and other.success,
             errors=self.errors + other.errors,
         )
-        result._grover = self._grover or other._grover
-        return result
 
     def __sub__(self, other: GroverResult) -> GroverResult:
         """Difference — candidates in left not in right."""
         right_paths = set(other.paths)
         remaining = [c for c in self.candidates if c.path not in right_paths]
-        result = GroverResult(
+        return GroverResult(
             candidates=remaining,
             success=self.success,
             errors=self.errors,
         )
-        result._grover = self._grover
-        return result
 
     # -------------------------------------------------------------------
     # Enrichment chains (local, no backend call)
     # -------------------------------------------------------------------
 
     def _with_candidates(self, candidates: list[Candidate]) -> GroverResult:
-        """Return a new result with the given candidates, preserving _grover."""
-        result = GroverResult(
+        """Return a new result with the given candidates."""
+        return GroverResult(
             candidates=candidates,
             success=self.success,
             errors=self.errors,
         )
-        result._grover = self._grover
-        return result
 
     def sort(
         self,
@@ -321,7 +313,7 @@ class GroverResult(BaseModel):
         elif operation:
 
             def sort_key(c: Candidate) -> float:
-                return c.score_for(operation)  # type: ignore[arg-type]
+                return c.score_for(operation)
         else:
 
             def sort_key(c: Candidate) -> float:
@@ -345,139 +337,3 @@ class GroverResult(BaseModel):
         """Filter candidates by kind."""
         kind_set = set(kinds)
         return self.filter(lambda c: c.kind in kind_set)
-
-    # -------------------------------------------------------------------
-    # Chain helpers
-    # -------------------------------------------------------------------
-
-    def _require_grover(self) -> Any:
-        """Return the bound Grover instance or raise."""
-        if self._grover is None:
-            msg = "Chain methods require a bound Grover instance. This result was not returned by a Grover operation."
-            raise RuntimeError(msg)
-        return self._grover
-
-    # -------------------------------------------------------------------
-    # CRUD chain stubs
-    # -------------------------------------------------------------------
-
-    def read(self) -> GroverResult:
-        """Chain: read content for all candidates (one batched query)."""
-        return self._require_grover().read(candidates=self)
-
-    def stat(self) -> GroverResult:
-        """Chain: populate metadata on all candidates (one batched query)."""
-        return self._require_grover().stat(candidates=self)
-
-    def edit(
-        self,
-        old: str = "",
-        new: str = "",
-        replace_all: bool = False,
-        edits: list[EditOperation] | None = None,
-    ) -> GroverResult:
-        """Chain: find-and-replace across all candidates."""
-        return self._require_grover().edit(
-            old=old,
-            new=new,
-            replace_all=replace_all,
-            edits=edits,
-            candidates=self,
-        )
-
-    def ls(self) -> GroverResult:
-        """Chain: list children of each candidate directory.
-
-        Named ``ls`` to avoid shadowing the ``list`` builtin, which Pydantic
-        needs to resolve the ``candidates: list[Candidate]`` annotation.
-        Calls the facade's ``ls()`` method under the hood.
-        """
-        return self._require_grover().ls(candidates=self)
-
-    def delete(self) -> GroverResult:
-        """Chain: delete all candidates (one batched query)."""
-        return self._require_grover().delete(candidates=self)
-
-    # -------------------------------------------------------------------
-    # Query chain stubs
-    # -------------------------------------------------------------------
-
-    def glob(self, pattern: str) -> GroverResult:
-        """Chain: glob within current candidates."""
-        return self._require_grover().glob(pattern, candidates=self)
-
-    def grep(self, pattern: str) -> GroverResult:
-        """Chain: grep within current candidates."""
-        return self._require_grover().grep(pattern, candidates=self)
-
-    def semantic_search(self, query: str, *, k: int = 15) -> GroverResult:
-        """Chain: semantic search filtered to current candidates."""
-        return self._require_grover().semantic_search(query, k=k, candidates=self)
-
-    def vector_search(self, vector: list[float], *, k: int = 15) -> GroverResult:
-        """Chain: vector search filtered to current candidates."""
-        return self._require_grover().vector_search(vector, k=k, candidates=self)
-
-    def lexical_search(self, query: str, *, k: int = 15) -> GroverResult:
-        """Chain: lexical search filtered to current candidates."""
-        return self._require_grover().lexical_search(query, k=k, candidates=self)
-
-    # -------------------------------------------------------------------
-    # Graph chain stubs
-    # -------------------------------------------------------------------
-
-    def predecessors(self) -> GroverResult:
-        """Chain: one-hop backward traversal."""
-        return self._require_grover().predecessors(candidates=self)
-
-    def successors(self) -> GroverResult:
-        """Chain: one-hop forward traversal."""
-        return self._require_grover().successors(candidates=self)
-
-    def ancestors(self) -> GroverResult:
-        """Chain: transitive backward traversal."""
-        return self._require_grover().ancestors(candidates=self)
-
-    def descendants(self) -> GroverResult:
-        """Chain: transitive forward traversal."""
-        return self._require_grover().descendants(candidates=self)
-
-    def neighborhood(self, *, depth: int = 2) -> GroverResult:
-        """Chain: bounded BFS around candidates."""
-        return self._require_grover().neighborhood(candidates=self, depth=depth)
-
-    def meeting_subgraph(self) -> GroverResult:
-        """Chain: all paths between candidates."""
-        return self._require_grover().meeting_subgraph(candidates=self)
-
-    def min_meeting_subgraph(self) -> GroverResult:
-        """Chain: minimum connecting subgraph."""
-        return self._require_grover().min_meeting_subgraph(candidates=self)
-
-    def pagerank(self) -> GroverResult:
-        """Chain: rank candidates by PageRank."""
-        return self._require_grover().pagerank(candidates=self)
-
-    def betweenness_centrality(self) -> GroverResult:
-        """Chain: rank candidates by betweenness centrality."""
-        return self._require_grover().betweenness_centrality(candidates=self)
-
-    def closeness_centrality(self) -> GroverResult:
-        """Chain: rank candidates by closeness centrality."""
-        return self._require_grover().closeness_centrality(candidates=self)
-
-    def degree_centrality(self) -> GroverResult:
-        """Chain: rank candidates by degree centrality."""
-        return self._require_grover().degree_centrality(candidates=self)
-
-    def in_degree_centrality(self) -> GroverResult:
-        """Chain: rank candidates by in-degree centrality."""
-        return self._require_grover().in_degree_centrality(candidates=self)
-
-    def out_degree_centrality(self) -> GroverResult:
-        """Chain: rank candidates by out-degree centrality."""
-        return self._require_grover().out_degree_centrality(candidates=self)
-
-    def hits(self) -> GroverResult:
-        """Chain: rank candidates by HITS authority/hub scores."""
-        return self._require_grover().hits(candidates=self)

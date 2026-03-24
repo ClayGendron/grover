@@ -8,7 +8,6 @@ import pytest
 
 from grover.vector import Vector, VectorType
 
-
 # =========================================================================
 # Vector — construction and subscript forms
 # =========================================================================
@@ -35,32 +34,32 @@ class TestVectorConstruction:
 
 class TestVectorSubscript:
     def test_dimension_only(self):
-        V3 = Vector[3]
-        v = V3([1.0, 2.0, 3.0])
+        vector3 = Vector[3]
+        v = vector3([1.0, 2.0, 3.0])
         assert v.dimension == 3
         assert v.model_name is None
 
     def test_dimension_enforced(self):
-        V3 = Vector[3]
+        vector3 = Vector[3]
         with pytest.raises(ValueError, match="Expected 3 dimensions"):
-            V3([1.0, 2.0])
+            vector3([1.0, 2.0])
 
     def test_model_name_only(self):
-        V = Vector["text-embedding-3-large"]
-        v = V([0.1, 0.2])
+        vector_type = Vector["text-embedding-3-large"]
+        v = vector_type([0.1, 0.2])
         assert v.dimension is None
         assert v.model_name == "text-embedding-3-large"
 
     def test_dimension_and_model(self):
-        V = Vector[1024, "text-embedding-3-large"]
-        v = V([0.1] * 1024)
+        vector_type = Vector[1024, "text-embedding-3-large"]
+        v = vector_type([0.1] * 1024)
         assert v.dimension == 1024
         assert v.model_name == "text-embedding-3-large"
 
     def test_dimension_and_model_enforced(self):
-        V = Vector[3, "my-model"]
+        vector_type = Vector[3, "my-model"]
         with pytest.raises(ValueError, match="Expected 3 dimensions"):
-            V([1.0, 2.0])
+            vector_type([1.0, 2.0])
 
     def test_bad_tuple_length(self):
         with pytest.raises(TypeError, match="tuple must be"):
@@ -101,6 +100,26 @@ class TestVectorPydantic:
     def test_validate_list(self):
         result = Vector._pydantic_validate([1.0, 2.0])
         assert isinstance(result, Vector)
+        assert list(result) == [1.0, 2.0]
+
+    def test_validate_matching_subclass_returns_same_instance(self):
+        vector3 = Vector[3]
+        v = vector3([1.0, 2.0, 3.0])
+        assert vector3._pydantic_validate(v) is v
+
+    def test_validate_incompatible_vector_subclass_revalidates(self):
+        vector2 = Vector[2]
+        vector3 = Vector[3]
+        v = vector2([1.0, 2.0])
+        with pytest.raises(ValueError, match="Expected 3 dimensions"):
+            vector3._pydantic_validate(v)
+
+    def test_validate_rebuilds_model_specific_subclass(self):
+        source = Vector["wrong-model"]([1.0, 2.0])
+        expected_vector = Vector["expected-model"]
+        result = expected_vector._pydantic_validate(source)
+        assert isinstance(result, expected_vector)
+        assert result.model_name == "expected-model"
         assert list(result) == [1.0, 2.0]
 
     def test_validate_bad_type(self):

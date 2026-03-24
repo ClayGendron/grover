@@ -181,16 +181,20 @@ class TestGroverResultBasics:
         assert "/a.py" in r
         assert "/b.py" not in r
 
-    def test_iteration(self):
+    def test_iter_candidates(self):
         candidates = [_c("/a.py"), _c("/b.py")]
         r = GroverResult(candidates=candidates)
-        paths = [c.path for c in r]
+        paths = [c.path for c in r.iter_candidates()]
         assert paths == ["/a.py", "/b.py"]
 
+    def test_dict_conversion_uses_model_iteration(self):
+        r = GroverResult(candidates=[_c("/a.py")])
+        data = dict(r)
+        assert data["success"] is True
+        assert data["candidates"][0].path == "/a.py"
+
     def test_content_shorthand(self):
-        r = GroverResult(
-            candidates=[_c("/a.py", content="print('hello')")]
-        )
+        r = GroverResult(candidates=[_c("/a.py", content="print('hello')")])
         assert r.content == "print('hello')"
 
     def test_explain(self):
@@ -234,12 +238,7 @@ class TestGroverResultConstruction:
 
 class TestGroverResultSetAlgebra:
     def _make(self, paths: list[str], operation: str = "test") -> GroverResult:
-        return GroverResult(
-            candidates=[
-                _c(p, details=[Detail(operation=operation)])
-                for p in paths
-            ]
-        )
+        return GroverResult(candidates=[_c(p, details=[Detail(operation=operation)]) for p in paths])
 
     def test_intersection(self):
         a = self._make(["/a.py", "/b.py", "/c.py"], "search")
@@ -297,33 +296,6 @@ class TestGroverResultSetAlgebra:
         result = a | b
         assert result.success is False
 
-    def test_grover_propagation_and(self):
-        """_grover propagates from left operand in &."""
-        a = self._make(["/a.py"])
-        b = self._make(["/a.py"])
-        sentinel = object()
-        a._grover = sentinel
-        result = a & b
-        assert result._grover is sentinel
-
-    def test_grover_propagation_or(self):
-        """_grover propagates from left operand in |."""
-        a = self._make(["/a.py"])
-        b = self._make(["/b.py"])
-        sentinel = object()
-        a._grover = sentinel
-        result = a | b
-        assert result._grover is sentinel
-
-    def test_grover_propagation_sub(self):
-        """_grover propagates from left operand in -."""
-        a = self._make(["/a.py", "/b.py"])
-        b = self._make(["/b.py"])
-        sentinel = object()
-        a._grover = sentinel
-        result = a - b
-        assert result._grover is sentinel
-
 
 # ---------------------------------------------------------------------------
 # GroverResult — enrichment chains
@@ -340,19 +312,25 @@ class TestGroverResultEnrichment:
             ],
         )
         sorted_r = r.sort()
-        assert [c.path for c in sorted_r] == ["/high.py", "/mid.py", "/low.py"]
+        assert [c.path for c in sorted_r.iter_candidates()] == ["/high.py", "/mid.py", "/low.py"]
 
     def test_sort_by_explicit_operation(self):
         r = GroverResult(
             candidates=[
-                _c("/a.py", details=[
-                    Detail(operation="search", score=0.9),
-                    Detail(operation="pagerank", score=0.2),
-                ]),
-                _c("/b.py", details=[
-                    Detail(operation="search", score=0.1),
-                    Detail(operation="pagerank", score=0.8),
-                ]),
+                _c(
+                    "/a.py",
+                    details=[
+                        Detail(operation="search", score=0.9),
+                        Detail(operation="pagerank", score=0.2),
+                    ],
+                ),
+                _c(
+                    "/b.py",
+                    details=[
+                        Detail(operation="search", score=0.1),
+                        Detail(operation="pagerank", score=0.8),
+                    ],
+                ),
             ],
         )
         # Default: sort by last operation (pagerank)
@@ -370,7 +348,7 @@ class TestGroverResultEnrichment:
             ],
         )
         sorted_r = r.sort(reverse=False)
-        assert [c.path for c in sorted_r] == ["/low.py", "/high.py"]
+        assert [c.path for c in sorted_r.iter_candidates()] == ["/low.py", "/high.py"]
 
     def test_sort_custom_key(self):
         r = GroverResult(
@@ -438,23 +416,6 @@ class TestGroverResultEnrichment:
         files_and_chunks = r.kinds("file", "chunk")
         assert len(files_and_chunks) == 2
 
-    def test_enrichment_preserves_grover(self):
-        """Enrichment chains propagate _grover."""
-        r = GroverResult(
-            candidates=[_c("/a.py", details=[Detail(operation="s")])],
-        )
-        sentinel = object()
-        r._grover = sentinel
-        assert r.sort()._grover is sentinel
-        assert r.filter(lambda c: True)._grover is sentinel
-        assert r.kinds("file")._grover is sentinel
-        assert r.top(10)._grover is sentinel
-
-
-# ---------------------------------------------------------------------------
-# GroverResult — chain stubs (without bound grover)
-# ---------------------------------------------------------------------------
-
 
 class TestScoreFor:
     def test_score_for(self):
@@ -470,75 +431,14 @@ class TestScoreFor:
         assert c.score_for("nonexistent") == 0.0
 
 
-class TestGroverResultChainStubs:
-    def test_chain_without_grover_raises(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        with pytest.raises(RuntimeError, match="bound Grover instance"):
-            r.read()
-
-    def test_all_crud_stubs_raise_without_grover(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        for method_name in ("read", "delete", "stat", "ls"):
-            with pytest.raises(RuntimeError):
-                getattr(r, method_name)()
-
-    def test_edit_raises_without_grover(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        with pytest.raises(RuntimeError):
-            r.edit("old", "new")
-
-    def test_all_query_stubs_raise_without_grover(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        with pytest.raises(RuntimeError):
-            r.glob("*.py")
-        with pytest.raises(RuntimeError):
-            r.grep("pattern")
-        with pytest.raises(RuntimeError):
-            r.semantic_search("query")
-        with pytest.raises(RuntimeError):
-            r.vector_search([0.1, 0.2])
-        with pytest.raises(RuntimeError):
-            r.lexical_search("query")
-
-    def test_all_graph_stubs_raise_without_grover(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        graph_methods = [
-            "predecessors", "successors", "ancestors", "descendants",
-            "meeting_subgraph", "min_meeting_subgraph",
-            "pagerank", "betweenness_centrality", "closeness_centrality",
-            "degree_centrality", "in_degree_centrality", "out_degree_centrality",
-            "hits",
-        ]
-        for method_name in graph_methods:
-            with pytest.raises(RuntimeError):
-                getattr(r, method_name)()
-
-    def test_neighborhood_raises_without_grover(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        with pytest.raises(RuntimeError):
-            r.neighborhood(depth=2)
-
-
 # ---------------------------------------------------------------------------
 # GroverResult — JSON serialization
 # ---------------------------------------------------------------------------
 
 
 class TestGroverResultJSON:
-    def test_model_dump_excludes_grover(self):
-        r = GroverResult(candidates=[_c("/a.py")])
-        r._grover = object()
-        data = r.model_dump()
-        assert "_grover" not in data
-
     def test_model_dump_exclude_none(self):
-        r = GroverResult(
-            candidates=[
-                _c("/a.py", lines=142, details=[
-                    Detail(operation="semantic_search", score=0.95)
-                ])
-            ]
-        )
+        r = GroverResult(candidates=[_c("/a.py", lines=142, details=[Detail(operation="semantic_search", score=0.95)])])
         data = r.model_dump(exclude_none=True)
         candidate = data["candidates"][0]
         assert "content" not in candidate
@@ -592,46 +492,62 @@ class TestGroverResultJSON:
 class TestMergeEdgeCases:
     def test_merge_preserves_zero_metrics_from_left(self):
         """lines=0 on left should NOT be replaced by right's value."""
-        a = GroverResult(candidates=[
-            Candidate(id="1", path="/a.py", kind="file", lines=0, size_bytes=0),
-        ])
-        b = GroverResult(candidates=[
-            Candidate(id="2", path="/a.py", kind="file", lines=50, size_bytes=4096),
-        ])
+        a = GroverResult(
+            candidates=[
+                Candidate(id="1", path="/a.py", kind="file", lines=0, size_bytes=0),
+            ]
+        )
+        b = GroverResult(
+            candidates=[
+                Candidate(id="2", path="/a.py", kind="file", lines=50, size_bytes=4096),
+            ]
+        )
         result = a & b
         assert result.candidates[0].lines == 0
         assert result.candidates[0].size_bytes == 0
 
     def test_merge_preserves_empty_string_content(self):
         """content='' (empty file) should NOT be replaced by right's content."""
-        a = GroverResult(candidates=[
-            Candidate(id="1", path="/a.py", kind="file", content=""),
-        ])
-        b = GroverResult(candidates=[
-            Candidate(id="2", path="/a.py", kind="file", content="real content"),
-        ])
+        a = GroverResult(
+            candidates=[
+                Candidate(id="1", path="/a.py", kind="file", content=""),
+            ]
+        )
+        b = GroverResult(
+            candidates=[
+                Candidate(id="2", path="/a.py", kind="file", content="real content"),
+            ]
+        )
         result = a & b
         assert result.candidates[0].content == ""
 
     def test_merge_preserves_left_id(self):
         """Left candidate's id wins in a merge."""
-        a = GroverResult(candidates=[
-            Candidate(id="left-id", path="/a.py", kind="file"),
-        ])
-        b = GroverResult(candidates=[
-            Candidate(id="right-id", path="/a.py", kind="file"),
-        ])
+        a = GroverResult(
+            candidates=[
+                Candidate(id="left-id", path="/a.py", kind="file"),
+            ]
+        )
+        b = GroverResult(
+            candidates=[
+                Candidate(id="right-id", path="/a.py", kind="file"),
+            ]
+        )
         result = a & b
         assert result.candidates[0].id == "left-id"
 
     def test_merge_falls_back_to_right_for_none(self):
         """When left has None, right's value is used."""
-        a = GroverResult(candidates=[
-            Candidate(id="1", path="/a.py", kind="file", content=None, mime_type=None),
-        ])
-        b = GroverResult(candidates=[
-            Candidate(id="2", path="/a.py", kind="file", content="hello", mime_type="text/python"),
-        ])
+        a = GroverResult(
+            candidates=[
+                Candidate(id="1", path="/a.py", kind="file", content=None, mime_type=None),
+            ]
+        )
+        b = GroverResult(
+            candidates=[
+                Candidate(id="2", path="/a.py", kind="file", content="hello", mime_type="text/python"),
+            ]
+        )
         result = a & b
         assert result.candidates[0].content == "hello"
         assert result.candidates[0].mime_type == "text/python"
@@ -676,10 +592,13 @@ class TestScoreEdgeCases:
 
     def test_score_for_returns_most_recent_duplicate(self):
         """When multiple details share an operation, most recent wins."""
-        c = _c("/a.py", details=[
-            Detail(operation="search", score=0.3),
-            Detail(operation="search", score=0.9),
-        ])
+        c = _c(
+            "/a.py",
+            details=[
+                Detail(operation="search", score=0.3),
+                Detail(operation="search", score=0.9),
+            ],
+        )
         assert c.score_for("search") == 0.9
 
 
@@ -733,9 +652,7 @@ class TestDatetimeRoundTrip:
         from datetime import UTC, datetime
 
         now = datetime.now(UTC)
-        c = Candidate(
-            id="1", path="/a.py", kind="file", created_at=now, updated_at=now
-        )
+        c = Candidate(id="1", path="/a.py", kind="file", created_at=now, updated_at=now)
         json_str = c.model_dump_json()
         restored = Candidate.model_validate_json(json_str)
         assert restored.created_at == now

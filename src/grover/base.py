@@ -1,12 +1,11 @@
 """GroverFileSystem — concrete async base class with mount routing.
 
-The base class owns mount routing, session management, path rebasing, and
-``_grover`` binding.  The filesystem object itself owns ``/`` — mounting at
-``"/"`` is illegal.
+The base class owns mount routing, session management, and path rebasing.
+The filesystem object itself owns ``/`` — mounting at ``"/"`` is illegal.
 
 Public methods are routers.  They resolve the terminal filesystem via
 longest-prefix mount matching, delegate to ``_*_impl`` methods for actual
-storage work, then rebase paths and stamp ``_grover`` before returning.
+storage work, then rebase paths before returning.
 
 Subclasses override ``_*_impl`` for their storage backend:
 - ``DatabaseFileSystem`` — SQL via ``GroverObject``
@@ -177,16 +176,10 @@ class GroverFileSystem:
         ]
         return result._with_candidates(filtered)
 
-    def _error(self, message: str) -> GroverResult:
-        """Create a failed result with ``_grover`` already stamped."""
-        result = GroverResult(success=False, errors=[message])
-        result._grover = self
-        return result
-
-    def _stamp(self, result: GroverResult) -> GroverResult:
-        """Stamp ``_grover`` on a result and return it."""
-        result._grover = self
-        return result
+    @staticmethod
+    def _error(message: str) -> GroverResult:
+        """Create a failed result."""
+        return GroverResult(success=False, errors=[message])
 
     @staticmethod
     def _require_same_mount(
@@ -233,7 +226,7 @@ class GroverFileSystem:
         terminal filesystem.
         """
         groups: dict[tuple[int, str], tuple[GroverFileSystem, list[Candidate]]] = {}
-        for c in candidates:
+        for c in candidates.candidates:
             fs, rel, prefix = self._resolve_terminal(c.path)
             key = (id(fs), prefix)
             if key not in groups:
@@ -254,6 +247,12 @@ class GroverFileSystem:
         merges results.
         """
         groups = self._group_by_terminal(candidates)
+        if not groups:
+            return GroverResult(
+                success=candidates.success,
+                errors=list(candidates.errors),
+                candidates=[],
+            )
 
         async def _run_group(
             fs: GroverFileSystem,
@@ -268,9 +267,7 @@ class GroverFileSystem:
         results = await asyncio.gather(
             *(_run_group(fs, pfx, gc) for fs, pfx, gc in groups),
         )
-        merged = self._merge_results(list(results))
-        merged._grover = self
-        return merged
+        return self._merge_results(list(results))
 
     async def _route_single(
         self,
@@ -284,7 +281,7 @@ class GroverFileSystem:
         With candidates: group by filesystem, dispatch in parallel.
         With path: resolve one terminal, call impl once.
         """
-        if candidates:
+        if candidates is not None:
             return await self._dispatch_candidates(op, candidates, **kwargs)
 
         assert path is not None
@@ -293,9 +290,7 @@ class GroverFileSystem:
         async with fs._use_session() as s:
             result = await getattr(fs, f"_{op}_impl")(rel, session=s, **kwargs)
 
-        result = self._rebase_result(result, prefix)
-        result._grover = self
-        return result
+        return self._rebase_result(result, prefix)
 
     async def _route_two_path(
         self,
@@ -331,6 +326,7 @@ class GroverFileSystem:
         if isinstance(dst_check, str):
             return self._error(dst_check)
         dst_fs, dst_prefix = dst_check
+        _, src_prefix = src_check
 
         src_rels = [r[1] for r in src_resolved]
         dst_rels = [r[1] for r in dst_resolved]
@@ -343,18 +339,17 @@ class GroverFileSystem:
                     overwrite=overwrite,
                     session=s,
                 )
-            return self._stamp(self._rebase_result(result, dst_prefix))
+            return self._rebase_result(result, dst_prefix)
 
-        return self._stamp(
-            await self._cross_mount_transfer(
-                op,
-                src_fs,
-                dst_fs,
-                src_rels,
-                dst_rels,
-                dst_prefix,
-                overwrite=overwrite,
-            ),
+        return await self._cross_mount_transfer(
+            op,
+            src_fs,
+            dst_fs,
+            src_rels,
+            dst_rels,
+            src_prefix,
+            dst_prefix,
+            overwrite=overwrite,
         )
 
     async def _cross_mount_transfer(
@@ -364,6 +359,7 @@ class GroverFileSystem:
         dst_fs: GroverFileSystem,
         src_rels: list[str],
         dst_rels: list[str],
+        src_prefix: str,
         dst_prefix: str,
         *,
         overwrite: bool,
@@ -375,7 +371,7 @@ class GroverFileSystem:
                 [await src_fs._read_impl(p, session=s) for p in src_rels],
             )
         if not read_results.success:
-            return self._rebase_result(read_results, dst_prefix)
+            return self._rebase_result(read_results, src_prefix)
 
         # Write all to destination
         async with dst_fs._use_session() as s:
@@ -387,7 +383,7 @@ class GroverFileSystem:
                         overwrite=overwrite,
                         session=s,
                     )
-                    for dst_rel, candidate in zip(dst_rels, read_results, strict=True)
+                    for dst_rel, candidate in zip(dst_rels, read_results.candidates, strict=True)
                 ]
             )
         if not write_results.success:
@@ -401,7 +397,7 @@ class GroverFileSystem:
                 )
             if not delete_results.success:
                 # Writes succeeded but deletes failed — caller needs to know
-                return self._rebase_result(delete_results, dst_prefix)
+                return self._rebase_result(delete_results, src_prefix)
 
         return self._rebase_result(write_results, dst_prefix)
 
@@ -416,7 +412,7 @@ class GroverFileSystem:
         With candidates: group by filesystem, dispatch in parallel.
         Without: query self + every mount in parallel, merge results.
         """
-        if candidates:
+        if candidates is not None:
             return await self._dispatch_candidates(op, candidates, **kwargs)
 
         async def _query_self() -> GroverResult:
@@ -433,9 +429,7 @@ class GroverFileSystem:
         for mount_path, r in zip(self._mounts, all_results[1:], strict=True):
             results.append(self._rebase_result(r, prefix=mount_path))
 
-        merged = self._merge_results(results)
-        merged._grover = self
-        return merged
+        return self._merge_results(results)
 
     # ===================================================================
     # Public methods — routers
@@ -468,12 +462,7 @@ class GroverFileSystem:
     ) -> GroverResult:
         if edits is None:
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
-        return await self._route_single(
-            "edit",
-            path,
-            candidates,
-            edits=edits,
-        )
+        return await self._route_single("edit", path, candidates, edits=edits)
 
     async def ls(
         self,
@@ -564,7 +553,7 @@ class GroverFileSystem:
                 connection_type,
                 session=s,
             )
-        return self._stamp(self._rebase_result(result, src_pfx))
+        return self._rebase_result(result, src_pfx)
 
     # --- Search (fan-out) ---
 
@@ -670,33 +659,60 @@ class GroverFileSystem:
 
     # --- Graph candidate-only (dispatch per filesystem) ---
 
-    async def meeting_subgraph(self, candidates: GroverResult) -> GroverResult:
+    async def meeting_subgraph(
+        self,
+        candidates: GroverResult,
+    ) -> GroverResult:
         return await self._dispatch_candidates("meeting_subgraph", candidates)
 
-    async def min_meeting_subgraph(self, candidates: GroverResult) -> GroverResult:
+    async def min_meeting_subgraph(
+        self,
+        candidates: GroverResult,
+    ) -> GroverResult:
         return await self._dispatch_candidates("min_meeting_subgraph", candidates)
 
     # --- Graph algorithms (fan-out) ---
 
-    async def pagerank(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def pagerank(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("pagerank", candidates)
 
-    async def betweenness_centrality(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def betweenness_centrality(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("betweenness_centrality", candidates)
 
-    async def closeness_centrality(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def closeness_centrality(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("closeness_centrality", candidates)
 
-    async def degree_centrality(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def degree_centrality(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("degree_centrality", candidates)
 
-    async def in_degree_centrality(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def in_degree_centrality(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("in_degree_centrality", candidates)
 
-    async def out_degree_centrality(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def out_degree_centrality(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("out_degree_centrality", candidates)
 
-    async def hits(self, candidates: GroverResult | None = None) -> GroverResult:
+    async def hits(
+        self,
+        candidates: GroverResult | None = None,
+    ) -> GroverResult:
         return await self._route_fanout("hits", candidates)
 
     # ===================================================================
