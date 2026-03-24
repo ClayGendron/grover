@@ -1254,6 +1254,49 @@ class DatabaseFileSystem:
             file=File(path=path),
         )
 
+    async def add_connections(
+        self,
+        connections: list[FileConnectionModelBase],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Batch add/update connections. Single flush at end."""
+        if not connections:
+            return GroverResult(success=True, message="No connections to add")
+
+        model = self.file_connection_model
+
+        # One query: batch lookup existing by path
+        paths = [c.path for c in connections]
+        result = await session.execute(select(model).where(model.path.in_(paths)))  # type: ignore[unresolved-attribute]
+        existing_map = {row.path: row for row in result.scalars().all()}
+
+        now = datetime.now(UTC)
+        conn_results: list[FileConnection] = []
+        for conn in connections:
+            existing = existing_map.get(conn.path)
+            if existing is not None:
+                existing.weight = conn.weight
+                existing.updated_at = now
+            else:
+                session.add(conn)
+            conn_results.append(
+                FileConnection(
+                    path=conn.path,
+                    source_path=conn.source_path,
+                    target_path=conn.target_path,
+                    type=conn.type,
+                    weight=conn.weight,
+                )
+            )
+
+        await session.flush()
+        return GroverResult(
+            success=True,
+            message=f"Processed {len(conn_results)} connection(s)",
+            connections=conn_results,
+        )
+
     async def delete_connection(
         self,
         source_path: str,

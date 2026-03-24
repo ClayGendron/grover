@@ -62,12 +62,18 @@ class FileConnectionModelBase(ValidatedSQLModel):
         target_path: str,
         connection_type: str = "",
         *,
+        mount: str | None = None,
         weight: float = 1.0,
     ) -> FileConnectionModelBase:
         """Factory for building a connection model.
 
         Path is derived as ``source_path[connection_type]target_path``.
+        When *mount* is provided, ``/{mount}/`` is prepended to both paths.
         """
+        if mount:
+            mount = mount.strip("/")
+            source_path = f"/{mount}/{source_path.lstrip('/')}"
+            target_path = f"/{mount}/{target_path.lstrip('/')}"
         now = datetime.now(UTC)
         return cls(
             source_path=source_path,

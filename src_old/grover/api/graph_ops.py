@@ -5,11 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from grover.exceptions import MountNotFoundError
-from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet
+from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet, GroverResult
 from grover.util.paths import normalize_path
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from grover.api.context import GroverContext
+    from grover.models.database.connection import FileConnectionModelBase
     from grover.mount import Mount
     from grover.providers.graph.protocol import GraphProvider
 
@@ -138,6 +141,35 @@ class GraphOpsMixin:
         if result.success:
             self._ctx.worker.schedule_immediate(
                 self._process_connection_added(source_path, target_path, connection_type, weight)  # type: ignore[attr-defined]
+            )
+
+        return result
+
+    async def add_connections(
+        self,
+        connections: list[FileConnectionModelBase],
+    ) -> GroverResult:
+        """Batch add connections, grouped by mount."""
+        if not connections:
+            return GroverResult(success=True, message="No connections to add")
+
+        groups, err = self._ctx.group_by_mount_writable(connections, lambda c: c.source_path)
+        if err:
+            return err
+
+        async def _handler(mount: Mount, group: list[FileConnectionModelBase], session: AsyncSession) -> GroverResult:
+            assert mount.filesystem is not None
+            return await mount.filesystem.add_connections(group, session=session)
+
+        result = await self._ctx.dispatch_to_mounts(groups, _handler)
+        result.message = f"Added {len(result.connections)} connection(s)"
+
+        # Schedule graph projection for successful connections
+        for conn in result.connections:
+            self._ctx.worker.schedule_immediate(
+                self._process_connection_added(  # type: ignore[attr-defined]
+                    conn.source_path, conn.target_path, conn.type, conn.weight
+                )
             )
 
         return result

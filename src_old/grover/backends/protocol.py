@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.connection import FileConnectionModelBase
     from grover.models.database.file import FileModelBase
     from grover.models.internal.results import (
         FileOperationResult,
@@ -260,6 +261,13 @@ class GroverFileSystem(Protocol):
         weight: float = 1.0,
         session: AsyncSession,
     ) -> FileOperationResult: ...
+
+    async def add_connections(
+        self,
+        connections: list[FileConnectionModelBase],
+        *,
+        session: AsyncSession,
+    ) -> GroverResult: ...
 
     async def delete_connection(
         self,

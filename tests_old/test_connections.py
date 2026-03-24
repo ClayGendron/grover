@@ -122,6 +122,28 @@ class TestFileConnectionModel:
             session.commit()
 
 
+class TestConnectionModelCreate:
+    def test_create_with_mount(self):
+        """mount= prepends /{mount}/ to both source and target paths."""
+        conn = FileConnectionModelBase.create("/a.py", "/b.py", "imports", mount="project")
+        assert conn.source_path == "/project/a.py"
+        assert conn.target_path == "/project/b.py"
+        assert conn.path == "/project/a.py[imports]/project/b.py"
+
+    def test_create_with_mount_strips_slashes(self):
+        """Leading/trailing slashes on mount are stripped."""
+        conn = FileConnectionModelBase.create("/a.py", "/b.py", "imports", mount="/project/")
+        assert conn.source_path == "/project/a.py"
+        assert conn.target_path == "/project/b.py"
+
+    def test_create_no_mount_unchanged(self):
+        """Without mount, paths are unchanged (existing behavior)."""
+        conn = FileConnectionModelBase.create("/a.py", "/b.py", "imports")
+        assert conn.source_path == "/a.py"
+        assert conn.target_path == "/b.py"
+        assert conn.path == "/a.py[imports]/b.py"
+
+
 class TestFileConnectionExports:
     def test_importable_from_models(self):
         from grover.models import FileConnectionModel, FileConnectionModelBase

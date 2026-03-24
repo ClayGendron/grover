@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from grover.backends.protocol import GroverFileSystem
     from grover.models.config import EngineConfig, SessionConfig
     from grover.models.database.chunk import FileChunkModelBase
+    from grover.models.database.connection import FileConnectionModelBase
     from grover.models.database.file import FileModelBase
     from grover.models.internal.results import FileOperationResult, FileSearchResult, FileSearchSet, GroverResult
     from grover.mount import Mount
@@ -368,6 +369,12 @@ class Grover:
                 weight=weight,
             )
         )
+
+    def add_connections(
+        self,
+        connections: list[FileConnectionModelBase],
+    ) -> GroverResult:
+        return self._run(self._async.add_connections(connections))
 
     def delete_connection(
         self,

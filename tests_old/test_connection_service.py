@@ -535,3 +535,119 @@ class TestSaveNoEdgePersistence:
 
         # save should succeed without errors
         await grover.save()
+
+
+# =========================================================================
+# Batch add_connections
+# =========================================================================
+
+
+class TestBatchAddConnections:
+    """Tests for batch add_connections on DatabaseFileSystem and GroverAsync."""
+
+    @pytest.fixture
+    async def setup(
+        self,
+    ) -> tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]:
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs = DatabaseFileSystem()
+        yield fs, factory, engine  # type: ignore[misc]
+        await engine.dispose()
+
+    async def test_batch_add_creates_multiple(
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        fs, factory, _engine = setup
+        conns = [
+            FileConnectionModel.create("/a.py", "/b.py", "imports"),
+            FileConnectionModel.create("/a.py", "/c.py", "calls"),
+            FileConnectionModel.create("/x.py", "/y.py", "imports"),
+        ]
+
+        async with factory() as sess:
+            result = await fs.add_connections(conns, session=sess)
+            await sess.commit()
+
+        assert result.success
+        assert len(result.connections) == 3
+
+        # Verify all in DB
+        async with factory() as sess:
+            row = await sess.execute(select(FileConnectionModel))
+            records = list(row.scalars().all())
+            assert len(records) == 3
+
+    async def test_batch_add_updates_existing(
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        fs, factory, _engine = setup
+
+        # Create initial connection
+        async with factory() as sess:
+            await fs.add_connection("/a.py", "/b.py", "imports", weight=1.0, session=sess)
+            await sess.commit()
+
+        # Batch add with same path but different weight
+        conns = [
+            FileConnectionModel.create("/a.py", "/b.py", "imports", weight=5.0),
+            FileConnectionModel.create("/a.py", "/c.py", "calls"),
+        ]
+
+        async with factory() as sess:
+            result = await fs.add_connections(conns, session=sess)
+            await sess.commit()
+
+        assert result.success
+        assert len(result.connections) == 2
+
+        # Verify: 2 records total, first one updated
+        async with factory() as sess:
+            row = await sess.execute(select(FileConnectionModel))
+            records = {r.path: r for r in row.scalars().all()}
+            assert len(records) == 2
+            assert records["/a.py[imports]/b.py"].weight == 5.0
+
+    async def test_batch_add_empty_list(
+        self, setup: tuple[DatabaseFileSystem, async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        fs, factory, _engine = setup
+
+        async with factory() as sess:
+            result = await fs.add_connections([], session=sess)
+
+        assert result.success
+        assert len(result.connections) == 0
+
+    async def test_batch_add_via_facade(self, tmp_path: Path) -> None:
+        """Integration test: batch add_connections through GroverAsync."""
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        fs = DatabaseFileSystem()
+
+        g = GroverAsync()
+        sc = SessionConfig(session_factory=factory, dialect="sqlite")
+        await g.add_mount("vfs", filesystem=fs, session_config=sc)
+
+        try:
+            conns = [
+                FileConnectionModel.create("/vfs/a.py", "/vfs/b.py", "imports"),
+                FileConnectionModel.create("/vfs/a.py", "/vfs/c.py", "calls"),
+            ]
+            result = await g.add_connections(conns)
+            assert result.success
+            assert len(result.connections) == 2
+
+            # Graph updated after flush
+            await g.flush()
+            graph = g.get_graph("/vfs")
+            assert graph.has_edge("/vfs/a.py", "/vfs/b.py")
+            assert graph.has_edge("/vfs/a.py", "/vfs/c.py")
+        finally:
+            await g.close()
+            await engine.dispose()

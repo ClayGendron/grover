@@ -108,9 +108,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["ANN", "S101"]
-"src/grover/providers/search/protocol.py" = ["A002"]  # filter= is the standard vector store API kwarg
-"src/grover/providers/search/pinecone.py" = ["A002"]
-"src/grover/providers/search/databricks.py" = ["A002"]
+"src_old/**/*.py" = ["ALL"]  # archived — skip linting
+"tests_old/**/*.py" = ["ALL"]  # archived — skip linting
 
 [tool.ruff.lint.isort]
 known-first-party = ["grover"]
@@ -125,7 +124,7 @@ root = ["src"]
 testpaths = ["tests"]
 pythonpath = ["tests"]
 asyncio_mode = "auto"
-norecursedirs = ["tests/fixtures/repos"]
+norecursedirs = ["tests/fixtures/repos", "tests_old", "src_old"]
 markers = [
     "slow: marks tests as slow",
     "integration: marks integration tests",
@@ -133,7 +132,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/grover"]
-omit = ["tests/*"]
+omit = ["tests/*", "src_old/*", "tests_old/*"]
 
 [tool.coverage.report]
 show_missing = true
