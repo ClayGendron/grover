@@ -281,10 +281,13 @@ class GroverFileSystem:
         With candidates: group by filesystem, dispatch in parallel.
         With path: resolve one terminal, call impl once.
         """
+        if (path is None) == (candidates is None):
+            msg = "Exactly one of path or candidates must be provided"
+            raise ValueError(msg)
+
         if candidates is not None:
             return await self._dispatch_candidates(op, candidates, **kwargs)
 
-        assert path is not None
         fs, rel, prefix = self._resolve_terminal(path)
 
         async with fs._use_session() as s:

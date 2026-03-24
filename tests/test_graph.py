@@ -19,6 +19,12 @@ from grover.results import Candidate, GroverResult
 _mock_session = AsyncMock()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_mock_session():
+    global _mock_session
+    _mock_session = AsyncMock()
+
+
 def _loaded_graph() -> RustworkxGraph:
     """Create a RustworkxGraph that skips DB loading (TTL already satisfied)."""
     g = RustworkxGraph(model=GroverObject)

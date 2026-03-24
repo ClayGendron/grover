@@ -1088,7 +1088,7 @@ Or more concisely: **Knowledge as a filesystem.**
 One result type for everything. Every Grover operation returns `GroverResult`. CRUD returns it with one candidate, queries with many, graph ops with re-ranked/expanded candidates.
 
 - **`Detail`** — flat provenance record. Fields: `operation`, `score`, `success`, `message`, `metadata: dict`. No subclasses. Frozen.
-- **`Candidate`** — read-only projection of a `GroverObject`. Required fields: `id`, `path`, `kind`. `name` is a computed property via `split_path()`. `details` is `tuple[Detail, ...]` for true immutability. `score` property returns last non-null detail score. `score_for(operation)` looks up a specific operation's score.
+- **`Candidate`** — read-only projection of a `GroverObject`. Only `path` is required; `id`, `kind`, `lines`, `size_bytes`, `tokens` are optional (defaulting to `None`). `name` is a computed property via `split_path()`. `details` is `tuple[Detail, ...]` for true immutability. `score` property returns last non-null detail score. `score_for(operation)` looks up a specific operation's score.
 - **`GroverResult`** — carries `success`, `message`, `candidates`. `_grover` back-reference (Pydantic `PrivateAttr`, excluded from JSON) enables method chaining. Set algebra (`&`, `|`, `-`). Enrichment chains (`sort`, `top`, `filter`, `kinds`). CRUD/query/graph chain stubs delegate to facade.
 
 #### Protocol (`protocol.py`)
@@ -1145,3 +1145,115 @@ Old v1 code archived to `src_old/` and `tests_old/`. New v2 code promoted to `sr
 #### Tests
 
 80 tests covering: Detail/Candidate/GroverResult construction, frozen model enforcement, JSON serialization round-trips (`model_dump`, `model_dump_json`), set algebra (intersection, union, difference, detail merging, success propagation, `_grover` propagation), enrichment chains (sort by score/operation/key, top, filter, kinds), chain stubs without bound grover, merge edge cases (zero metrics, empty content, left id preservation, None fallback), `_first_set` direct tests, required field validation, datetime round-trip, duplicate path behavior.
+
+### 14.4 Concrete base class with mount routing — 2026-03-23
+
+**Commits:** `670a2b3` through `9db89e3`
+
+Converted `GroverFileSystem` from a Protocol (interface only) to a **concrete async base class** that owns mount routing, session management, and path rebasing. Subclasses override `_*_impl` methods for storage.
+
+#### `base.py` — GroverFileSystem
+
+Public methods are **routers** — they resolve the terminal filesystem via longest-prefix mount matching, delegate to `_*_impl` methods, then rebase paths before returning.
+
+**Mount management:**
+- `add_mount(path, filesystem)` / `remove_mount(path)` — path validation (normalized, no root mount, no duplicates)
+- `_match_mount(path)` — longest-prefix match with boundary check (`/web` doesn't match `/webinar`)
+- `_resolve_terminal(path)` — walks the mount chain to find the terminal filesystem, accumulating prefix
+
+**Three routing strategies:**
+- `_route_single(op, path, candidates)` — resolves one path or dispatches candidates by group
+- `_route_two_path(op, ops)` — same-mount batch or cross-mount transfer (read → write → delete)
+- `_route_fanout(op, candidates)` — queries self + all mounts in parallel, merges results
+
+**Session management:** `_use_session()` async context manager — commits on success, rolls back on error.
+
+**Result helpers:** `_rebase_result()` restores absolute paths, `_exclude_mounted_paths()` prevents shadow results, `_merge_results()` unions multiple results.
+
+**40+ `_*_impl` stubs** — all raise `NotImplementedError` (excluded from coverage). Subclasses override for their storage backend.
+
+#### Key decisions
+
+**`GroverFileSystem` is a class, not a protocol.** The routing, session, and rebasing logic is shared infrastructure — putting it in a protocol would force every backend to duplicate it. Subclasses override only `_*_impl` methods.
+
+**`_grover` back-reference removed from `GroverResult`.** The chaining stubs on GroverResult (`result.predecessors()`, etc.) were removed. Operations are called on the filesystem, not on results. Pydantic `PrivateAttr` for back-references introduced serialization and testing complexity.
+
+**`Candidate` model relaxed.** Only `path` is required. `id`, `kind`, `lines`, `size_bytes`, `tokens` are all optional (defaulting to `None`). This lets graph and routing code construct lightweight candidates without needing database metadata. Fields are hydrated from the database when needed.
+
+### 14.5 Graph subpackage — 2026-03-23/24
+
+**Commits:** `6766923`, `b0fab6c`
+
+Created `src/grover/graph/` subpackage implementing the in-memory knowledge graph (§11.1 "RustworkxGraph").
+
+#### `graph/protocol.py` — GraphProvider
+
+Runtime-checkable Protocol defining the graph interface. All methods are async. Mutations require `session: AsyncSession` for TTL-based freshness checks. Query methods accept `GroverResult` as candidates input for composability.
+
+**Mutations:** `add_node`, `remove_node`, `has_node`, `add_edge`, `remove_edge`, `has_edge`, `nodes` property
+**Traversal:** `predecessors`, `successors`, `ancestors`, `descendants`, `neighborhood`
+**Subgraph:** `meeting_subgraph`, `min_meeting_subgraph`
+**Centrality:** `pagerank`, `betweenness_centrality`, `closeness_centrality`, `degree_centrality`, `in_degree_centrality`, `out_degree_centrality`, `hits`
+**Persistence:** `ensure_fresh(session)`
+
+#### `graph/rustworkx.py` — RustworkxGraph
+
+Sole implementation of `GraphProvider`. Stores topology as adjacency dicts (`_out`, `_in`, `_edge_types`) — no per-edge tuple allocation.
+
+**Constructor:** Takes `model: type[GroverObjectBase]` (the mount's concrete table class) and optional `ttl` (default 1 hour).
+
+**Persistence:** `ensure_fresh()` checks `_loaded_at` against TTL (~117ns hot path). `_load()` queries `GroverObject` rows where `kind="connection"`, using `sqlmodel.select` for typed queries. Build-then-swap: assembles new state in local variables, assigns atomically.
+
+**Snapshot isolation:** `_snapshot()` returns `(frozenset, dict[str, frozenset])` for thread-safe reads via `asyncio.to_thread()`.
+
+**Result helpers:**
+- `_relationship_candidates()` — builds candidates from `{path: [related_paths]}` with `Detail(operation=..., metadata={"paths": [...]})`
+- `_subgraph_candidates()` — builds node + connection candidates (uses `connection_path()` for edge paths)
+- `_score_candidates()` — builds scored candidates from `{path: score}`, sorted descending
+
+**Light reads:** `predecessors()` and `successors()` run inline (no thread overhead), wrapped in try/except returning `GroverResult(success=False)` on error.
+
+**`UnionFind`** — path-compressed union-find with rank balancing, used by `meeting_subgraph` (to be implemented).
+
+#### Key decisions
+
+**Adjacency only in memory.** `_edge_types` stores `dict[tuple[str, str], str]` — single connection type per edge pair. Known limitation: can't represent multiple edge types between the same source/target. Acceptable for now.
+
+**All mutations are async.** Every mutation calls `await self.ensure_fresh(session)` before operating. This ensures the graph is loaded before the first mutation and stays fresh within TTL.
+
+**TTL-based freshness.** `_loaded_at` timestamp + `_ttl` checked via `time.monotonic()`. Default 1 hour. Avoids re-querying the database on every operation.
+
+**Model as constructor parameter.** `RustworkxGraph(model=GroverObject)` — each mount can have a different concrete table class. The `_load()` method uses `select(self._model).where(self._model.kind == "connection")`.
+
+**Heavy algorithms not yet migrated.** `ancestors`, `descendants`, `neighborhood`, `meeting_subgraph`, `min_meeting_subgraph`, and all centrality methods exist as protocol stubs but are not yet implemented in `RustworkxGraph`. The proven implementations exist in `src_old/grover/providers/graph/rustworkx.py` (~1098 lines) and will be migrated as needed.
+
+**Base class wiring not yet done.** The `_*_impl` stubs in `base.py` for graph operations still raise `NotImplementedError`. Step 10 of the migration plan (adding `self._graph` attribute and delegation) is pending.
+
+### 14.6 Test coverage — 2026-03-24
+
+**Commit:** `6fc1ff2`
+
+Raised test coverage from **68% to 99%** (921 statements, 8 missed). Tests went from 308 passing + 3 failing → **462 passing, 0 failing**.
+
+| File | Before | After |
+|------|--------|-------|
+| `base.py` | 69% | 99% |
+| `graph/__init__.py` | 0% | 100% |
+| `graph/protocol.py` | 0% | 100% |
+| `graph/rustworkx.py` | 0% | 99% |
+| `models.py` | 97% | 97% |
+| `paths.py` | 99% | 99% |
+| `results.py` | 100% | 100% |
+| `vector.py` | 100% | 100% |
+
+**New test files:**
+- `tests/test_graph.py` — 60+ tests: UnionFind, RustworkxGraph mutations, persistence (mocked session), snapshot/build, result helpers, predecessors/successors, error handling
+- `tests/test_base.py` — 86 tests: constructor validation, session management, result helpers, candidate dispatch, all three routing strategies, cross-mount transfer, all public method routing
+- `tests/conftest.py` — shared helpers: `DummySession`, `dummy_session_factory`, `tracking_session_factory`, `candidate()`, `make_fs()`
+
+**Fixes:**
+- 3 failing tests in `test_results.py` updated for relaxed `Candidate` model (id/kind now optional)
+- `test_routing.py` refactored to use shared conftest helpers
+
+**8 uncovered lines** (all defensive/internal): SQLModel ORM lifecycle guards (models.py 47, 49, 150), unreachable-after-normalization guards (paths.py 170, 225; base.py 81-82), rare UnionFind rank branch (rustworkx.py 58).
+

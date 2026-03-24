@@ -325,6 +325,19 @@ class TestDispatchCandidates:
 
 
 class TestRouteSingle:
+    async def test_requires_exactly_one_of_path_or_candidates(self):
+        root = _FullRoutingFS("root")
+
+        with pytest.raises(ValueError, match="Exactly one of path or candidates"):
+            await root._route_single("read", None, None)
+
+        with pytest.raises(ValueError, match="Exactly one of path or candidates"):
+            await root._route_single(
+                "read",
+                "/local.py",
+                GroverResult(candidates=[_candidate("/remote.py")]),
+            )
+
     async def test_with_path_resolves_and_calls_impl(self):
         root = _FullRoutingFS("root")
         child = _FullRoutingFS("child")
@@ -567,6 +580,15 @@ class TestRouteFanout:
 
 
 class TestPublicCRUD:
+    async def test_read_rejects_invalid_input_combinations(self):
+        fs = _FullRoutingFS()
+
+        with pytest.raises(ValueError, match="Exactly one of path or candidates"):
+            await fs.read()
+
+        with pytest.raises(ValueError, match="Exactly one of path or candidates"):
+            await fs.read("/f.py", candidates=GroverResult(candidates=[_candidate("/f.py")]))
+
     @pytest.mark.parametrize("method", ["read", "stat", "ls", "mkdir"])
     async def test_single_path_ops_route_to_impl(self, method):
         fs = _FullRoutingFS()

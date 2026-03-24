@@ -230,13 +230,13 @@ class GroverResult(BaseModel):
         """
         fs = GroverResult._first_set
         return Candidate(
-            id=a.id,
+            id=fs(a.id, b.id),
             path=a.path,
-            kind=a.kind,
+            kind=fs(a.kind, b.kind),
             content=fs(a.content, b.content),
-            lines=a.lines,
-            size_bytes=a.size_bytes,
-            tokens=a.tokens,
+            lines=fs(a.lines, b.lines),
+            size_bytes=fs(a.size_bytes, b.size_bytes),
+            tokens=fs(a.tokens, b.tokens),
             mime_type=fs(a.mime_type, b.mime_type),
             weight=fs(a.weight, b.weight),
             distance=fs(a.distance, b.distance),

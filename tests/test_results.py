@@ -540,16 +540,39 @@ class TestMergeEdgeCases:
         """When left has None, right's value is used."""
         a = GroverResult(
             candidates=[
-                Candidate(id="1", path="/a.py", kind="file", content=None, mime_type=None),
+                Candidate(
+                    id=None,
+                    path="/a.py",
+                    kind=None,
+                    content=None,
+                    lines=None,
+                    size_bytes=None,
+                    tokens=None,
+                    mime_type=None,
+                ),
             ]
         )
         b = GroverResult(
             candidates=[
-                Candidate(id="2", path="/a.py", kind="file", content="hello", mime_type="text/python"),
+                Candidate(
+                    id="2",
+                    path="/a.py",
+                    kind="file",
+                    content="hello",
+                    lines=50,
+                    size_bytes=4096,
+                    tokens=900,
+                    mime_type="text/python",
+                ),
             ]
         )
         result = a & b
+        assert result.candidates[0].id == "2"
+        assert result.candidates[0].kind == "file"
         assert result.candidates[0].content == "hello"
+        assert result.candidates[0].lines == 50
+        assert result.candidates[0].size_bytes == 4096
+        assert result.candidates[0].tokens == 900
         assert result.candidates[0].mime_type == "text/python"
 
 
