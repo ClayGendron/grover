@@ -14,20 +14,16 @@ Mutations stay synchronous (trivial set operations, called from background tasks
 
 from __future__ import annotations
 
-import asyncio
-from collections import deque
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING
 
 import rustworkx
+from sqlmodel import select
 
-from sqlalchemy import select
-
-from grover.paths import connection_path, parse_kind
+from grover.paths import connection_path, decompose_connection
 from grover.results import Candidate, Detail, GroverResult
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from grover.models import GroverObjectBase
@@ -78,13 +74,20 @@ class RustworkxGraph:
     Implements the ``GraphProvider`` protocol.
     """
 
-    def __init__(self, model: type[GroverObjectBase]) -> None:
+    DEFAULT_TTL: float = 3600  # 1 hour
+
+    def __init__(self, model: type[GroverObjectBase], *, ttl: float | None = None) -> None:
         self._model = model
+        self._ttl = ttl if ttl is not None else self.DEFAULT_TTL
         self._nodes: set[str] = set()
         self._out: dict[str, set[str]] = {}  # source → targets
         self._in: dict[str, set[str]] = {}  # target → sources
         self._edge_types: dict[tuple[str, str], str] = {}  # (source, target) → type
-        self._loaded: bool = False
+        self._loaded_at: float | None = None
+
+    def __repr__(self) -> str:
+        edge_count = sum(len(ts) for ts in self._out.values())
+        return f"RustworkxGraph(nodes={len(self._nodes)}, edges={edge_count})"
 
     # ------------------------------------------------------------------
     # Mutations
@@ -172,10 +175,6 @@ class RustworkxGraph:
     def nodes(self) -> set[str]:
         return self._nodes
 
-    def __repr__(self) -> str:
-        edge_count = sum(len(ts) for ts in self._out.values())
-        return f"RustworkxGraph(nodes={len(self._nodes)}, edges={edge_count})"
-
     # ------------------------------------------------------------------
     # Snapshot and graph construction helpers
     # ------------------------------------------------------------------
@@ -222,8 +221,8 @@ class RustworkxGraph:
     # ------------------------------------------------------------------
 
     async def ensure_fresh(self, session: AsyncSession) -> None:
-        """Load from DB if not yet loaded."""
-        if self._loaded:
+        """Load from DB if never loaded or TTL has expired."""
+        if self._loaded_at is not None and (time.monotonic() - self._loaded_at) < self._ttl:
             return
         await self._load(session)
 
@@ -238,24 +237,27 @@ class RustworkxGraph:
         new_in: dict[str, set[str]] = {}
         new_edge_types: dict[tuple[str, str], str] = {}
 
-        stmt = select(self._model).where(self._model.kind == "connection")  # type: ignore[arg-type]
+        stmt = select(self._model).where(self._model.kind == "connection")
         result = await session.execute(stmt)
-        for obj in result.scalars().all():
+        rows: list[GroverObjectBase] = list(result.scalars().all())
+        for obj in rows:
             src = obj.source_path
             tgt = obj.target_path
+            parts = decompose_connection(obj.path)
+            conn_type = obj.connection_type or (parts.connection_type if parts else "")
             if src and tgt:
                 new_nodes.add(src)
                 new_nodes.add(tgt)
                 new_out.setdefault(src, set()).add(tgt)
                 new_in.setdefault(tgt, set()).add(src)
-                new_edge_types[(src, tgt)] = obj.connection_type or ""
+                new_edge_types[(src, tgt)] = conn_type
 
         # Atomic swap
         self._nodes = new_nodes
         self._out = new_out
         self._in = new_in
         self._edge_types = new_edge_types
-        self._loaded = True
+        self._loaded_at = time.monotonic()
 
     # ------------------------------------------------------------------
     # Result construction helpers
@@ -273,12 +275,41 @@ class RustworkxGraph:
                 details=(
                     Detail(
                         operation=operation,
-                        metadata={"paths": sorted(paths_dict[p])},  # type: ignore[arg-type]
+                        metadata={"paths": sorted(paths_dict[p])},
                     ),
                 ),
             )
             for p in sorted(paths_dict)
         ]
+
+    @staticmethod
+    def _subgraph_candidates(
+        node_set: set[str],
+        edges_out: dict[str, frozenset[str]],
+        edge_types: dict[tuple[str, str], str],
+        operation: str,
+    ) -> list[Candidate]:
+        """Build node + connection candidates from a subgraph."""
+        detail = Detail(operation=operation)
+
+        # Nodes
+        candidates: list[Candidate] = [
+            Candidate(path=p, details=(detail,)) for p in sorted(node_set)
+        ]
+
+        # Edges as connection candidates
+        candidates.extend(
+            Candidate(
+                path=connection_path(s, t, edge_types[(s, t)]),
+                weight=1.0,
+                details=(detail,),
+            )
+            for s in node_set
+            for t in edges_out.get(s, frozenset())
+            if t in node_set
+        )
+
+        return candidates
 
     @staticmethod
     def _score_candidates(
@@ -296,35 +327,6 @@ class RustworkxGraph:
         ]
 
     @staticmethod
-    def _subgraph_candidates(
-        node_set: set[str],
-        edges_out: dict[str, frozenset[str]],
-        edge_types: dict[tuple[str, str], str],
-        operation: str,
-    ) -> list[Candidate]:
-        """Build node + connection candidates from a subgraph."""
-        detail = Detail(operation=operation)
-        candidates: list[Candidate] = []
-
-        # Nodes
-        for p in sorted(node_set):
-            candidates.append(Candidate(path=p, details=(detail,)))
-
-        # Edges as connection candidates
-        for s in node_set:
-            for t in edges_out.get(s, frozenset()):
-                if t in node_set:
-                    candidates.append(
-                        Candidate(
-                            path=connection_path(s, t, edge_types[(s, t)]),
-                            weight=1.0,
-                            details=(detail,),
-                        ),
-                    )
-
-        return candidates
-
-    @staticmethod
     def _extract_paths(candidates: GroverResult) -> list[str]:
         """Extract path strings from a GroverResult."""
         return [c.path for c in candidates.candidates]
@@ -340,18 +342,21 @@ class RustworkxGraph:
         session: AsyncSession,
     ) -> GroverResult:
         """One-hop backward: nodes with edges pointing to any candidate."""
-        await self.ensure_fresh(session)
-        query_paths = set(self._extract_paths(candidates)) & self._nodes
-        predecessor_targets: dict[str, list[str]] = {}
+        try:
+            await self.ensure_fresh(session)
+            query_paths = set(self._extract_paths(candidates)) & self._nodes
+            predecessor_targets: dict[str, list[str]] = {}
 
-        for t in query_paths:
-            for s in self._in.get(t, set()):
-                if s not in query_paths:
-                    predecessor_targets.setdefault(s, []).append(t)
+            for t in query_paths:
+                for s in self._in.get(t, set()):
+                    if s not in query_paths:
+                        predecessor_targets.setdefault(s, []).append(t)
 
-        return GroverResult(
-            candidates=self._relationship_candidates(predecessor_targets, "predecessors"),
-        )
+            return GroverResult(
+                candidates=self._relationship_candidates(predecessor_targets, "predecessors"),
+            )
+        except Exception as e:
+            return GroverResult(success=False, errors=[f"predecessors failed: {e}"])
 
     async def successors(
         self,
@@ -360,15 +365,18 @@ class RustworkxGraph:
         session: AsyncSession,
     ) -> GroverResult:
         """One-hop forward: nodes that any candidate points to."""
-        await self.ensure_fresh(session)
-        query_paths = set(self._extract_paths(candidates)) & self._nodes
-        successor_sources: dict[str, list[str]] = {}
+        try:
+            await self.ensure_fresh(session)
+            query_paths = set(self._extract_paths(candidates)) & self._nodes
+            successor_sources: dict[str, list[str]] = {}
 
-        for s in query_paths:
-            for t in self._out.get(s, set()):
-                if t not in query_paths:
-                    successor_sources.setdefault(t, []).append(s)
+            for s in query_paths:
+                for t in self._out.get(s, set()):
+                    if t not in query_paths:
+                        successor_sources.setdefault(t, []).append(s)
 
-        return GroverResult(
-            candidates=self._relationship_candidates(successor_sources, "successors"),
-        )
+            return GroverResult(
+                candidates=self._relationship_candidates(successor_sources, "successors"),
+            )
+        except Exception as e:
+            return GroverResult(success=False, errors=[f"successors failed: {e}"])
