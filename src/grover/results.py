@@ -91,17 +91,17 @@ class Candidate(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     # Identity
-    id: str
+    id: str | None = None
     path: str
-    kind: str
+    kind: str | None = None
 
     # Content (populated by read)
     content: str | None = None
 
     # Metrics (populated by stat/read/write)
-    lines: int = 0
-    size_bytes: int = 0
-    tokens: int = 0
+    lines: int | None = None
+    size_bytes: int | None = None
+    tokens: int | None = None
     mime_type: str | None = None
 
     # Graph metrics
