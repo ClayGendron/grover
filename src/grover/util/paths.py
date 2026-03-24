@@ -69,7 +69,7 @@ def normalize_path(path: str) -> str:
 
     path = posixpath.normpath(path)
 
-    if path != "/" and path.endswith("/"):
+    if path != "/" and path.endswith("/"):  # pragma: no cover - normpath already strips
         path = path[:-1]
 
     return path

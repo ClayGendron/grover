@@ -71,6 +71,35 @@ class TestVectorIsList:
         assert list(v) == [1.0, 2.0, 3.0]
 
 
+# ==================================================================
+# Pydantic validation (_pydantic_validate)
+# ==================================================================
+
+
+class TestVectorPydanticValidate:
+    def test_none_returns_none(self):
+        result = Vector._pydantic_validate(None)
+        assert result is None
+
+    def test_vector_passthrough(self):
+        v = Vector([1.0, 2.0, 3.0])
+        result = Vector._pydantic_validate(v)
+        assert result is v
+
+    def test_list_converted(self):
+        result = Vector._pydantic_validate([1.0, 2.0])
+        assert isinstance(result, Vector)
+        assert list(result) == [1.0, 2.0]
+
+    def test_invalid_type_raises(self):
+        with pytest.raises(ValueError, match="Expected list or Vector, got"):
+            Vector._pydantic_validate("not a vector")
+
+    def test_invalid_type_int_raises(self):
+        with pytest.raises(ValueError, match="Expected list or Vector, got"):
+            Vector._pydantic_validate(42)
+
+
 class TestVectorTypeJsonRoundtrip:
     def test_bind_and_result(self):
         vt = VectorType()

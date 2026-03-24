@@ -6,6 +6,7 @@ import pytest
 from sqlmodel import Session, SQLModel, select
 
 from grover.models import (
+    FileChunkModel,
     FileConnectionModel,
     FileModel,
     FileShareModel,
@@ -258,6 +259,104 @@ class TestFileShare:
         session.commit()
         session.refresh(share)
         assert share.permission == "write"
+
+
+# ---------------------------------------------------------------------------
+# Non-string path early return in model validators
+# ---------------------------------------------------------------------------
+
+
+class TestNonStringPathValidator:
+    def test_file_model_missing_path_skips_normalization(self):
+        """Omitting path triggers the `not isinstance(raw_path, str)` early return."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            FileModel.model_validate({"parent_path": "/"})
+
+
+# ---------------------------------------------------------------------------
+# Factory methods (.create)
+# ---------------------------------------------------------------------------
+
+
+class TestFactoryMethods:
+    def test_file_connection_create(self, session: Session):
+        conn = FileConnectionModel.create(
+            source_path="/a.py",
+            target_path="/b.py",
+            connection_type="imports",
+            weight=2.0,
+        )
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+
+        assert conn.source_path == "/a.py"
+        assert conn.target_path == "/b.py"
+        assert conn.type == "imports"
+        assert conn.weight == 2.0
+        assert conn.path == "/a.py[imports]/b.py"
+        assert conn.created_at is not None
+        assert conn.updated_at is not None
+
+    def test_file_version_create(self, session: Session):
+        fv = FileVersionModel.create(
+            file_path="/hello.py",
+            version=2,
+            content="print('hello')\n",
+            is_snapshot=True,
+            created_by="agent",
+        )
+        session.add(fv)
+        session.commit()
+        session.refresh(fv)
+
+        assert fv.file_path == "/hello.py"
+        assert fv.version == 2
+        assert fv.is_snapshot is True
+        assert fv.content == "print('hello')\n"
+        assert fv.content_hash != ""
+        assert fv.size_bytes > 0
+        assert fv.created_by == "agent"
+        assert fv.path == "/hello.py@2"
+
+    def test_file_chunk_create(self, session: Session):
+        chunk = FileChunkModel.create(
+            file_path="/src/auth.py",
+            name="login",
+            content="def login(): pass\n",
+            line_start=10,
+            line_end=15,
+            tokens=5,
+        )
+        session.add(chunk)
+        session.commit()
+        session.refresh(chunk)
+
+        assert chunk.file_path == "/src/auth.py"
+        assert chunk.path == "/src/auth.py#login"
+        assert chunk.content == "def login(): pass\n"
+        assert chunk.content_hash != ""
+        assert chunk.line_start == 10
+        assert chunk.line_end == 15
+        assert chunk.tokens == 5
+        assert chunk.created_at is not None
+        assert chunk.updated_at is not None
+
+    def test_file_chunk_create_with_mount(self, session: Session):
+        chunk = FileChunkModel.create(
+            file_path="/auth.py",
+            name="logout",
+            content="def logout(): pass\n",
+            mount="myproject",
+        )
+        session.add(chunk)
+        session.commit()
+        session.refresh(chunk)
+
+        assert chunk.file_path == "/myproject/auth.py"
+        assert chunk.path == "/myproject/auth.py#logout"
 
 
 # ---------------------------------------------------------------------------
