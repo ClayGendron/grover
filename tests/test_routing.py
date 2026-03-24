@@ -2,49 +2,18 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
 
 from grover.base import GroverFileSystem
-from grover.results import Candidate, GroverResult
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_fs(name: str = "test") -> GroverFileSystem:
-    """Create a GroverFileSystem with a dummy session factory for routing tests."""
-    fs = GroverFileSystem(session_factory=AsyncMock())
-    fs._name = name  # tag for assertions
-    return fs
-
-
-class _DummySession:
-    async def commit(self) -> None:
-        return None
-
-    async def rollback(self) -> None:
-        return None
-
-
-def _session_factory():
-    @asynccontextmanager
-    async def _factory():
-        yield _DummySession()
-
-    return _factory
-
-
-def _candidate(path: str, *, content: str | None = None) -> Candidate:
-    return Candidate(id=path, path=path, kind="file", content=content)
+from grover.results import GroverResult
+from tests.conftest import candidate as _candidate, dummy_session_factory, make_fs as _make_fs
 
 
 class _RoutingFS(GroverFileSystem):
     def __init__(self, name: str = "test") -> None:
-        super().__init__(session_factory=_session_factory())
+        super().__init__(session_factory=dummy_session_factory())
         self._name = name
         self.read_mock = AsyncMock(return_value=GroverResult())
         self.write_mock = AsyncMock(return_value=GroverResult())
