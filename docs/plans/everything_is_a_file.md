@@ -1225,8 +1225,6 @@ Sole implementation of `GraphProvider`. Stores topology as adjacency dicts (`_ou
 
 **Model as constructor parameter.** `RustworkxGraph(model=GroverObject)` — each mount can have a different concrete table class. The `_load()` method uses `select(self._model).where(self._model.kind == "connection")`.
 
-**Heavy algorithms not yet migrated.** `ancestors`, `descendants`, `neighborhood`, `meeting_subgraph`, `min_meeting_subgraph`, and all centrality methods exist as protocol stubs but are not yet implemented in `RustworkxGraph`. The proven implementations exist in `src_old/grover/providers/graph/rustworkx.py` (~1098 lines) and will be migrated as needed.
-
 **Base class wiring not yet done.** The `_*_impl` stubs in `base.py` for graph operations still raise `NotImplementedError`. Step 10 of the migration plan (adding `self._graph` attribute and delegation) is pending.
 
 ### 14.6 Test coverage — 2026-03-24
@@ -1256,4 +1254,79 @@ Raised test coverage from **68% to 99%** (921 statements, 8 missed). Tests went 
 - `test_routing.py` refactored to use shared conftest helpers
 
 **8 uncovered lines** (all defensive/internal): SQLModel ORM lifecycle guards (models.py 47, 49, 150), unreachable-after-normalization guards (paths.py 170, 225; base.py 81-82), rare UnionFind rank branch (rustworkx.py 58).
+
+### 14.7 Complete graph algorithms — 2026-03-25
+
+**Commits:** `dfa9c5a`, `61f0f3f`
+
+Implemented all 10 remaining graph algorithms on `RustworkxGraph`, migrated from v1 and adapted to v2 result types (`GroverResult`/`Candidate`/`Detail`). All algorithms cross-validated against NetworkX at scale (10K nodes, 30K edges) — exact match to machine epsilon.
+
+#### Algorithms implemented
+
+**Traversal (heavy, threaded via `asyncio.to_thread`):**
+- `ancestors()` / `_ancestors_impl()` — transitive backward reachability via `rustworkx.ancestors()`
+- `descendants()` / `_descendants_impl()` — transitive forward reachability via `rustworkx.descendants()`
+- `neighborhood()` — bounded undirected BFS with full snapshot isolation (`_snapshot()` + `_in` + `_edge_types` copied before traversal)
+
+**Subgraph (threaded):**
+- `meeting_subgraph()` / `_meeting_subgraph_impl()` — multi-source BFS with `UnionFind` to detect wavefront convergence, then `_strip_leaves()` to prune non-seed leaf nodes. O(V+E).
+- `min_meeting_subgraph()` / `_min_meeting_impl()` — calls `meeting_subgraph`, then iteratively removes non-seed, non-articulation-point nodes using `rustworkx.articulation_points()` on an undirected `PyGraph` projection.
+
+**Centrality (threaded, generic dispatcher):**
+- `_run_centrality()` / `_centrality_impl()` — generic pattern: `ensure_fresh → snapshot → build PyDiGraph → call rustworkx function → filter by candidates → score_candidates()`.
+- `pagerank()` — delegates to `_run_centrality` with `rustworkx.pagerank`
+- `betweenness_centrality()` — `rustworkx.digraph_betweenness_centrality` (normalized=True)
+- `closeness_centrality()` — `rustworkx.closeness_centrality`
+- `degree_centrality()` — `rustworkx.digraph_degree_centrality`
+- `in_degree_centrality()` — `rustworkx.in_degree_centrality`
+- `out_degree_centrality()` — `rustworkx.out_degree_centrality`
+- `hits()` / `_hits_impl()` — custom implementation returning both hub and authority scores in `Detail.metadata`. `score` parameter (`"authority"` or `"hub"`) controls `Detail.score` and sort order.
+
+#### Helper methods added
+
+- `_strip_leaves(kept, edges_out, edges_in, protected)` — iterative leaf removal for meeting subgraph. Removes non-protected nodes that have no successors or no predecessors within the kept set, cascading until stable.
+
+#### Key decisions and fixes
+
+**`neighborhood` uses full snapshot isolation.** Copies `_out`, `_in`, and `_edge_types` before BFS so concurrent mutations between `ensure_fresh()` and result construction cannot cause inconsistent state or `KeyError` in `_subgraph_candidates`.
+
+**`pagerank` collapsed to one-liner.** Was a redundant hand-rolled copy of `_run_centrality` + `_centrality_impl`. Now just `return await self._run_centrality("pagerank", rustworkx.pagerank, ...)`.
+
+**HITS `max_iter` default bumped from 100 to 1000.** `rustworkx.hits()` raises an exception on non-convergence (doesn't return partial results). Sparse graphs at 5K+ nodes regularly need 300-500 iterations. 1000 prevents surprise failures.
+
+**HITS edgeless early-return filters to graph-only paths.** Previously included non-graph candidate paths with zero scores; now consistent with the normal path where non-graph candidates are silently dropped.
+
+**HITS `set(hubs) | set(auths)` eliminated.** Both dicts always have identical keys after `rustworkx.hits()`. Sort now uses `sorted(primary, key=primary.__getitem__, reverse=True)`.
+
+**HITS `score` parameter.** `"authority"` (default) ranks by how many hubs point to a node. `"hub"` ranks by how many authorities a node points to. Both values always in `Detail.metadata`.
+
+**`min_meeting_subgraph` uses `_edge_types` directly.** Previously decomposed connection paths from the meeting result to recover edge topology. Now reads the authoritative `_edge_types` dict filtered to the meeting node set.
+
+**`min_meeting_subgraph` uses `decompose_connection()` to identify nodes.** Previously relied on `c.weight is None` convention. Now uses the intrinsic path structure (`/.connections/` marker) to distinguish nodes from edges.
+
+#### Performance vs NetworkX (10K nodes, 30K edges)
+
+| Algorithm | Grover (ms) | NetworkX (ms) | Speedup |
+|---|---:|---:|---|
+| betweenness | 1,557 | 137,784 | **89x faster** |
+| closeness | 780 | 27,009 | **35x faster** |
+| pagerank | 40 | 17 | 0.4x (graph rebuild overhead) |
+| hits | 82 | 38 | 0.5x (graph rebuild overhead) |
+| ancestors/descendants | 35-41 | 4 | 0.1x (graph rebuild dominates) |
+| degree centrality | 36 | 1 | 0.03x (trivial compute, rebuild dominates) |
+| predecessors/successors | 0.01 | 0.00 | N/A (both sub-ms) |
+| neighborhood (d=2) | 0.4 | 0.2 | ~parity |
+
+For algorithms where computation dominates (betweenness, closeness), rustworkx's Rust backend delivers massive wins that scale with graph size. For cheap algorithms (degree, ancestors), the per-call `PyDiGraph` rebuild (~15-35ms at 10K nodes) dominates.
+
+#### Test coverage
+
+138 graph tests (was 65), 534 total (was 464). Graph subpackage at **99%** coverage (3 unreachable defensive lines: `_strip_leaves` duplicate-in-queue guard, `min_meeting_subgraph` except block unreachable because `meeting_subgraph` catches first).
+
+| File | Coverage |
+|------|----------|
+| `graph/__init__.py` | 100% |
+| `graph/protocol.py` | 100% |
+| `graph/rustworkx.py` | 99% |
+| **Total project** | **99%** (1173 stmts, 10 missed) |
 
