@@ -224,6 +224,40 @@ class TestContentMetrics:
         obj = GroverObject(path="/a.py", content="hello", content_hash="bogus")
         assert obj.content_hash == hashlib.sha256(b"hello").hexdigest()
 
+    def test_version_row_factory_uses_reconstructed_metadata(self):
+        row = GroverObjectBase.create_version_row(
+            file_path="/a.py",
+            version_number=2,
+            version_content="new",
+            prev_content="old",
+            created_by="auto",
+        )
+        assert row.kind == "version"
+        assert row.is_snapshot is False
+        assert row.content is None
+        assert row.version_diff is not None
+        assert row.content_hash == hashlib.sha256(b"new").hexdigest()
+        assert row.size_bytes == len(b"new")
+        assert row.lines == 1
+
+    def test_version_row_preserves_explicit_metadata(self):
+        obj = GroverObject(
+            path="/a.py/.versions/2",
+            kind="version",
+            content=None,
+            version_diff="diff payload",
+            content_hash="abc",
+            size_bytes=123,
+            lines=7,
+            version_number=2,
+            is_snapshot=False,
+        )
+        assert obj.content is None
+        assert obj.version_diff == "diff payload"
+        assert obj.content_hash == "abc"
+        assert obj.size_bytes == 123
+        assert obj.lines == 7
+
 
 # =========================================================================
 # Timestamps
@@ -315,6 +349,57 @@ class TestBaseVsConcrete:
 
 
 # =========================================================================
+# add_prefix / strip_prefix
+# =========================================================================
+
+
+class TestAddStripPrefix:
+    def test_strip_prefix_rederives_fields(self):
+        obj = GroverObject(path="/data/sub/file.py", content="code")
+        obj.strip_prefix("/data/sub")
+        assert obj.path == "/file.py"
+        assert obj.name == "file.py"
+        assert obj.parent_path == "/"
+
+    def test_add_prefix_rederives_fields(self):
+        obj = GroverObject(path="/file.py", content="code")
+        obj.add_prefix("/data/sub")
+        assert obj.path == "/data/sub/file.py"
+        assert obj.name == "file.py"
+        assert obj.parent_path == "/data/sub"
+
+    def test_roundtrip(self):
+        obj = GroverObject(path="/mount/deep/file.py", content="x")
+        obj.strip_prefix("/mount")
+        assert obj.path == "/deep/file.py"
+        obj.add_prefix("/mount")
+        assert obj.path == "/mount/deep/file.py"
+
+    def test_empty_prefix_is_noop(self):
+        obj = GroverObject(path="/file.py", content="x")
+        obj.add_prefix("")
+        assert obj.path == "/file.py"
+        obj.strip_prefix("")
+        assert obj.path == "/file.py"
+
+    def test_strip_to_root(self):
+        obj = GroverObject(path="/data", content="x")
+        obj.strip_prefix("/data")
+        assert obj.path == "/"
+
+    def test_returns_self(self):
+        obj = GroverObject(path="/a.py", content="x")
+        assert obj.add_prefix("/m") is obj
+        assert obj.strip_prefix("/m") is obj
+
+    def test_chunk_kind_preserved(self):
+        obj = GroverObject(path="/src/mod.py/.chunks/fn", content="def fn(): pass")
+        obj.strip_prefix("/src")
+        assert obj.path == "/mod.py/.chunks/fn"
+        assert obj.kind == "chunk"
+        assert obj.parent_path == "/mod.py"
+
+
 # DB round-trip
 # =========================================================================
 
@@ -372,3 +457,78 @@ class TestDBRoundTrip:
             assert loaded.source_path == "/a.py"
             assert loaded.target_path == "/b.py"
             assert loaded.connection_type == "imports"
+
+
+# =========================================================================
+# plan_file_write
+# =========================================================================
+
+
+class TestPlanFileWrite:
+    """Unit tests for GroverObjectBase.plan_file_write fast/slow path."""
+
+    @staticmethod
+    def _make_file(content: str, version_number: int) -> GroverObject:
+        """Build a file object with consistent hash/version state."""
+        obj = GroverObject(path="/test.txt", content=content)
+        obj.version_number = version_number
+        return obj
+
+    def test_fast_path_skips_reconstruction(self):
+        """When latest_version_hash matches file hash, chain_verified=True."""
+        obj = self._make_file("hello", version_number=1)
+        plan = obj.plan_file_write(
+            "world",
+            latest_version_hash=obj.content_hash,
+        )
+        assert plan.chain_verified is True
+        assert plan.final_content == "world"
+        assert plan.final_version_number == 2
+        assert len(plan.version_rows) == 1
+        assert plan.version_rows[0].created_by == "auto"
+
+    def test_no_latest_hash_signals_unverified(self):
+        """No latest_version_hash and no version_rows → chain_verified=False."""
+        obj = self._make_file("hello", version_number=1)
+        plan = obj.plan_file_write("world", latest_version_hash=None)
+        assert plan.chain_verified is False
+
+    def test_mismatched_latest_hash_signals_unverified(self):
+        """Wrong latest_version_hash → chain_verified=False."""
+        obj = self._make_file("hello", version_number=1)
+        plan = obj.plan_file_write("world", latest_version_hash="wrong_hash")
+        assert plan.chain_verified is False
+
+    def test_same_content_returns_noop_plan(self):
+        """Same content → no new version rows."""
+        obj = self._make_file("hello", version_number=1)
+        plan = obj.plan_file_write(
+            "hello",
+            latest_version_hash=obj.content_hash,
+        )
+        assert plan.chain_verified is True
+        assert len(plan.version_rows) == 0
+        assert plan.final_version_number == 1
+
+    def test_version_number_zero_creates_initial_snapshot(self):
+        """First write creates v1 snapshot regardless of hash args."""
+        obj = self._make_file("hello", version_number=0)
+        plan = obj.plan_file_write("hello")
+        assert plan.final_version_number == 1
+        assert len(plan.version_rows) == 1
+        assert plan.version_rows[0].is_snapshot is True
+
+    def test_external_edit_detected_by_hash_mismatch(self):
+        """File hash ≠ stored hash → external snapshot, even with latest_version_hash."""
+        obj = self._make_file("original", version_number=1)
+        # Simulate external edit: change content without updating hash
+        obj.content = "tampered"
+        plan = obj.plan_file_write(
+            "new_content",
+            latest_version_hash=obj.content_hash,  # matches stored, not observed
+        )
+        assert plan.chain_verified is True  # external path handles it directly
+        assert plan.final_version_number == 3  # external=2, new=3
+        external_row = plan.version_rows[0]
+        assert external_row.created_by == "external"
+        assert external_row.is_snapshot is True
