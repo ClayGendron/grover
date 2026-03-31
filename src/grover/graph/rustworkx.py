@@ -91,6 +91,10 @@ class RustworkxGraph:
         edge_count = sum(len(ts) for ts in self._out.values())
         return f"RustworkxGraph(nodes={len(self._nodes)}, edges={edge_count})"
 
+    def invalidate(self) -> None:
+        """Force a DB reload on the next ``ensure_fresh`` call."""
+        self._loaded_at = None
+
     # ------------------------------------------------------------------
     # Mutations
     # ------------------------------------------------------------------
@@ -239,7 +243,10 @@ class RustworkxGraph:
         new_in: dict[str, set[str]] = {}
         new_edge_types: dict[tuple[str, str], str] = {}
 
-        stmt = select(self._model).where(self._model.kind == "connection")
+        stmt = select(self._model).where(
+            self._model.kind == "connection",
+            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
         result = await session.execute(stmt)
         rows: list[GroverObjectBase] = list(result.scalars().all())
         for obj in rows:

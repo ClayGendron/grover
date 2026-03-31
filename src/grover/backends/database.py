@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, ClassVar
 from sqlalchemy import func, or_, select
 
 from grover.base import GroverFileSystem
+from grover.graph import RustworkxGraph
 from grover.models import GroverObject, GroverObjectBase
 from grover.paths import connection_path, version_path
 from grover.paths import parent_path as compute_parent_path
@@ -51,6 +52,7 @@ class DatabaseFileSystem(GroverFileSystem):
     ) -> None:
         super().__init__(engine=engine, session_factory=session_factory)
         self._model = model
+        self._graph = RustworkxGraph(model=model)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -610,6 +612,11 @@ class DatabaseFileSystem(GroverFileSystem):
                     session.add(d)
             await session.flush()
 
+        # Invalidate graph if any connections were written — their
+        # source/target edges need to appear on the next query.
+        if out and any(c.kind == "connection" for c in out):
+            self._graph.invalidate()
+
         return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
 
     async def _ls_impl(
@@ -784,6 +791,9 @@ class DatabaseFileSystem(GroverFileSystem):
                 errors.append(f"Delete failed for {p}: {e}")
 
         await session.flush()
+        # Invalidate graph — deleted objects may include connections or
+        # files that are graph nodes.
+        self._graph.invalidate()
         return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
 
     async def _mkdir_impl(
@@ -844,7 +854,10 @@ class DatabaseFileSystem(GroverFileSystem):
             if missing:
                 return self._error([f"Source not found: {p}" for p in missing])
 
-        return await self._write_impl(objects=objects, session=session)
+        result = await self._write_impl(objects=objects, session=session)
+        if result.success:
+            self._graph.invalidate()
+        return result
 
     async def _edit_impl(
         self,
@@ -1028,6 +1041,8 @@ class DatabaseFileSystem(GroverFileSystem):
             out.append(src_obj.to_candidate(operation="move"))
 
         await session.flush()
+        # Moves may rename connections or rewrite target_path references.
+        self._graph.invalidate()
         return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
 
     # ------------------------------------------------------------------
@@ -1235,3 +1250,165 @@ class DatabaseFileSystem(GroverFileSystem):
 
         candidates = [obj.to_candidate(operation="tree") for obj in objects]
         return GroverResult(candidates=candidates)
+
+    # ------------------------------------------------------------------
+    # Graph — delegate to self._graph (RustworkxGraph)
+    # ------------------------------------------------------------------
+
+    def _to_candidates(
+        self,
+        path: str | None,
+        candidates: GroverResult | None,
+    ) -> GroverResult:
+        """Normalize path/candidates into a GroverResult for the graph."""
+        if candidates is not None:
+            return candidates
+        if path is not None:
+            return GroverResult(candidates=[Candidate(path=path)])
+        return GroverResult(candidates=[])
+
+    async def _predecessors_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.predecessors(
+            self._to_candidates(path, candidates), session=session,
+        )
+
+    async def _successors_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.successors(
+            self._to_candidates(path, candidates), session=session,
+        )
+
+    async def _ancestors_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.ancestors(
+            self._to_candidates(path, candidates), session=session,
+        )
+
+    async def _descendants_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.descendants(
+            self._to_candidates(path, candidates), session=session,
+        )
+
+    async def _neighborhood_impl(
+        self,
+        path: str | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        depth: int = 2,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.neighborhood(
+            self._to_candidates(path, candidates), depth=depth, session=session,
+        )
+
+    async def _meeting_subgraph_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.meeting_subgraph(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _min_meeting_subgraph_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.min_meeting_subgraph(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _pagerank_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.pagerank(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _betweenness_centrality_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.betweenness_centrality(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _closeness_centrality_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.closeness_centrality(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _degree_centrality_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.degree_centrality(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _in_degree_centrality_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.in_degree_centrality(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _out_degree_centrality_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.out_degree_centrality(
+            self._to_candidates(None, candidates), session=session,
+        )
+
+    async def _hits_impl(
+        self,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        return await self._graph.hits(
+            self._to_candidates(None, candidates), session=session,
+        )
