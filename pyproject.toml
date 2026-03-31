@@ -107,7 +107,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/**/*.py" = ["ANN", "S101"]
+"tests/**/*.py" = ["ANN", "S101", "TC001"]
 "src_old/**/*.py" = ["ALL"]  # archived — skip linting
 "tests_old/**/*.py" = ["ALL"]  # archived — skip linting
 

@@ -11,7 +11,7 @@ from sqlalchemy import text
 from grover.backends.database import DatabaseFileSystem
 from grover.base import GroverFileSystem
 from grover.models import GroverObject
-from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
+from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPathOperation
 
 
 def _stored_payload(obj: GroverObject) -> str:
@@ -229,7 +229,6 @@ class TestWriteAndRead:
         """If the flush fails, the session rolls back — no parent dirs created."""
         with pytest.raises(RuntimeError, match="simulated insert failure"):
             async with db._use_session() as s:
-                original_flush = s.flush
 
                 async def failing_flush(*args, **kwargs):
                     raise RuntimeError("simulated insert failure")
@@ -1561,3 +1560,408 @@ class TestMove:
         assert r.success
         r2 = await root.read("/code/new.py")
         assert r2.content == "content"
+
+
+# ------------------------------------------------------------------
+# Part 10: Glob
+# ------------------------------------------------------------------
+
+
+class TestGlob:
+    async def test_glob_matches_files(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "code", session=s)
+            await db._write_impl("/src/db.py", "code", session=s)
+            await db._write_impl("/src/util.js", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/src/*.py", session=s)
+        assert r.success
+        assert set(r.paths) == {"/src/auth.py", "/src/db.py"}
+
+    async def test_glob_single_star_does_not_cross_segments(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a/b/c.py", "code", session=s)
+            await db._write_impl("/a/x.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/a/*.py", session=s)
+        assert r.paths == ("/a/x.py",)
+
+    async def test_glob_double_star_crosses_segments(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a/b/c.py", "code", session=s)
+            await db._write_impl("/a/x.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/a/**/*.py", session=s)
+        assert set(r.paths) == {"/a/b/c.py", "/a/x.py"}
+
+    async def test_glob_question_mark(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "code", session=s)
+            await db._write_impl("/ab.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/?.py", session=s)
+        assert r.paths == ("/a.py",)
+
+    async def test_glob_character_class(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "code", session=s)
+            await db._write_impl("/b.py", "code", session=s)
+            await db._write_impl("/c.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/[ab].py", session=s)
+        assert set(r.paths) == {"/a.py", "/b.py"}
+
+    async def test_glob_returns_files_and_dirs_only(self, db: DatabaseFileSystem):
+        """Metadata kinds (chunks, versions, connections) are excluded."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "code", session=s)
+            await db._write_impl("/src/auth.py/.chunks/login", "chunk", session=s)
+            await db._mkconn_impl("/src/auth.py", "/src/db.py", "imports", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/**", session=s)
+        kinds = {c.kind for c in r.candidates}
+        assert kinds <= {"file", "directory"}
+
+    async def test_glob_no_match(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/hello.txt", "hi", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/*.py", session=s)
+        assert r.success
+        assert len(r) == 0
+
+    async def test_glob_with_candidates(self, db: DatabaseFileSystem):
+        """When candidates are provided, filter them in-memory."""
+        cands = GroverResult(candidates=[
+            Candidate(path="/src/auth.py", kind="file"),
+            Candidate(path="/src/db.py", kind="file"),
+            Candidate(path="/docs/readme.md", kind="file"),
+        ])
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
+        assert set(r.paths) == {"/src/auth.py", "/src/db.py"}
+
+    async def test_glob_with_candidates_preserves_detail_chain(self, db: DatabaseFileSystem):
+        """Prior details from incoming candidates survive through glob filtering."""
+        prior = Detail(operation="search", score=0.9)
+        cands = GroverResult(candidates=[
+            Candidate(path="/src/auth.py", kind="file", details=(prior,)),
+            Candidate(path="/docs/readme.md", kind="file", details=(prior,)),
+        ])
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/src/*.py", candidates=cands, session=s)
+        assert len(r) == 1
+        c = r.candidates[0]
+        assert len(c.details) == 2
+        assert c.details[0].operation == "search"
+        assert c.details[0].score == 0.9
+        assert c.details[1].operation == "glob"
+
+    async def test_glob_empty_pattern_errors(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="", session=s)
+        assert not r.success
+
+    async def test_glob_results_sorted_by_path(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/z.py", "z", session=s)
+            await db._write_impl("/a.py", "a", session=s)
+            await db._write_impl("/m.py", "m", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/*.py", session=s)
+        assert r.paths == ("/a.py", "/m.py", "/z.py")
+
+    async def test_glob_excludes_soft_deleted(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/keep.py", "keep", session=s)
+            await db._write_impl("/gone.py", "gone", session=s)
+            await db._delete_impl("/gone.py", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/*.py", session=s)
+        assert r.paths == ("/keep.py",)
+
+    async def test_glob_includes_directories(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._glob_impl(pattern="/src", session=s)
+        assert "/src" in r.paths
+        assert r.candidates[0].kind == "directory"
+
+    async def test_glob_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = DatabaseFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+        await root.write("/code/auth.py", "code")
+        await root.write("/code/db.py", "code")
+        r = await root.glob("**/*.py")
+        assert {"/code/auth.py", "/code/db.py"} <= set(r.paths)
+
+
+# ------------------------------------------------------------------
+# Part 11: Grep
+# ------------------------------------------------------------------
+
+
+class TestGrep:
+    async def test_grep_finds_matching_lines(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "line one\ntimeout = 30\nline three", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="timeout", session=s)
+        assert r.success
+        assert len(r) == 1
+        assert r.file.path == "/a.py"
+        meta = r.file.details[0].metadata
+        assert meta["match_count"] == 1
+        assert meta["line_matches"][0]["line"] == 2
+        assert "timeout" in meta["line_matches"][0]["text"]
+
+    async def test_grep_multiple_matches_in_file(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "TODO: fix\nok\nTODO: refactor", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="TODO", session=s)
+        assert r.file.details[0].metadata["match_count"] == 2
+        assert r.file.details[0].score == 2.0
+
+    async def test_grep_across_multiple_files(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "import os", session=s)
+            await db._write_impl("/b.py", "import sys", session=s)
+            await db._write_impl("/c.py", "no imports here", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="^import", session=s)
+        assert set(r.paths) == {"/a.py", "/b.py"}
+
+    async def test_grep_case_insensitive(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "Error occurred", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="error", case_sensitive=True, session=s)
+        assert len(r) == 0
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="error", case_sensitive=False, session=s)
+        assert len(r) == 1
+
+    async def test_grep_max_results(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            for i in range(10):
+                await db._write_impl(f"/file{i:02d}.py", "match me", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="match", max_results=3, session=s)
+        assert len(r) == 3
+
+    async def test_grep_no_match(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "hello world", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="zzz_no_match", session=s)
+        assert r.success
+        assert len(r) == 0
+
+    async def test_grep_regex_pattern(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "timeout = 30\ntimeout = 120", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern=r"timeout\s*=\s*\d{3}", session=s)
+        assert len(r) == 1
+        assert r.file.details[0].metadata["match_count"] == 1
+        assert r.file.details[0].metadata["line_matches"][0]["line"] == 2
+
+    async def test_grep_invalid_regex(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="[invalid", session=s)
+        assert not r.success
+
+    async def test_grep_empty_pattern_errors(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="", session=s)
+        assert not r.success
+
+    async def test_grep_skips_non_file_kinds(self, db: DatabaseFileSystem):
+        """Grep only searches file content, not chunks/connections."""
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "no match", session=s)
+            await db._write_impl("/a.py/.chunks/login", "timeout here", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="timeout", session=s)
+        assert len(r) == 0
+
+    async def test_grep_with_candidates_uses_existing_content(self, db: DatabaseFileSystem):
+        """When candidates already carry content, no DB hydration needed."""
+        cands = GroverResult(candidates=[
+            Candidate(path="/a.py", kind="file", content="timeout = 30"),
+            Candidate(path="/b.py", kind="file", content="no match"),
+        ])
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
+        assert r.paths == ("/a.py",)
+
+    async def test_grep_with_candidates_preserves_detail_chain(self, db: DatabaseFileSystem):
+        """Prior details from incoming candidates survive through grep."""
+        prior = Detail(operation="glob", score=None)
+        cands = GroverResult(candidates=[
+            Candidate(path="/a.py", kind="file", content="timeout = 30", details=(prior,)),
+        ])
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
+        assert len(r) == 1
+        c = r.candidates[0]
+        assert len(c.details) == 2
+        assert c.details[0].operation == "glob"
+        assert c.details[1].operation == "grep"
+        assert c.details[1].score == 1.0
+
+    async def test_grep_with_candidates_hydrates_missing_content(self, db: DatabaseFileSystem):
+        """Candidates without content get hydrated from DB."""
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "timeout = 30", session=s)
+        cands = GroverResult(candidates=[
+            Candidate(path="/a.py", kind="file"),  # content=None
+        ])
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="timeout", candidates=cands, session=s)
+        assert r.paths == ("/a.py",)
+
+    async def test_grep_excludes_soft_deleted(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "match me", session=s)
+            await db._delete_impl("/a.py", session=s)
+        async with db._use_session() as s:
+            r = await db._grep_impl(pattern="match", session=s)
+        assert len(r) == 0
+
+    async def test_grep_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = DatabaseFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+        await root.write("/code/auth.py", "timeout = 30")
+        r = await root.grep("timeout")
+        assert "/code/auth.py" in r.paths
+
+
+# ------------------------------------------------------------------
+# Part 12: Tree
+# ------------------------------------------------------------------
+
+
+class TestTree:
+    async def test_tree_lists_descendants(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "code", session=s)
+            await db._write_impl("/src/sub/b.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/src", session=s)
+        assert r.success
+        paths = set(r.paths)
+        assert "/src/a.py" in paths
+        assert "/src/sub/b.py" in paths
+        assert "/src/sub" in paths
+
+    async def test_tree_max_depth_1(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a/b/c.py", "code", session=s)
+            await db._write_impl("/a/x.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/a", max_depth=1, session=s)
+        paths = set(r.paths)
+        assert "/a/x.py" in paths
+        assert "/a/b" in paths
+        assert "/a/b/c.py" not in paths
+
+    async def test_tree_max_depth_2(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/a/b/c/d.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/a", max_depth=2, session=s)
+        paths = set(r.paths)
+        assert "/a/b" in paths
+        assert "/a/b/c" in paths
+        assert "/a/b/c/d.py" not in paths
+
+    async def test_tree_root(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/top.py", "code", session=s)
+            await db._write_impl("/sub/deep.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/", session=s)
+        paths = set(r.paths)
+        assert "/top.py" in paths
+        assert "/sub" in paths
+        assert "/sub/deep.py" in paths
+
+    async def test_tree_root_max_depth_1(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/top.py", "code", session=s)
+            await db._write_impl("/sub/deep.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/", max_depth=1, session=s)
+        paths = set(r.paths)
+        assert "/top.py" in paths
+        assert "/sub" in paths
+        assert "/sub/deep.py" not in paths
+
+    async def test_tree_not_found(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._tree_impl("/nonexistent", session=s)
+        assert not r.success
+        assert "Not found" in r.error_message
+
+    async def test_tree_not_a_directory(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/file.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/file.py", session=s)
+        assert not r.success
+        assert "Not a directory" in r.error_message
+
+    async def test_tree_excludes_metadata(self, db: DatabaseFileSystem):
+        """Chunks, versions, connections are excluded from tree output."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/a.py", "v1", session=s)
+            await db._write_impl("/src/a.py", "v2", session=s)  # creates version
+            await db._write_impl("/src/a.py/.chunks/login", "chunk", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/src", session=s)
+        kinds = {c.kind for c in r.candidates}
+        assert kinds <= {"file", "directory"}
+
+    async def test_tree_empty_directory(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._mkdir_impl("/empty", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/empty", session=s)
+        assert r.success
+        assert len(r) == 0
+
+    async def test_tree_sorted_by_path(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/d/z.py", "z", session=s)
+            await db._write_impl("/d/a.py", "a", session=s)
+            await db._write_impl("/d/m.py", "m", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/d", session=s)
+        file_paths = [c.path for c in r.candidates if c.kind == "file"]
+        assert file_paths == ["/d/a.py", "/d/m.py", "/d/z.py"]
+
+    async def test_tree_excludes_soft_deleted(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            await db._write_impl("/d/keep.py", "keep", session=s)
+            await db._write_impl("/d/gone.py", "gone", session=s)
+            await db._delete_impl("/d/gone.py", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("/d", session=s)
+        assert "/d/keep.py" in r.paths
+        assert "/d/gone.py" not in r.paths
+
+    async def test_tree_max_depth_zero_errors(self, db: DatabaseFileSystem):
+        async with db._use_session() as s:
+            r = await db._tree_impl("/", max_depth=0, session=s)
+        assert not r.success
+        assert "max_depth" in r.error_message
+
+    async def test_tree_through_public_api(self, db: DatabaseFileSystem, engine):
+        root = DatabaseFileSystem(engine=engine)
+        await root.add_mount("/code", db)
+        await root.write("/code/src/a.py", "code")
+        r = await root.tree("/code/src")
+        assert "/code/src/a.py" in r.paths

@@ -1848,7 +1848,7 @@ class TestLargeWriteAndDelete:
         and connections, then delete the root.
 
         Each file gets: 1 version row (auto), 1 chunk, 1 connection to
-        the next file. Total objects ≈ 4× file count + directories.
+        the next file. Total objects ~ 4x file count + directories.
         """
         import random
 

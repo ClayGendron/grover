@@ -7,18 +7,19 @@ determines the kind, and the kind determines the semantics.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from grover.base import GroverFileSystem
 from grover.models import GroverObject, GroverObjectBase
-from grover.paths import connection_path
+from grover.paths import connection_path, version_path
 from grover.paths import parent_path as compute_parent_path
-from grover.paths import parse_kind, version_path
+from grover.patterns import compile_glob, glob_to_sql_like
 from grover.replace import replace
-from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
+from grover.results import Candidate, Detail, EditOperation, GroverResult, TwoPathOperation
 from grover.versioning import SNAPSHOT_INTERVAL
 
 if TYPE_CHECKING:
@@ -486,7 +487,7 @@ class DatabaseFileSystem(GroverFileSystem):
             if path is None:
                 return self._error("Write requires a path or objects")
             objects = [self._model(path=path, content=content or "")]
-            
+
         elif path is not None:
             return self._error("Write requires a path or objects, not both")
 
@@ -983,7 +984,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 result = await session.execute(stmt)
                 descendants = list(result.scalars().all())
 
-            # ── 3–4. Rewrite paths ───────────────────────────────────
+            # ── 3-4. Rewrite paths ────────────────────────────────────
             src_obj.path = op.dest
             src_obj._rederive_path_fields()
 
@@ -1012,7 +1013,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 self._model.kind == "connection",
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
                 or_(
-                    self._model.target_path == op.src,
+                    self._model.target_path == op.src,  # type: ignore[invalid-argument-type]
                     self._model.target_path.like(op.src + "/%"),  # type: ignore[union-attr]
                 ),
             )
@@ -1028,3 +1029,209 @@ class DatabaseFileSystem(GroverFileSystem):
 
         await session.flush()
         return GroverResult(candidates=out, errors=errors, success=len(errors) == 0)
+
+    # ------------------------------------------------------------------
+    # Search / query
+    # ------------------------------------------------------------------
+
+    async def _glob_impl(
+        self,
+        pattern: str = "",
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Glob pattern matching against the namespace.
+
+        Two-layer approach: SQL LIKE pre-filter (coarse, fast) then
+        Python regex post-filter (authoritative).  Files and directories
+        only by default (§5.4).
+        """
+        if not pattern:
+            return self._error("glob requires a pattern")
+
+        regex = compile_glob(pattern)
+        if regex is None:
+            return self._error(f"Invalid glob pattern: {pattern}")
+
+        # ── With candidates: filter in-memory ─────────────────────────
+        if candidates is not None:
+            matched = [
+                c.model_copy(update={
+                    "details": (*c.details, Detail(operation="glob")),
+                })
+                for c in candidates.candidates
+                if regex.match(c.path) is not None
+            ]
+            return GroverResult(candidates=matched)
+
+        # ── Without candidates: query DB ──────────────────────────────
+        like_pattern = glob_to_sql_like(pattern)
+
+        stmt = select(self._model).where(
+            self._model.kind.in_(["file", "directory"]),  # type: ignore[union-attr]
+            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+
+        if like_pattern is not None:
+            stmt = stmt.where(
+                self._model.path.like(like_pattern, escape="\\"),  # type: ignore[union-attr]
+            )
+
+        result = await session.execute(stmt)
+
+        matched = [
+            obj.to_candidate(operation="glob")
+            for obj in result.scalars().all()
+            if regex.match(obj.path) is not None
+        ]
+        matched.sort(key=lambda c: c.path)
+        return GroverResult(candidates=matched)
+
+    async def _grep_impl(
+        self,
+        pattern: str = "",
+        case_sensitive: bool = True,
+        max_results: int | None = None,
+        candidates: GroverResult | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Regex content search across files.
+
+        Compiles *pattern* as a regex and searches file content line by
+        line.  Returns candidates with line-match details in metadata.
+        Files only by default (§5.4).
+        """
+        if not pattern:
+            return self._error("grep requires a pattern")
+
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error as exc:
+            return self._error(f"Invalid regex pattern: {exc}")
+
+        # ── Build path → content map and preserve incoming details ─────
+        content_map: dict[str, str] = {}
+        prior_details: dict[str, tuple[Detail, ...]] = {}
+
+        if candidates is not None:
+            # Reuse content already on candidates; hydrate only the gaps
+            need_hydration: list[str] = []
+            for c in candidates.candidates:
+                prior_details[c.path] = c.details
+                if c.content is not None:
+                    content_map[c.path] = c.content
+                else:
+                    need_hydration.append(c.path)
+
+            if need_hydration:
+                for batch in self._chunk_paths(session, need_hydration, binds_per_item=1):
+                    stmt = select(self._model).where(
+                        self._model.path.in_(batch),  # type: ignore[union-attr]
+                        self._model.kind == "file",
+                        self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                    )
+                    result = await session.execute(stmt)
+                    for obj in result.scalars().all():
+                        if obj.content:
+                            content_map[obj.path] = obj.content
+        else:
+            stmt = select(self._model).where(
+                self._model.kind == "file",
+                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                self._model.content.isnot(None),  # type: ignore[union-attr]
+            )
+            result = await session.execute(stmt)
+            for obj in result.scalars().all():
+                if obj.content:
+                    content_map[obj.path] = obj.content
+
+        # ── Search content line by line ───────────────────────────────
+        matched: list[Candidate] = []
+
+        for path in sorted(content_map):
+            content = content_map[path]
+            lines = content.split("\n")
+            line_matches: list[dict[str, object]] = []
+
+            for line_num, line_text in enumerate(lines, 1):
+                if regex.search(line_text):
+                    line_matches.append({"line": line_num, "text": line_text})
+
+            if line_matches:
+                grep_detail = Detail(
+                    operation="grep",
+                    score=float(len(line_matches)),
+                    metadata={
+                        "line_matches": line_matches,
+                        "match_count": len(line_matches),
+                    },
+                )
+                matched.append(Candidate(
+                    path=path,
+                    kind="file",
+                    details=(*prior_details.get(path, ()), grep_detail),
+                ))
+
+                if max_results is not None and len(matched) >= max_results:
+                    break
+
+        return GroverResult(candidates=matched)
+
+    async def _tree_impl(
+        self,
+        path: str = "",
+        max_depth: int | None = None,
+        *,
+        session: AsyncSession,
+    ) -> GroverResult:
+        """Recursive directory listing.
+
+        Returns all descendant files and directories under *path*,
+        sorted by path.  ``max_depth`` limits how many levels deep
+        the traversal goes (1 = direct children only).
+        Metadata kinds are excluded (§5.4).
+        """
+        # Default to root
+        if not path:
+            path = "/"
+
+        if max_depth is not None and max_depth < 1:
+            return self._error(f"max_depth must be >= 1, got {max_depth}")
+
+        # Validate path exists and is a directory (skip for root)
+        if path != "/":
+            obj = await self._get_object(path, session)
+            if obj is None:
+                return self._error(f"Not found: {path}")
+            if obj.kind != "directory":
+                return self._error(f"Not a directory: {path}")
+
+        # ── Query descendants ─────────────────────────────────────────
+        stmt = select(self._model).where(
+            self._model.kind.in_(["file", "directory"]),  # type: ignore[union-attr]
+            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+
+        if path == "/":
+            stmt = stmt.where(self._model.path != "/")
+        else:
+            stmt = stmt.where(
+                self._model.path.like(path + "/%", escape="\\"),  # type: ignore[union-attr]
+            )
+
+        # Depth limiting via slash counting
+        if max_depth is not None:
+            slash_count = func.length(self._model.path) - func.length(
+                func.replace(self._model.path, "/", ""),
+            )
+            max_slashes = max_depth if path == "/" else path.count("/") + max_depth
+            stmt = stmt.where(slash_count <= max_slashes)
+
+        result = await session.execute(stmt)
+        objects = sorted(result.scalars().all(), key=lambda o: o.path)
+
+        candidates = [obj.to_candidate(operation="tree") for obj in objects]
+        return GroverResult(candidates=candidates)

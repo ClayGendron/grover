@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
 from grover.backends.database import DatabaseFileSystem
@@ -48,7 +49,11 @@ async def engine(request: pytest.FixtureRequest):
         subprocess.run(["createdb", _PG_DB], check=False)
         eng = create_async_engine(_PG_URL)
     else:
-        eng = create_async_engine("sqlite+aiosqlite://")
+        eng = create_async_engine(
+            "sqlite+aiosqlite://",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
 
     async with eng.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
