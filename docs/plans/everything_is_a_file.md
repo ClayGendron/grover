@@ -18,7 +18,13 @@ There is a better approach, and it was invented in 1969.
 
 Unix's defining insight was that radically different things — disk drives, terminals, network connections, running processes — could all be accessed through a single interface: the file. Open it, read it, write it, close it. The path is the address. The content is the data. Standard tools (`grep`, `ls`, `cat`, `find`) work on everything.
 
+This was not an afterthought. Dennis Ritchie's own account (*"The Evolution of the Unix Time-sharing System"*, AT&T Bell Labs Technical Journal, 1984) reveals that the filesystem was the **first component designed**, predating even the process model. Thompson, Canaday, and Ritchie developed the basic filesystem structure; Ritchie contributed the idea of *device files* — the insight that I/O devices should appear as files in the same namespace. The i-list (a linear array of inodes, each describing a file with "a short, unambiguous name related in a simple way to the protection, addressing, and other information needed to access the file") was the foundational data structure. This separated **identity** (inode number) from **naming** (directory entries) — a distinction that remains central to every filesystem design, including Grover's.
+
+The Unix architecture established a three-level I/O model that is still widely misunderstood: **file descriptors** (per-process integers) → **open file descriptions** (kernel-wide structures holding the offset and flags, shared by `dup()` and `fork()`) → **inodes** (the actual file objects). A filename is not a file — it is a pointer in a parent directory to an inode. This is what enables hard links, what makes `unlink()` not always delete data, and what makes `rename()` atomic (it's a directory entry update, not a data copy). Grover's architecture maps cleanly to this model: the agent's path string (the name) → the session/operation context (the open description) → the `grover_objects` row (the inode).
+
 Plan 9 from Bell Labs (1992) took this further. The network became a filesystem (`/net/tcp/clone`). The window system became a filesystem (`/dev/draw`). Process control became a filesystem (`/proc/42/ctl`). The entire protocol had **14 message types**: walk, open, read, write, stat, create, remove, clunk, and a handful of others. That was sufficient to model every resource in a distributed operating system.
+
+Rob Pike et al. (*"The Use of Name Spaces in Plan 9"*, 5th ACM SIGOPS European Workshop, 1992) articulated why this works: "The integration of devices into the hierarchical file system was the best idea in UNIX... Plan 9 pushes the concepts much further and shows that file systems, when used inventively, have plenty of scope for productive research." Plan 9's key innovations — per-process mutable namespaces via `bind()`/`mount()`, union directories (multiple trees overlaid at one point), and the 9P wire protocol — demonstrated that a small set of file operations is sufficient to model every resource in a distributed system. Grover's mount architecture (§9), cross-mount search (§9.5), and single-tool CLI (§6.2) are direct descendants of these ideas.
 
 The key insight is not that files are the right abstraction for everything. It's that **a small, universal interface eliminates the need for special-purpose APIs**. When everything speaks the same protocol, tools compose. When everything lives in a single namespace, discovery is navigation. When operations are uniform, agents don't need instructions — they already know how to use a filesystem.
 
@@ -112,7 +118,7 @@ Metadata children of a file use dot-prefixed directories, following the Unix con
 | Metadata type | Path pattern | Example |
 |---|---|---|
 | **Chunk** | `<file>/.chunks/<name>` | `/src/auth.py/.chunks/login` |
-| **Version** | `<file>/.versions/<N>` | `/src/auth.py/.versions/3` |
+| **Version** | `<file>/.versions/<N>` | `/src/auth.py/.versions/3` (cf. ext3cow's `@epoch` syntax) |
 | **Connection** | `<file>/.connections/<type>/<target>` | `/src/auth.py/.connections/imports/src/utils.py` |
 | **API endpoint** | `<mount>/.api/<action>` | `/jira/.api/ticket` |
 
@@ -122,6 +128,7 @@ This design has several properties:
 - **Glob works natively.** `glob("/src/**/.chunks/*")` finds all chunks. `glob("/**/.connections/imports/**")` finds all import edges. `glob("/**/.versions/*")` finds all versions.
 - **`ls -a` semantics.** `ls /src/auth.py` hides metadata children by default. `ls -a /src/auth.py` reveals `.chunks/`, `.versions/`, `.connections/`. This matches Unix hidden file convention.
 - **No collision with user content.** Nobody creates source files or documents called `.chunks`.
+- **Prior art in versioning filesystems.** The `.versions/<N>` pattern follows ext3cow's `@epoch` syntax (`/path/to/file@1234567890`), which exposed historical versions as path-addressable entities in a real Linux filesystem. NILFS2 and the Elephant File System used similar approaches. Encoding version access in the path — rather than requiring a separate API — is a proven pattern for making time-travel discoverable and composable with standard tools.
 
 ### 3.3 `parent_path` Derivation
 
@@ -979,6 +986,8 @@ Or more concisely: **Knowledge as a filesystem.**
 
 **Rationale:** For files and directories, the filesystem parent and the logical parent are the same. For metadata nodes, they diverge. The parent of `/src/auth.py/.chunks/login` is `/src/auth.py`, not `/src/auth.py/.chunks`. The parent of `/src/auth.py/.connections/imports/src/utils.py` is `/src/auth.py`, not `/src/auth.py/.connections/imports/src`. Connection target paths can contain `/`, making naive path splitting ambiguous. Storing `parent_path` explicitly avoids this entirely and enables efficient tree queries via index.
 
+This is the same problem Rob Pike solved in *"Lexical File Names in Plan 9, or, Getting Dot-Dot Right."* In Unix, symbolic links turn the namespace from a tree into a directed graph, making `..` ambiguous (physical parent vs. the directory you "came from"). Plan 9 solved this by tracking a `Cname` (canonical name) on each open channel — the absolute pathname used to reach the file. When `..` is evaluated, the kernel lexically strips the last component from the Cname, then validates the result. Grover's metadata paths create an analogous problem: `/.connections/imports/src/utils.py` contains `/` characters that make naive parent derivation ambiguous. Grover's solution — marker-aware parsing stored at write time — is the same insight as Plan 9's Cname: the system records *how you got there* rather than trying to derive it from the path string after the fact.
+
 ### 12.3 Files-first visibility defaults
 
 **Decision:** All query operations (`ls`, `glob`, `grep`, `search`, `tree`) default to returning files and directories only. Metadata nodes (chunks, versions, connections) require explicit opt-in (`-a`, `--chunks`, `--kinds`). `.api/` nodes are never in search results. Direct reads of any path always work regardless of defaults.
@@ -1015,6 +1024,8 @@ Or more concisely: **Knowledge as a filesystem.**
 
 **Rationale:** `source_path` and `target_path` need indexes for graph traversal. `line_start`/`line_end` are useful for chunk queries. JSON metadata is harder to index, harder to query, and harder to validate. The trade-off is null columns for most rows, but SQLite and Postgres handle sparse columns efficiently. Note: this is an implementation choice, not a core design constraint — the namespace and API design work regardless of the storage schema.
 
+**Path-as-key vs. inode-as-key trade-off.** The schema uses `path TEXT UNIQUE` as the primary lookup key — not the `id` column. This is the same choice made by libsqlfs and other database-backed filesystems. The trade-off is well-understood: path-as-key makes read/stat/exists O(1) on the unique index and requires no joins, but `move()` on a directory with N descendants requires updating N rows (every child's `path` and `parent_path`). An inode-based scheme (id-as-primary-key with a separate path→id mapping table) would make rename O(1) but require joins for every path lookup. For Grover's workload — read-heavy, write-moderate, rename-rare — path-as-key is the right choice. If bulk renames become a bottleneck, the mitigation is batched `UPDATE ... WHERE path LIKE prefix%` within a single transaction, which is already the implementation in `_move_impl`.
+
 ### 12.9 Sync pipelines as the primary integration model
 
 **Decision:** External data enters Grover through user-written sync pipelines that call `write()` / `mkconn()` / `delete()`. Backend plugins with write-back are optional, not required.
@@ -1033,6 +1044,36 @@ Or more concisely: **Knowledge as a filesystem.**
 
 **Rationale:** Shares are ACLs — they describe access control, not entities in the namespace. A share on `/documents/report.pdf` grants access to that path and its children. The share itself is not addressable at a path, not searchable, not versioned. It's metadata about the namespace, not part of it. This matches Unix: file permissions are stored in the inode, not as entries in the directory.
 
+### 12.12 Trailing slash normalization
+
+**Decision:** Trailing slashes are stripped during path normalization. `read("/src/auth.py/")` and `read("/src/auth.py")` are identical. No POSIX-style "trailing slash forces directory resolution" semantics.
+
+**Rationale:** POSIX mandates that a trailing slash forces the preceding component to resolve as a directory — `stat("/tmp/link/")` follows a symlink and fails with `ENOTDIR` if the target is a regular file, while `stat("/tmp/link")` succeeds. This subtlety has caused real bugs (the behavior difference between `unlink("/tmp/link")` and `unlink("/tmp/link/")` is a classic POSIX gotcha). Grover has no symlinks and dispatches by `kind`, not by path syntax. Preserving trailing slash semantics would add complexity without enabling anything — the `kind` column already distinguishes files from directories. Normalizing away trailing slashes eliminates an entire class of ambiguity.
+
+### 12.13 Rename atomicity
+
+**Decision:** `move()` is atomic within a single mount (one SQL transaction). Cross-mount `move()` is a three-step transfer (read → write → delete) that is not atomic to concurrent readers.
+
+**Rationale:** POSIX guarantees that `rename()` is atomic for concurrent observers — at no point does the file appear to not exist. Within a single mount, Grover achieves this because all path updates happen in one SQL transaction (either all rows update or none do). Cross-mount moves cannot be atomic because they involve two independent backends. This mirrors the POSIX constraint that `rename()` cannot cross filesystem boundaries (`EXDEV`). The ext4 delayed-allocation incident of 2008 — where the implicit `write(tmp); rename(tmp, real)` atomicity guarantee was violated, causing data loss for essentially all applications that relied on it — demonstrates that atomicity guarantees must be explicit and documented, not implied. Grover's guarantee: same-mount `move()` is atomic; cross-mount `move()` is best-effort with read-before-delete ordering (content is never lost, but may briefly exist at both paths).
+
+### 12.14 No hard links
+
+**Decision:** Every object has exactly one path and exactly one parent. No hard links.
+
+**Rationale:** Hard links would allow a single object to appear at multiple paths, turning the namespace from a tree into a DAG. This would break: (1) `parent_path` uniqueness — an object with two parents has no single `parent_path`, (2) cascading deletes — deleting one parent path shouldn't delete the object if another link exists, requiring reference counting, (3) the `kind` invariant — the kind is path-derived and must agree with the stored kind, and (4) any algorithm that assumes an acyclic namespace (tree queries, permission inheritance, `ls -R`). Unix itself forbids hard links to directories for exactly this reason — they create cycles that break `find`, `du`, `rm -r`, and `fsck`. Connections serve the use case that hard links might otherwise address: "this object is related to that path." Connections are explicit, typed, directional, and live under the source — they don't compromise namespace invariants.
+
+### 12.15 Durability guarantees
+
+**Decision:** After `write()` returns successfully, the data is durable (survives process crash). The specific guarantee depends on the backend.
+
+**Rationale:** Research on crash consistency (MIT's FSCQ, the ALICE tool) found that "every single piece of software tested except SQLite in one mode had at least one crash bug." Grover builds on SQLite (for local/embedded use) and PostgreSQL (for server deployments) — both provide well-understood durability guarantees when used correctly. For SQLite in WAL mode with `PRAGMA synchronous=FULL` (the default), a committed transaction survives power loss. For PostgreSQL, `synchronous_commit=on` (the default) provides the same guarantee. Grover's "content-before-commit" write ordering (§12.1, FS Write Ordering invariant) ensures that a crash during `write()` never creates phantom metadata (DB says file exists, content is missing). The worst case on crash is an orphan file on disk that is invisible to the system — inert and harmless. This ordering was validated independently: the ext4 delayed-allocation incident of 2008 demonstrated that commit-before-content causes real data loss at scale.
+
+### 12.16 No mount propagation
+
+**Decision:** Mounts are private. Adding or removing a mount in one context has no effect on other contexts. No shared/slave/private/unbindable propagation model.
+
+**Rationale:** Linux introduced mount propagation (shared subtrees) in 2.6.15 to handle how mount events flow between mount namespaces. The four propagation types (shared, slave, private, unbindable), their peer group mechanics, and their interactions form a complex state machine that even kernel developers find subtle — LWN.net devoted a multi-part series to explaining the semantics. systemd's decision to default everything to shared propagation has far-reaching consequences for container isolation. Grover deliberately avoids this complexity. Each `GroverFileSystem` instance has its own mount registry (`MountRegistry`). `add_mount()` and `remove_mount()` affect only that instance. This follows Plan 9's simpler model — per-process namespaces where `bind()` and `mount()` affect only the calling process — rather than Linux's shared subtree model. The trade-off is that coordinating mount state across multiple Grover instances requires explicit application-level logic, but this is the right default for a library where each agent or service typically has its own `Grover()` instance.
+
 ## 13. References
 
 ### Academic Papers
@@ -1042,6 +1083,18 @@ Or more concisely: **Knowledge as a filesystem.**
 - *"RAG-MCP"* (arXiv:2505.03275) — tool selection accuracy degrades at scale, RAG-based retrieval restores it
 - *"Code-Craft: Hierarchical Graph-Based Code Summarization"* (arXiv:2504.08975) — dependency-aware code retrieval
 - *"cAST: Structural Chunking via Abstract Syntax Tree"* (arXiv:2506.15655) — AST-aware chunking
+
+### Filesystem Theory & Systems Research
+- Dennis Ritchie, *"The Evolution of the Unix Time-sharing System"* (AT&T Bell Labs Technical Journal, 1984) — filesystem-first design, inode architecture, device files as the key Unix insight
+- Rob Pike et al., *"The Use of Name Spaces in Plan 9"* (5th ACM SIGOPS European Workshop, 1992) — per-process namespaces, union directories, 9P protocol
+- Rob Pike, *"Lexical File Names in Plan 9, or, Getting Dot-Dot Right"* — canonical name tracking for correct `..` resolution in non-tree namespaces
+- IEEE Std 1003.1-2017 (POSIX), *Section 4.13: Pathname Resolution* — formal path resolution semantics, trailing slash rules, symlink limits
+- Henson, Val, *"ext3cow: A Time-Shifting File System for Regulatory Compliance"* — version-via-path encoding (`@epoch` syntax), prior art for `.versions/<N>` pattern
+- Peterson, Zachary, Randal Burns, *"Ext3cow: The Design, Implementation, and Analysis of Metadata for a Time-Shifting File System"* (USENIX FAST, 2005)
+- Konishi et al., *"The Linux Implementation of a Log-Structured File System"* (NILFS2) — continuous snapshotting, checkpoint-based versioning
+- Pillai et al., *"All File Systems Are Not Created Equal: On the Complexity of Crafting Crash-Consistent Applications"* (OSDI 2014, ALICE tool) — "every application except SQLite had crash bugs"
+- Chen et al., *"Using Crash Hoare Logic for Certifying the FSCQ File System"* (SOSP 2015) — first machine-checked proof of filesystem crash consistency
+- Sigurbjarnarson et al., *"Push-Button Verification of File Systems via Crash Refinement"* (OSDI 2016, Yggdrasil) — automated verification without manual proofs
 
 ### Industry Sources
 - Anthropic, *"Code Execution with MCP"* — filesystem-based tool discovery, 98.7% token reduction
@@ -1060,6 +1113,10 @@ Or more concisely: **Knowledge as a filesystem.**
 - Wanix — Plan 9's spirit in WebAssembly
 - AIOS — LLM-based Semantic File System
 - Redox OS — "everything is a URL"
+- ext3cow — time-shifting filesystem with `@epoch` path syntax for version access
+- NILFS2 — log-structured filesystem with continuous snapshotting
+- libsqlfs — SQLite-backed FUSE filesystem (path-as-key schema, prior art for database-backed VFS)
+- fsspec — Python filesystem spec with `AbstractFileSystem`, protocol registry, URL chaining (complementary: uniform interface across backends at the I/O level)
 
 ## 14. Decisions & Progress
 
