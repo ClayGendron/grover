@@ -17,6 +17,7 @@ from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 from sqlmodel._compat import finish_init
 
+from grover.bm25 import tokenize as lexical_tokenize
 from grover.paths import (
     decompose_connection,
     normalize_path,
@@ -36,7 +37,6 @@ from grover.versioning import reconstruct_version
 # ---------------------------------------------------------------------------
 # Base class — adds Pydantic validation back to SQLModel table models
 # ---------------------------------------------------------------------------
-
 
 class ValidatedSQLModel(SQLModel):
     """SQLModel base that runs Pydantic validation on explicit ``__init__``.
@@ -116,6 +116,7 @@ class GroverObjectBase(ValidatedSQLModel):
     lines: int = Field(default=0)
     size_bytes: int = Field(default=0)
     tokens: int = Field(default=0)
+    lexical_tokens: int = Field(default=0)
 
     # --- Chunk-specific -----------------------------------------------------
 
@@ -177,7 +178,7 @@ class GroverObjectBase(ValidatedSQLModel):
     def strip_prefix(self, prefix: str) -> GroverObjectBase:
         """Strip *prefix* from path in place, re-deriving name and parent."""
         if prefix:
-            self.path = self.path[len(prefix):] or "/"
+            self.path = self.path[len(prefix) :] or "/"
             self._rederive_path_fields()
         return self
 
@@ -215,6 +216,11 @@ class GroverObjectBase(ValidatedSQLModel):
             len(encoded),
             content.count("\n") + 1 if content else 0,
         )
+
+    @staticmethod
+    def _lexical_token_count(content: str) -> int:
+        """Return the lexical BM25 token count for *content*."""
+        return len(lexical_tokenize(content))
 
     def _stored_version_payload(self) -> str:
         """Return the snapshot text or diff payload for a version row."""
@@ -258,6 +264,7 @@ class GroverObjectBase(ValidatedSQLModel):
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
+            lexical_tokens=cls._lexical_token_count(version_content),
             created_at=now,
             updated_at=now,
         )
@@ -332,14 +339,16 @@ class GroverObjectBase(ValidatedSQLModel):
         current_version = self.version_number or 0
 
         if current_version == 0:
-            planned_rows.append(type(self).create_version_row(
-                file_path=self.path,
-                version_number=1,
-                version_content=new_content,
-                prev_content=None,
-                created_by="auto",
-                force_snapshot=True,
-            ))
+            planned_rows.append(
+                type(self).create_version_row(
+                    file_path=self.path,
+                    version_number=1,
+                    version_content=new_content,
+                    prev_content=None,
+                    created_by="auto",
+                    force_snapshot=True,
+                )
+            )
             content_hash, size_bytes, lines = self._content_metadata(new_content)
             return VersionWritePlan(
                 version_rows=tuple(planned_rows),
@@ -361,14 +370,16 @@ class GroverObjectBase(ValidatedSQLModel):
             external_detected = self.content_hash is not None and observed_hash != self.content_hash
             if external_detected:
                 current_version += 1
-                planned_rows.append(type(self).create_version_row(
-                    file_path=self.path,
-                    version_number=current_version,
-                    version_content=observed_content,
-                    prev_content=None,
-                    created_by="external",
-                    force_snapshot=True,
-                ))
+                planned_rows.append(
+                    type(self).create_version_row(
+                        file_path=self.path,
+                        version_number=current_version,
+                        version_content=observed_content,
+                        prev_content=None,
+                        created_by="external",
+                        force_snapshot=True,
+                    )
+                )
             elif version_rows is None:
                 # Hash mismatch on version but no rows to diagnose — signal
                 # the caller to fetch the chain and re-plan.
@@ -389,14 +400,16 @@ class GroverObjectBase(ValidatedSQLModel):
                     reconstructed = None
                 if reconstructed != observed_content:
                     current_version += 1
-                    planned_rows.append(type(self).create_version_row(
-                        file_path=self.path,
-                        version_number=current_version,
-                        version_content=observed_content,
-                        prev_content=None,
-                        created_by="repair",
-                        force_snapshot=True,
-                    ))
+                    planned_rows.append(
+                        type(self).create_version_row(
+                            file_path=self.path,
+                            version_number=current_version,
+                            version_content=observed_content,
+                            prev_content=None,
+                            created_by="repair",
+                            force_snapshot=True,
+                        )
+                    )
 
         if new_content == current_content:
             return VersionWritePlan(
@@ -409,13 +422,15 @@ class GroverObjectBase(ValidatedSQLModel):
             )
 
         current_version += 1
-        planned_rows.append(type(self).create_version_row(
-            file_path=self.path,
-            version_number=current_version,
-            version_content=new_content,
-            prev_content=current_content,
-            created_by="auto",
-        ))
+        planned_rows.append(
+            type(self).create_version_row(
+                file_path=self.path,
+                version_number=current_version,
+                version_content=new_content,
+                prev_content=current_content,
+                created_by="auto",
+            )
+        )
         content_hash, size_bytes, lines = self._content_metadata(new_content)
         return VersionWritePlan(
             version_rows=tuple(planned_rows),
@@ -433,6 +448,7 @@ class GroverObjectBase(ValidatedSQLModel):
         self.content_hash = plan.final_content_hash
         self.size_bytes = plan.final_size_bytes
         self.lines = plan.final_lines
+        self.lexical_tokens = self._lexical_token_count(plan.final_content)
         self.version_number = plan.final_version_number
         self.updated_at = datetime.now(UTC)
 
@@ -448,6 +464,7 @@ class GroverObjectBase(ValidatedSQLModel):
         self.content = content
         self.version_diff = None
         self.content_hash, self.size_bytes, self.lines = self._content_metadata(content)
+        self.lexical_tokens = self._lexical_token_count(content)
         self.updated_at = datetime.now(UTC)
 
     # --- Validator ----------------------------------------------------------
@@ -526,19 +543,17 @@ class GroverObjectBase(ValidatedSQLModel):
                 raise ValueError(msg)
 
         # Compute content metrics (empty string is valid content, distinct from None)
-        explicit_version_metadata = (
-            kind == "version"
-            and (
-                data.get("content_hash") is not None
-                or "size_bytes" in data
-                or "lines" in data
-            )
+        explicit_version_metadata = kind == "version" and (
+            data.get("content_hash") is not None or "size_bytes" in data or "lines" in data
         )
         if not explicit_version_metadata and isinstance(content, str):
             content_hash, size_bytes, lines = cls._content_metadata(content)
             data["content_hash"] = content_hash
             data["size_bytes"] = size_bytes
             data["lines"] = lines
+
+        if isinstance(content, str):
+            data["lexical_tokens"] = cls._lexical_token_count(content)
 
         # Ensure timestamps
         now = datetime.now(UTC)
