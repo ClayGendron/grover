@@ -548,7 +548,7 @@ class DatabaseFileSystem(GroverFileSystem):
             dir_paths = list(dirs.keys())
             for batch in self._chunk_paths(session, dir_paths, binds_per_item=1):
                 conditions = [
-                    self._model.path.like(p + "/%")  # type: ignore[union-attr]
+                    self._model.path.like(_escape_like(p) + "/%", escape="\\")  # type: ignore[union-attr]
                     for p in batch
                 ]
                 stmt = select(self._model).where(or_(*conditions))
@@ -1366,7 +1366,7 @@ class DatabaseFileSystem(GroverFileSystem):
             descendants: list[GroverObjectBase] = []
             if src_obj.kind == "directory":
                 stmt = select(self._model).where(
-                    self._model.path.like(op.src + "/%"),  # type: ignore[union-attr]
+                    self._model.path.like(_escape_like(op.src) + "/%", escape="\\"),  # type: ignore[union-attr]
                     self._model.deleted_at.is_(None),  # type: ignore[union-attr]
                 )
                 result = await session.execute(stmt)
@@ -1411,7 +1411,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 self._model.deleted_at.is_(None),  # type: ignore[union-attr]
                 or_(
                     self._model.target_path == op.src,  # type: ignore[invalid-argument-type]
-                    self._model.target_path.like(op.src + "/%"),  # type: ignore[union-attr]
+                    self._model.target_path.like(_escape_like(op.src) + "/%", escape="\\"),  # type: ignore[union-attr]
                 ),
             )
             conn_result = await session.execute(conn_stmt)

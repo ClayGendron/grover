@@ -1988,3 +1988,99 @@ class TestTree:
         await root.write("/code/src/a.py", "code")
         r = await root.tree("/code/src")
         assert "/code/src/a.py" in r.paths
+
+
+# ------------------------------------------------------------------
+# Part 13: LIKE wildcard safety — paths containing % and _
+# ------------------------------------------------------------------
+
+
+class TestLikeWildcardSafety:
+    """Paths with literal SQL LIKE wildcards (% and _) must not match unrelated rows."""
+
+    async def test_move_percent_in_path_does_not_match_unrelated(self, db: DatabaseFileSystem):
+        """Moving /data/100% must not affect /data/100_items."""
+        await db.write("/data/100%/report.txt", "owned")
+        await db.write("/data/100_items/secret.txt", "unrelated")
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/data/100%", dest="/archive/done")],
+                session=s,
+            )
+        assert r.success
+
+        # Moved file reachable at new path
+        r1 = await db.read("/archive/done/report.txt")
+        assert r1.content == "owned"
+
+        # Unrelated file untouched
+        r2 = await db.read("/data/100_items/secret.txt")
+        assert r2.success
+        assert r2.content == "unrelated"
+
+    async def test_move_underscore_in_path_does_not_match_unrelated(self, db: DatabaseFileSystem):
+        """Moving /src/a_ must not affect /src/ab."""
+        await db.write("/src/a_/f.py", "target")
+        await db.write("/src/ab/g.py", "bystander")
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/src/a_", dest="/dst/a_")],
+                session=s,
+            )
+        assert r.success
+        r1 = await db.read("/dst/a_/f.py")
+        assert r1.content == "target"
+        r2 = await db.read("/src/ab/g.py")
+        assert r2.success
+        assert r2.content == "bystander"
+
+    async def test_delete_cascade_percent_does_not_affect_siblings(self, db: DatabaseFileSystem):
+        """Cascading delete of /data/100% must not delete /data/100xyz."""
+        await db.write("/data/100%/a.txt", "delete-me")
+        await db.write("/data/100xyz/b.txt", "keep-me")
+        async with db._use_session() as s:
+            r = await db._delete_impl("/data/100%", cascade=True, session=s)
+        assert r.success
+
+        r1 = await db.read("/data/100%/a.txt")
+        assert not r1.success  # deleted
+
+        r2 = await db.read("/data/100xyz/b.txt")
+        assert r2.success
+        assert r2.content == "keep-me"
+
+    async def test_ls_percent_dir_returns_only_own_children(self, db: DatabaseFileSystem):
+        """ls on /data/100% must not include children of /data/100xyz."""
+        await db.write("/data/100%/a.txt", "a")
+        await db.write("/data/100xyz/b.txt", "b")
+        async with db._use_session() as s:
+            r = await db._ls_impl("/data/100%", session=s)
+        assert r.success
+        assert "/data/100%/a.txt" in r.paths
+        assert "/data/100xyz/b.txt" not in r.paths
+
+    async def test_move_updates_connections_with_percent_in_path(self, db: DatabaseFileSystem):
+        """Connections targeting /lib/100% must not match /lib/100other after move."""
+        await db.write("/lib/100%/mod.py", "code")
+        await db.write("/lib/100other/x.py", "other")
+        await db.write("/caller.py", "import")
+        async with db._use_session() as s:
+            await db._mkconn_impl("/caller.py", "/lib/100%/mod.py", "imports", session=s)
+            await db._mkconn_impl("/caller.py", "/lib/100other/x.py", "imports", session=s)
+
+        async with db._use_session() as s:
+            r = await db._move_impl(
+                ops=[TwoPathOperation(src="/lib/100%", dest="/vendor/100%")],
+                session=s,
+            )
+        assert r.success
+
+        # Connection to moved file should be updated
+        async with db._use_session() as s:
+            obj = await db._get_object("/caller.py/.connections/imports/vendor/100%/mod.py", s)
+        assert obj is not None
+
+        # Connection to /lib/100other/x.py must be untouched
+        async with db._use_session() as s:
+            obj = await db._get_object("/caller.py/.connections/imports/lib/100other/x.py", s)
+        assert obj is not None

@@ -1823,3 +1823,32 @@ Both `_fetch_lexical_docs()` and `_fetch_corpus_stats()` add `WHERE path LIKE '/
 - BM25 lexical search — per-user corpus
 
 1463 total tests (was 1421), all passing. ruff and ty clean.
+
+### 14.13 LIKE wildcard escaping in path-based SQL queries — 2026-04-01
+
+**Decision:** All SQL `LIKE` clauses that interpolate stored path values must use `_escape_like()` and pass `escape="\\"`. Paths may legally contain `%` and `_` characters (they pass `validate_path()`), but these are LIKE wildcards in SQL. Without escaping, a path like `/data/100%/` produces `WHERE path LIKE '/data/100%/%'`, which matches unintended rows.
+
+**Security finding:** `_move_impl` used unescaped path values in two LIKE patterns (descendant fetch and incoming-connection update) with no Python-level post-filter. A `move()` on a path containing `%` would rewrite paths of unrelated files, corrupting data. `_fetch_children_batched` had the same LIKE issue but was partially mitigated by a `startswith()` post-filter.
+
+**Fix:** Three LIKE calls in `database.py` updated to use `_escape_like(path) + "/%"` with `escape="\\"`:
+
+| Location | Pattern | Risk |
+|----------|---------|------|
+| `_fetch_children_batched` | `path.like(p + "/%")` | Mitigated by `startswith` post-filter, fixed for defense in depth |
+| `_move_impl` (descendants) | `path.like(op.src + "/%")` | **Critical** — results used directly for path rewriting |
+| `_move_impl` (connections) | `target_path.like(op.src + "/%")` | **Critical** — results used directly to update connection targets |
+
+The codebase already had the correct tools — `_escape_like()` (line 46) and correct usage in `_glob_impl` and `_tree_impl`. The inconsistency was the bug.
+
+**`user_id` is trusted** — the four `WHERE path LIKE '/{user_id}/%'` clauses in user-scoped queries are not escaped because `user_id` is assigned by the application's authentication layer, not by end users.
+
+#### Test coverage
+
+5 new tests in `TestLikeWildcardSafety` (`tests/test_database.py`):
+- `move()` with `%` in path does not affect sibling directories
+- `move()` with `_` in path does not affect sibling directories
+- `delete(cascade=True)` with `%` in path only deletes correct subtree
+- `ls()` on directory with `%` in name returns only own children
+- `move()` with `%` in path correctly scopes connection target rewrites
+
+1468 total tests (was 1463), all passing. ruff and ty clean.
