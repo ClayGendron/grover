@@ -1708,3 +1708,118 @@ Searches files and chunks — versions excluded (they duplicate file content).
 **SQL pre-filter before scoring.** Full BM25 over the entire corpus would require loading all content into Python. Instead, SQL LIKE narrows to candidate documents containing query terms, sorted by term-count heuristic, capped at 1,000 rows. The BM25 scorer then ranks within this pre-filtered set. This keeps memory bounded and query times fast for large corpora.
 
 **BM25Index for benchmarks, BM25Scorer for production.** The index pre-computes postings for repeated queries over stable data — useful for benchmarks and REPL exploration. The scorer takes external statistics — useful for the SQL-hybrid production path where IDF comes from COUNT queries and documents come from pre-filtered SQL results.
+
+### 14.14 User-scoped filesystem support — 2026-04-01
+
+**Commit:** `5996428`
+
+Added per-user path-prefix isolation to the entire GroverFileSystem stack. A `DatabaseFileSystem` with `user_scoped=True` transparently prefixes all paths with `/{user_id}/` in storage, allowing multiple users to share the same logical paths (e.g., both users have `/docs/README.md`).
+
+#### Design: unscoped paths everywhere, scope at the DB boundary
+
+The API contract is strict: **all public methods and `_*_impl` calls always receive unscoped paths + `user_id`.** Scoping (prepending `/{user_id}/`) and unscoping (stripping it) happen inside each terminal `_*_impl` method at the DB boundary, never across method calls. This prevents double-scoping bugs and makes behavior consistent — a user with id `123` can have a directory named `123` without ambiguity (`/123/123/file.py` in storage).
+
+**Terminal methods** (read, write, ls, delete, stat, tree, move, glob, grep, search, graph ops) — scope inputs at top, unscope result at bottom.
+
+**Delegating methods** (edit→read+write, copy→read+write, mkdir→write, mkconn→write) — NO scoping. Pass unscoped paths + `user_id` to inner `_*_impl` calls. Each inner call handles its own scope cycle. Intermediate results use unscoped paths throughout.
+
+#### Mount topology
+
+```python
+g = Grover()
+g.add_mount('/snhu', DatabaseFileSystem(engine=shared_engine))                    # shared
+g.add_mount('/user', DatabaseFileSystem(engine=user_engine, user_scoped=True))    # per-user
+
+await g.semantic_search("auth", user_id="123")
+# /snhu: searches everything (ignores user_id for now)
+# /user: searches only /123/** paths in DB
+```
+
+#### `user_id` threading
+
+`user_id: str | None = None` added as a keyword-only parameter to:
+- All 30+ public methods on `GroverFileSystem`
+- All 6 routing methods (`_route_single`, `_dispatch_candidates`, `_route_fanout`, `_route_two_path`, `_cross_mount_transfer`, `_route_write_batch`) — explicit parameter, not `**kwargs`
+- All 28 `_*_impl` stubs
+- All query executor functions (`execute_query` → `_execute_node` → `_execute_stage` → all helpers)
+- `run_query()` and `cli()` — `user_id` is a parameter, NOT part of the query string
+
+Non-scoped filesystems ignore `user_id` harmlessly. Scoped filesystems raise `ValueError` if `user_id` is missing.
+
+#### Path scoping utilities (`paths.py`)
+
+- `validate_user_id(user_id)` — rejects empty, `/`, `\\`, `@`, `\0`, `..`, >255 chars
+- `scope_path(path, user_id)` — always prepends (not idempotent): `/docs/README` + `"123"` → `/123/docs/README`
+- `unscope_path(path, user_id)` — always strips (raises on mismatch). For connection paths, uses `decompose_connection()` to parse, strips prefix from both source and target, reconstructs with `connection_path()`
+
+#### Connection paths — scoped source AND target
+
+Both endpoints are scoped in the connection path:
+```
+/123/src/main.py/.connections/imports/123/src/auth.py
+```
+
+`decompose_connection()` naturally gives `source="/123/src/main.py"`, `target="/123/src/auth.py"` — matches DB columns exactly. No special-casing needed in `_normalize_and_derive`. Unscoping strips both:
+```
+/src/main.py/.connections/imports/src/auth.py
+```
+
+`_scope_objects()` rebuilds connection paths from scoped `source_path` + `target_path` to keep the `path`, `source_path`, and `target_path` fields consistent.
+
+#### DatabaseFileSystem scoping helpers
+
+Five private methods on `DatabaseFileSystem`:
+- `_scope_path(path, user_id)` — no-op when not user_scoped or user_id is None
+- `_scope_candidates(candidates, user_id)` — scope all candidate paths
+- `_scope_objects(objects, user_id)` — scope `path`, `source_path`, `target_path`, rebuild connection paths, set `owner_id`
+- `_unscope_result(result, user_id)` — calls `result.strip_user_scope(user_id)`
+- `_require_user_id(user_id)` — raises if user_scoped and no user_id
+
+#### `owner_id` column
+
+`owner_id` is the DB column on `GroverObjectBase` (already existed). `user_id` is the calling parameter. When `user_scoped=True`, `_scope_objects()` sets `owner_id = user_id` on all new objects during writes.
+
+#### BM25 lexical search — per-user corpus stats
+
+Both `_fetch_lexical_docs()` and `_fetch_corpus_stats()` add `WHERE path LIKE '/{user_id}/%'` when user-scoped. Without this, IDF scores would be computed against the global corpus (all users), diluting user-specific relevance.
+
+#### VectorStore — `user_id` column filtering
+
+`VectorStore.query()` gained `user_id: str | None = None`. `VectorItem` gained `owner_id: str | None = None` for upsert storage. `DatabricksVectorStore` uses native column filtering (`filters={"owner_id": user_id}`).
+
+#### Graph — query-time filtering, not load-time
+
+`RustworkxGraph` loads ALL users' connections (single shared graph). Filtering happens at query time:
+- `_visible_nodes(user_id)` — returns only nodes with `/{user_id}/` prefix when user-scoped
+- `_snapshot(user_id)` — returns filtered nodes + edges
+- All traversal and centrality methods use filtered snapshots, so `pagerank()` with `user_id="123"` computes only over user 123's graph
+- Graph stays shared in memory — no per-user reload penalty
+
+#### Key decisions
+
+**Strict scoping, not idempotent.** `scope_path` always prepends, `unscope_path` always strips (raises on mismatch). This avoids the ambiguity of a user named `123` having a directory named `123` — the system always knows exactly where it is in the scope/unscope lifecycle.
+
+**Terminal vs delegating method separation.** Terminal methods own their scope cycle. Delegating methods pass unscoped paths through. This prevents double-scoping and double-unscoping bugs that occurred in v1's `UserScopedFileSystem`.
+
+**No subclass.** User scoping is a `user_scoped=True` flag on `DatabaseFileSystem`, not a separate `UserScopedFileSystem` class. This avoids the v1 pain points of polymorphic dispatch (where `copy()` called `self.write()` which re-entered the override).
+
+**`user_id` per-method-call, not per-constructor.** One `Grover` instance serves multiple users. The `user_id` identifies the calling user on each operation. This is the web app model, not Plan 9's per-process namespace model.
+
+**Graph loads all, filters at query time.** Loading per-user would cause reloads on every user switch. Loading all and filtering at query time keeps the graph warm and shared. The path-prefix isolation guarantees traversal stays within the user's namespace naturally.
+
+**ReBAC on shared mounts is a separate future concern.** The `/snhu` shared mount currently ignores `user_id`. Future work: role/group-based access control on shared content, using the `SupportsReBAC` protocol and shares table. The `user_id` parameter is already threaded through — adding permission checks is an additive change.
+
+#### Test coverage
+
+42 new tests in `tests/test_user_scoping.py`:
+- Path utility tests (validate_user_id, scope_path, unscope_path, roundtrips)
+- Result unscoping (files, connections)
+- Write + read isolation between two users
+- `owner_id` set on writes
+- `user_id` required when scoped, ignored when not scoped
+- `ls`, `glob`, `grep`, `tree`, `delete`, `move`, `copy`, `edit` — all scoped
+- `mkconn` — connection path scoping, source/target verification
+- Graph isolation — predecessors, pagerank stay within user namespace
+- BM25 lexical search — per-user corpus
+
+1463 total tests (was 1421), all passing. ruff and ty clean.
