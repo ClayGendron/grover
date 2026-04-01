@@ -734,11 +734,11 @@ class DatabaseFileSystem(GroverFileSystem):
                 else:
                     errors.append(f"Not found: {p}")
 
-        return self._unscope_result(GroverResult(
+        return self._error(self._unscope_result(GroverResult(
             candidates=out,
             errors=errors,
             success=len(errors) == 0,
-        ), user_id)
+        ), user_id))
 
     async def _stat_impl(
         self,
@@ -829,7 +829,7 @@ class DatabaseFileSystem(GroverFileSystem):
             write_map[obj.path] = obj
 
         if not write_map:
-            return GroverResult(success=len(errors) == 0, errors=errors)
+            return self._error(GroverResult(success=len(errors) == 0, errors=errors))
 
         # ── Step 2: Validate chunk parents ────────────────────────────
         invalid_chunk_paths, chunk_errors = await self._validate_chunk_parents(write_map, session)
@@ -935,7 +935,10 @@ class DatabaseFileSystem(GroverFileSystem):
         if out and any(c.kind == "connection" for c in out):
             self._graph.invalidate()
 
-        return self._unscope_result(GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id)
+        result = self._unscope_result(
+            GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id,
+        )
+        return self._error(result)
 
     async def _ls_impl(
         self,
@@ -1078,7 +1081,7 @@ class DatabaseFileSystem(GroverFileSystem):
                 errors.append(f"Not found: {p}")
 
         if not found:
-            return GroverResult(errors=errors, success=len(errors) == 0)
+            return self._error(GroverResult(errors=errors, success=len(errors) == 0))
 
         # ── Batch-fetch children ─────────────────────────────────────
         children_map = await self._fetch_children_batched(
@@ -1096,7 +1099,7 @@ class DatabaseFileSystem(GroverFileSystem):
                     blocked.add(p)
             found = {p: o for p, o in found.items() if p not in blocked}
             if not found:
-                return GroverResult(errors=errors, success=len(errors) == 0)
+                return self._error(GroverResult(errors=errors, success=len(errors) == 0))
 
         # ── Apply deletes ────────────────────────────────────────────
         now = datetime.now(UTC)
@@ -1122,7 +1125,10 @@ class DatabaseFileSystem(GroverFileSystem):
         # Invalidate graph — deleted objects may include connections or
         # files that are graph nodes.
         self._graph.invalidate()
-        return self._unscope_result(GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id)
+        result = self._unscope_result(
+            GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id,
+        )
+        return self._error(result)
 
     async def _mkdir_impl(
         self,
@@ -1255,13 +1261,13 @@ class DatabaseFileSystem(GroverFileSystem):
             write_result = await self._write_impl(objects=to_write, user_id=user_id, session=session)
             if not write_result.success:
                 errors.extend(write_result.errors)
-            return GroverResult(
+            return self._error(GroverResult(
                 candidates=write_result.candidates,
                 errors=errors,
                 success=len(errors) == 0,
-            )
+            ))
 
-        return GroverResult(errors=errors, success=len(errors) == 0)
+        return self._error(GroverResult(errors=errors, success=len(errors) == 0))
 
     async def _copy_impl(
         self,
@@ -1301,7 +1307,7 @@ class DatabaseFileSystem(GroverFileSystem):
             to_write.append(self._model(path=op.dest, content=src.content or ""))
 
         if not to_write:
-            return GroverResult(errors=errors, success=len(errors) == 0)
+            return self._error(GroverResult(errors=errors, success=len(errors) == 0))
 
         # Write — _write_impl scopes internally, returns unscoped
         write_result = await self._write_impl(
@@ -1311,11 +1317,11 @@ class DatabaseFileSystem(GroverFileSystem):
             session=session,
         )
         errors.extend(write_result.errors)
-        return GroverResult(
+        return self._error(GroverResult(
             candidates=write_result.candidates,
             errors=errors,
             success=len(errors) == 0,
-        )
+        ))
 
     async def _move_impl(
         self,
@@ -1429,7 +1435,10 @@ class DatabaseFileSystem(GroverFileSystem):
         await session.flush()
         # Moves may rename connections or rewrite target_path references.
         self._graph.invalidate()
-        return self._unscope_result(GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id)
+        result = self._unscope_result(
+            GroverResult(candidates=out, errors=errors, success=len(errors) == 0), user_id,
+        )
+        return self._error(result)
 
     # ------------------------------------------------------------------
     # Search / query

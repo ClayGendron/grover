@@ -1852,3 +1852,99 @@ The codebase already had the correct tools — `_escape_like()` (line 46) and co
 - `move()` with `%` in path correctly scopes connection target rewrites
 
 1468 total tests (was 1463), all passing. ruff and ty clean.
+
+### 14.15 GroverAsync and Grover facade layer — 2026-04-01
+
+**Commits:** (this session)
+
+Added the two-tier facade layer described in §11.1: `GroverAsync` for async app servers and `Grover` for sync data pipelines. Both sit on top of `GroverFileSystem` as storageless routers (`storage=False`) that delegate to mounted backends.
+
+#### `storage` flag on GroverFileSystem (`base.py`)
+
+`GroverFileSystem.__init__` gained `storage: bool = True`. When `storage=False`:
+- Engine/session_factory are not required (`_session_factory = None`)
+- `_use_session()` raises `RuntimeError` if called (guard against accidental self-storage)
+- `_route_fanout()` skips `_query_self()` and fans out to mounts only
+- `_route_single()` returns a clean `"No mount found for path: {path}"` error when `_resolve_terminal` returns `self`
+
+This eliminates the need for subclass overrides — the base class handles both roles via the flag.
+
+#### `raise_on_error` flag on GroverFileSystem (`base.py`)
+
+`GroverFileSystem.__init__` gained `raise_on_error: bool = False`. When `True`, `_error()` raises a classified `GroverError` subclass instead of returning `GroverResult(success=False)`.
+
+`_error()` was changed from `@staticmethod` to an instance method and now accepts three input types:
+- `str` — creates `GroverResult(success=False, errors=[str])`, optionally raises
+- `list[str]` — creates `GroverResult(success=False, errors=list)`, optionally raises
+- `GroverResult` — passes through if successful, raises if failed and `raise_on_error=True`
+
+The third form handles the ~12 batch operations in `database.py` that accumulate errors across items and construct `GroverResult` directly. All batch result returns are now wrapped with `self._error(result)`.
+
+`add_mount()` propagates `_raise_on_error` to child filesystems, so the flag cascades through the mount tree.
+
+#### Exception hierarchy (`exceptions.py`)
+
+```
+GroverError(Exception)           — base, carries .result: GroverResult | None
+├── NotFoundError                — "Not found:", "Not a directory:"
+├── MountError                   — "No mount found"
+├── WriteConflictError           — "Already exists", "Cannot write", "Cannot delete"
+├── ValidationError              — "requires", "Invalid", "Duplicate", "Source not found"
+└── GraphError                   — "failed:" (graph algorithm errors)
+```
+
+`_classify_error(message, errors, result)` maps error message patterns to the appropriate subclass. Falls back to `GroverError` for unrecognized messages.
+
+#### GroverAsync (`client.py`)
+
+Thin subclass of `GroverFileSystem(storage=False)`:
+
+```python
+class GroverAsync(GroverFileSystem):
+    def __init__(self) -> None:
+        super().__init__(storage=False)
+```
+
+Rich `add_mount(name, *, filesystem=, engine=, session_factory=, engine_url=, ...)`:
+- Four configuration paths: `filesystem`, `engine`, `session_factory`, `engine_url`
+- `engine_url` auto-creates engine and tables (`create_tables=True` default)
+- Injects `embedding_provider` and `vector_store` onto `DatabaseFileSystem` mounts
+- Mount path: `normalize_path(f"/{name}")`
+
+Lifecycle: `remove_mount(name)` disposes engine, `close()` disposes all engines and clears mounts.
+
+#### Grover sync wrapper (`client.py`)
+
+Follows the v1 daemon thread + event loop + RLock pattern:
+
+```python
+class Grover:
+    def __init__(self) -> None:
+        self._async = GroverAsync()
+        self._async._raise_on_error = True  # propagates to all mounts
+```
+
+Since `raise_on_error=True` cascades to all mounted filesystems, errors raise inside the async code and propagate through `_run()`. No post-hoc checking needed.
+
+**Return types:**
+- Single-path ops (`read`, `write`, `edit`, `delete`, `stat`, `mkdir`, `mkconn`) return `Candidate` (unwrapped via `.file`)
+- Multi-result ops (search, graph, listing, move, copy) return `GroverResult` (set algebra preserved)
+- `cli` returns `str`, `parse_query` returns `QueryPlan`
+
+#### Key decisions
+
+**`storage` flag, not subclass override.** The base class `_route_fanout` and `_route_single` check `self._storage` directly. No overrides needed in `GroverAsync` — the flag makes the routing logic self-aware.
+
+**`raise_on_error` propagates via `add_mount`.** The flag is set on the router and cascades to children during mounting. This means `Grover` only sets it once on its internal `GroverAsync`, and all mounted `DatabaseFileSystem` instances inherit it automatically.
+
+**Overloaded `_error()` instead of a second method.** `_error(GroverResult)` checks an existing result and raises if needed. This keeps one integration point for all error paths — both the 40+ `self._error("message")` calls and the 12 batch `GroverResult` constructions.
+
+**`Grover.read()` returns `Candidate`, not `str`.** Pipelines often need metadata (path, kind, size) alongside content. `Candidate` provides both via `.content` and `.path`. Returning raw `str` would lose provenance.
+
+#### Test coverage
+
+77 new tests across two files:
+- `tests/test_client.py` — 31 tests: GroverAsync construction, mount lifecycle, routing, fanout, query engine, storage flag
+- `tests/test_grover_sync.py` — 46 tests: exception hierarchy, `_classify_error`, `raise_on_error` flag, Grover sync CRUD, error raising (`NotFoundError`, `MountError`, `WriteConflictError`), search/listing return types, set algebra, query engine
+
+1556 total tests (was 1468), all passing. 92% overall coverage. ruff and ty clean.

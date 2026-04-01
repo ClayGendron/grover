@@ -120,7 +120,8 @@ class TestSessionManagement:
 
 class TestError:
     def test_error_returns_failed_result(self):
-        r = GroverFileSystem._error("something broke")
+        fs = _FullRoutingFS()
+        r = fs._error("something broke")
         assert r.success is False
         assert r.errors == ["something broke"]
         assert r.candidates == []

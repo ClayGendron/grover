@@ -10,7 +10,7 @@ storage work, then rebase paths before returning.
 Subclasses override ``_*_impl`` for their storage backend:
 - ``DatabaseFileSystem`` — SQL via ``GroverObject``
 - ``LocalFileSystem`` — disk bytes + SQL metadata
-- ``AsyncGrover`` — no storage, mount-only router
+- ``GroverAsync`` — no storage, mount-only router (``storage=False``)
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from grover.exceptions import _classify_error
 from grover.paths import normalize_path
 from grover.results import Candidate, EditOperation, GroverResult, TwoPathOperation
 
@@ -39,22 +40,24 @@ class GroverFileSystem:
         *,
         engine: AsyncEngine | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        storage: bool = True,
+        raise_on_error: bool = False,
     ) -> None:
-        if engine is None and session_factory is None:
-            msg = "GroverFileSystem requires either engine or session_factory"
-            raise ValueError(msg)
+        self._storage = storage
+        self._raise_on_error = raise_on_error
         self._engine = engine
         if session_factory is not None:
-            self._session_factory = session_factory
-        else:
+            self._session_factory: async_sessionmaker[AsyncSession] | None = session_factory
+        elif engine is not None:
             self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        elif storage:
+            msg = "GroverFileSystem requires either engine or session_factory when storage=True"
+            raise ValueError(msg)
+        else:
+            self._session_factory = None
         self._mounts: dict[str, GroverFileSystem] = {}
         self._sorted_mount_paths: list[str] = []
         self._name = self.__class__.__name__
-        # TODO: load existing top-level directory paths from DB at init time
-        # and store as a set. add_mount() checks against this set to prevent
-        # mounting over paths that already have data (shadow prevention).
-        # AsyncGrover (no storage) skips this.
 
     # -------------------------------------------------------------------
     # mounts and routing
@@ -83,6 +86,7 @@ class GroverFileSystem:
         if path in self._mounts:
             msg = f"Mount already exists at: {path}"
             raise ValueError(msg)
+        filesystem._raise_on_error = self._raise_on_error
         self._mounts[path] = filesystem
         self._rebuild_sorted_mounts()
 
@@ -245,6 +249,9 @@ class GroverFileSystem:
         assert path is not None
         fs, rel, prefix = self._resolve_terminal(path)
 
+        if fs is self and not self._storage:
+            return self._error(f"No mount found for path: {path}")
+
         async with fs._use_session() as s:
             result = await getattr(fs, f"_{op}_impl")(rel, user_id=user_id, session=s, **kwargs)
 
@@ -376,9 +383,19 @@ class GroverFileSystem:
 
         With candidates: group by filesystem, dispatch in parallel.
         Without: query self + every mount in parallel, merge results.
+        When ``storage=False``, skips the self-query and fans out to mounts only.
         """
         if candidates is not None:
             return await self._dispatch_candidates(op, candidates, user_id=user_id, **kwargs)
+
+        if not self._storage:
+            if not self._mounts:
+                return GroverResult(success=True, candidates=[])
+            mount_results = await asyncio.gather(
+                *(getattr(fs, op)(user_id=user_id, **kwargs) for fs in self._mounts.values()),
+            )
+            rebased = [r.add_prefix(mp) for mp, r in zip(self._mounts, mount_results, strict=True)]
+            return self._merge_results(rebased)
 
         async def _query_self() -> GroverResult:
             async with self._use_session() as s:
@@ -458,6 +475,9 @@ class GroverFileSystem:
 
         Commits on success, rolls back on error.
         """
+        if self._session_factory is None:
+            msg = f"{self._name} has no session factory (storage=False)"
+            raise RuntimeError(msg)
         async with self._session_factory() as session:
             try:
                 yield session
@@ -470,10 +490,25 @@ class GroverFileSystem:
     # errors
     # -------------------------------------------------------------------
 
-    @staticmethod
-    def _error(errors: str | list[str]) -> GroverResult:
-        """Create a failed result."""
-        return GroverResult(success=False, errors=[errors] if isinstance(errors, str) else errors)
+    def _error(self, errors: str | list[str] | GroverResult) -> GroverResult:
+        """Create or check a failed result, raising if ``raise_on_error`` is set.
+
+        Accepts either:
+        - A string or list of strings → creates ``GroverResult(success=False)``
+        - An existing ``GroverResult`` → returns it as-is if successful,
+          raises if ``raise_on_error`` is set and ``success`` is ``False``
+        """
+        if isinstance(errors, GroverResult):
+            if errors.success or not self._raise_on_error:
+                return errors
+            result = errors
+        else:
+            error_list = [errors] if isinstance(errors, str) else errors
+            result = GroverResult(success=False, errors=error_list)
+            if not self._raise_on_error:
+                return result
+
+        raise _classify_error(result.error_message, result.errors, result)
 
     def parse_query(self, query: str) -> QueryPlan:
         """Parse a CLI-style query string into an execution plan."""
