@@ -4,6 +4,27 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.11] — 2026-04-02
+
+### Added
+
+- **v2 rewrite** — Complete rewrite of Grover around the "everything is a file" philosophy. New unified `grover_objects` table replaces the four separate tables (files, chunks, versions, connections). All entities are path-addressable with dot-prefixed metadata directories (`.chunks/`, `.versions/`, `.connections/`).
+- **`GroverFileSystem` base class** — Concrete async base class with mount routing, session management, and path rebasing. Subclasses override `_*_impl` methods for storage.
+- **`DatabaseFileSystem`** — Full SQL-backed implementation with CRUD, glob, grep, tree, versioning (snapshot + forward diffs), soft-delete, cascading operations, and LIKE wildcard escaping for path safety.
+- **CLI query engine** — Hand-rolled tokenizer, parser, AST, executor, and renderer. Unix-like pipeline syntax with `|`, `&`, `intersect()`, `except()`. Commands: `read`, `write`, `edit`, `rm`, `mv`, `cp`, `mkdir`, `mkconn`, `ls`, `tree`, `glob`, `grep`, `search`, `lsearch`, `vsearch`, graph traversal, and ranking.
+- **Graph algorithms** — All 10 graph algorithms implemented on `RustworkxGraph`: ancestors, descendants, neighborhood, meeting subgraph, min meeting subgraph, PageRank, betweenness/closeness/degree centrality, and HITS. Cross-validated against NetworkX at 10K nodes.
+- **BM25 lexical search** — Hand-rolled BM25 scorer with SQL-hybrid pipeline for `lexical_search`. No external dependencies.
+- **`EmbeddingProvider` and `VectorStore` protocols** — Pluggable embedding and vector search with `DatabricksVectorStore` and `LangChainEmbeddingProvider` implementations.
+- **User-scoped filesystem** — Per-user path-prefix isolation via `user_scoped=True` on `DatabaseFileSystem`. Strict scope/unscope at DB boundary.
+- **`GroverAsync` and `Grover` facades** — Async facade for app servers, sync wrapper for scripts and notebooks. `raise_on_error` flag with classified exception hierarchy (`NotFoundError`, `MountError`, `WriteConflictError`, `ValidationError`, `GraphError`).
+- **Composable result types** — `GroverResult` with `Candidate` and `Detail` objects. Set algebra (`&`, `|`, `-`), enrichment chains (`sort`, `top`, `filter`, `kinds`).
+
+### Changed
+
+- **README rewritten** — New README focused on the v2 direction with code-first examples, design principles, API table, and namespace diagram.
+- **Type checker upgraded** — Migrated from ty 0.0.16 to 0.0.27 with `# ty: ignore` inline comments replacing `# type: ignore`.
+- **BM25 comparison tests moved to scripts** — `test_bm25_comparison.py` (requires `rank_bm25`) moved to `scripts/bm25_comparison.py`. Replaced with standalone `test_bm25.py`.
+
 ## [0.0.10] — 2026-03-19
 
 ### Added

@@ -1,3 +1,5 @@
+__version__ = "0.0.11"
+
 from grover.client import Grover, GroverAsync
 from grover.exceptions import (
     GraphError,
