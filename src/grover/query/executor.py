@@ -197,6 +197,8 @@ async def _execute_stage(
                 raise ValueError("except requires piped input")
             other = await _execute_node(filesystem, query, None, user_id=user_id)
             return current - other
+        case _:  # pragma: no cover
+            raise ValueError(f"Unknown stage: {stage}")
 
 
 async def _read_like(
@@ -246,6 +248,8 @@ async def _execute_transfer(
             if op == "move":
                 return await filesystem.move(moves=ops, overwrite=overwrite, user_id=user_id)
             return await filesystem.copy(copies=ops, overwrite=overwrite, user_id=user_id)
+        case _:  # pragma: no cover
+            raise ValueError(f"Invalid arguments for {op}")
 
 
 async def _execute_mkconn(

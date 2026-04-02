@@ -694,6 +694,8 @@ def _planned_methods(node: QueryNode) -> tuple[str, ...]:
             return ("kinds",)
         case IntersectStage(query=query) | ExceptStage(query=query):
             return _planned_methods(query)
+        case _:  # pragma: no cover
+            raise ValueError(f"Unknown node type: {node}")
 
 
 def _render_mode(node: QueryNode) -> RenderMode:
@@ -742,3 +744,5 @@ def _render_mode(node: QueryNode) -> RenderMode:
             return "query_list"
         case IntersectStage() | ExceptStage():
             return "query_list"
+        case _:  # pragma: no cover
+            raise ValueError(f"Unknown node type: {node}")
