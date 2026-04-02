@@ -1948,3 +1948,60 @@ Since `raise_on_error=True` cascades to all mounted filesystems, errors raise in
 - `tests/test_grover_sync.py` — 46 tests: exception hierarchy, `_classify_error`, `raise_on_error` flag, Grover sync CRUD, error raising (`NotFoundError`, `MountError`, `WriteConflictError`), search/listing return types, set algebra, query engine
 
 1556 total tests (was 1468), all passing. 92% overall coverage. ruff and ty clean.
+
+### 14.16 Test coverage to 99% and CI enforcement — 2026-04-01
+
+Systematic coverage audit and gap closure, raising overall coverage from 91% to 99.11% (1779 tests, all passing).
+
+#### CI pipeline changes
+
+- `.github/workflows/test.yml`: Added `--cov --cov-report=term-missing --cov-fail-under=99` to the test step, gated to Python 3.13 only (avoids triple-counting across the matrix)
+- `pyproject.toml`: Added `fail_under = 99` to `[tool.coverage.report]` so local runs also enforce the threshold
+
+#### Dead code removal
+
+Removed unreachable defensive guards that duplicated guarantees from `normalize_path` / `posixpath.normpath`:
+
+- `base.py`: `startswith("/")` check after `normalize_path` (always adds leading `/`)
+- `paths.py`: Trailing slash strip after `normpath` (normpath already strips it), empty segment check after `normalize_path` (normpath collapses them)
+- `replace.py`: `lines_to_check <= 0` guard in `block_anchor_replacer` (anchor loop guarantees ≥3 lines)
+- `query/executor.py`: Unreachable `case _: raise AssertionError` match fallbacks in `_execute_stage` and `_execute_transfer` (exhaustive match over all AST node types)
+- `query/parser.py`: Unreachable `case _: raise AssertionError` match fallbacks in `_planned_methods` and `_render_mode`
+
+#### New test files (4)
+
+- `tests/test_query_parser.py` — 67 tests: tokenizer (quoted strings, escapes, unterminated, pipe/amp/paren tokens), parser syntax (empty query, unexpected tokens, grouped expressions, intersect/except subqueries), all builder commands (stat, delete, edit, write, mkdir, move, copy, mkconn, glob, grep, search, lsearch, vsearch, meetinggraph, graph traversal, sort, top, kinds), visibility/overwrite/kind-name parsing, flag splitting edge cases, `_render_mode` for every AST node type
+- `tests/test_query_executor.py` — 48 tests: every `_execute_stage` branch (stat, delete, edit, write, mkdir, move, copy, mkconn, ls, tree, glob, grep, semantic/vector/lexical search, graph traversal, meeting graph, rank, sort, top, kinds, intersect, except), transfer with piped empty/non-empty candidates, visibility filtering, grep reading non-file candidates, union node merging
+- `tests/test_query_render.py` — 16 tests: every render mode (content, action, stat, query_list, ls, tree), error rendering, multi-file content headers, all action verbs, ranked vs unranked list, stat metadata fields, unhandled mode assertion
+- `tests/test_databricks_store.py` — 4 tests: ImportError guard when SDK missing, user_id filter injection, connect with host/token kwargs
+
+#### Extended test files (8)
+
+- `tests/test_embedding.py` — `_HAS_LANGCHAIN=False` ImportError guard
+- `tests/test_patterns.py` — `compile_glob`/`match_glob` on invalid regex (`[z-a]`)
+- `tests/test_base.py` — empty write batch, edit/move/copy without required args
+- `tests/test_bm25_comparison.py` — BM25Scorer edge cases: empty IDF, zero-length doc, empty query terms, mismatched lengths, BM25Index with empty documents
+- `tests/test_graph.py` — user-scoped neighborhood/meeting_subgraph, min_meeting_subgraph pruning and error handling
+- `tests/test_grover_sync.py` — move, copy, mkconn, all graph methods (predecessors through hits), lexical_search, semantic/vector search error paths
+- `tests/test_models.py` — `_stored_version_payload` error paths, `_reconstruct_file_version` (missing snapshot/version/hash mismatch), plan_file_write on directory, update_content on directory, null bytes in version_diff, both content+version_diff rejected, explicit content_hash
+- `tests/test_client.py` — vector_store injection on existing filesystem
+
+#### Coverage by module
+
+| Module | Before | After |
+|--------|--------|-------|
+| `query/render.py` | 63% | 100% |
+| `query/executor.py` | 65% | 99% |
+| `query/parser.py` | 70% | 99% |
+| `models.py` | 83% | 98% |
+| `client.py` | 85% | 100% |
+| `bm25.py` | 92% | 100% |
+| `databricks_store.py` | 93% | 100% |
+| `patterns.py` | 96% | 100% |
+| `base.py` | 98% | 100% |
+| `paths.py` | 99% | 100% |
+| `replace.py` | 99% | 100% |
+| `embedding.py` | 97% | 100% |
+| **TOTAL** | **91%** | **99.11%** |
+
+1779 total tests (was 1556), all passing. 99.11% coverage. ruff clean.
