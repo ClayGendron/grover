@@ -179,9 +179,6 @@ def block_anchor_replacer(content: str, find: str) -> Generator[Match]:
         find_block_size = len(find_lines)
         lines_to_check = min(find_block_size - 2, actual_block_size - 2)
 
-        if lines_to_check <= 0:
-            return 1.0
-
         total_similarity = 0.0
         for j in range(1, min(find_block_size - 1, actual_block_size - 1)):
             content_line = content_lines[start_line + j].strip()

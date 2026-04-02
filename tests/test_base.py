@@ -887,3 +887,34 @@ class TestPublicGraphAlgorithms:
         paths = {c.path for c in result.candidates}
         assert "/local.py" in paths
         assert "/data/remote.py" in paths
+
+
+# ===========================================================================
+# Edge cases — empty/missing args
+# ===========================================================================
+
+
+class TestEdgeCaseMissingArgs:
+    async def test_route_write_batch_empty(self):
+        fs = _FullRoutingFS()
+        result = await fs._route_write_batch([], overwrite=True)
+        assert result.success is True
+        assert result.candidates == []
+
+    async def test_edit_without_old_new_returns_error(self):
+        fs = _FullRoutingFS()
+        result = await fs.edit(path="/a.py")
+        assert result.success is False
+        assert "edit requires" in result.errors[0]
+
+    async def test_move_without_src_dest_returns_error(self):
+        fs = _FullRoutingFS()
+        result = await fs.move()
+        assert result.success is False
+        assert "move requires" in result.errors[0]
+
+    async def test_copy_without_src_dest_returns_error(self):
+        fs = _FullRoutingFS()
+        result = await fs.copy()
+        assert result.success is False
+        assert "copy requires" in result.errors[0]

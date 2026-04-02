@@ -166,8 +166,6 @@ def normalize_path(path: str) -> str:
     if not path.startswith("/"):
         path = "/" + path
     path = posixpath.normpath(path)
-    if path != "/" and path.endswith("/"):
-        path = path[:-1]
     return path
 
 
@@ -221,9 +219,6 @@ def validate_path(path: str) -> tuple[bool, str]:
     segments = normalized.split("/")[1:]
 
     for segment in segments:
-        if not segment:
-            return False, "Path contains empty segment"
-
         if len(segment) > 255:
             return False, f"Path segment too long (max 255): '{segment[:40]}...'"
 

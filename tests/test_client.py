@@ -239,6 +239,21 @@ class TestGroverAsyncProviderInjection:
         finally:
             await g.close()
 
+    async def test_vector_store_injected_on_existing_filesystem(self):
+        from unittest.mock import MagicMock
+
+        engine = await _sqlite_engine()
+        fs = DatabaseFileSystem(engine=engine)
+        assert fs._vector_store is None
+
+        vs = MagicMock()
+        g = GroverAsync()
+        await g.add_mount("data", filesystem=fs, vector_store=vs)
+        try:
+            assert fs._vector_store is vs
+        finally:
+            await g.close()
+
     async def test_existing_providers_not_overwritten(self):
         from unittest.mock import MagicMock
 

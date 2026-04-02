@@ -135,6 +135,7 @@ source = ["src/grover"]
 omit = ["tests/*", "src_old/*", "tests_old/*"]
 
 [tool.coverage.report]
+fail_under = 99
 show_missing = true
 skip_empty = true
 exclude_lines = [

@@ -80,9 +80,6 @@ class GroverFileSystem:
         if path == "/":
             msg = "Cannot mount at '/': the filesystem owns its own root"
             raise ValueError(msg)
-        if not path.startswith("/"):
-            msg = f"Mount path must be absolute: {path}"
-            raise ValueError(msg)
         if path in self._mounts:
             msg = f"Mount already exists at: {path}"
             raise ValueError(msg)

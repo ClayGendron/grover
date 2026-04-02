@@ -200,3 +200,12 @@ def test_explicit_model_name():
 def test_rejects_non_embeddings_instance():
     with pytest.raises(TypeError, match="must be a langchain_core"):
         LangChainEmbeddingProvider("not an embeddings")  # type: ignore[arg-type]
+
+
+def test_import_error_when_langchain_missing(monkeypatch: pytest.MonkeyPatch):
+    """LangChainEmbeddingProvider raises ImportError when langchain-core is absent."""
+    import grover.embedding as mod
+
+    monkeypatch.setattr(mod, "_HAS_LANGCHAIN", False)
+    with pytest.raises(ImportError, match="langchain-core is required"):
+        LangChainEmbeddingProvider(MockEmbeddings())  # type: ignore[arg-type]

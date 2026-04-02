@@ -915,3 +915,20 @@ def _like_to_regex(like: str) -> re.Pattern[str]:
             result += re.escape(ch)
         i += 1
     return re.compile("^" + result + "$")
+
+
+# ===========================================================================
+# compile_glob / match_glob — invalid regex fallback
+# ===========================================================================
+
+
+class TestInvalidGlobPattern:
+    def test_compile_glob_returns_none_on_bad_regex(self):
+        from grover.patterns import compile_glob
+
+        assert compile_glob("[z-a]") is None
+
+    def test_match_glob_returns_false_on_bad_regex(self):
+        from grover.patterns import match_glob
+
+        assert match_glob("/a.py", "[z-a]") is False

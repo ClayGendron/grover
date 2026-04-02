@@ -1412,6 +1412,80 @@ class TestHits:
 # ===========================================================================
 
 
+class TestNeighborhoodUserScoped:
+    async def test_user_scoped_filters_snap_in(self):
+        """Line 524-525: neighborhood builds filtered snap_in when user_scoped."""
+        g = RustworkxGraph(model=GroverObject, user_scoped=True)
+        g._loaded_at = time.monotonic()
+        # User-scoped: only paths under /alice/ are visible to user_id="alice"
+        await g.add_edge("/alice/a.py", "/alice/b.py", "imports", session=_mock_session)
+        await g.add_edge("/bob/c.py", "/alice/b.py", "calls", session=_mock_session)
+
+        result = await g.neighborhood(
+            _result("/alice/a.py"), depth=2, user_id="alice", session=_mock_session,
+        )
+        paths = {c.path for c in result.candidates}
+        assert "/alice/b.py" in paths
+        # /bob/c.py is not visible to alice
+        assert "/bob/c.py" not in paths
+
+
+class TestMeetingSubgraphUserScoped:
+    async def test_user_scoped_filters_edges_in(self):
+        """Line 583-584: meeting_subgraph builds filtered edges_in when user_scoped."""
+        g = RustworkxGraph(model=GroverObject, user_scoped=True)
+        g._loaded_at = time.monotonic()
+        await g.add_edge("/alice/a.py", "/alice/mid.py", "imports", session=_mock_session)
+        await g.add_edge("/alice/mid.py", "/alice/b.py", "calls", session=_mock_session)
+
+        result = await g.meeting_subgraph(
+            _result("/alice/a.py", "/alice/b.py"), user_id="alice", session=_mock_session,
+        )
+        assert result.success is True
+        paths = {c.path for c in result.candidates}
+        assert "/alice/a.py" in paths
+        assert "/alice/b.py" in paths
+
+
+class TestMinMeetingSubgraphPruning:
+    async def test_removes_non_seed_non_articulation_nodes(self):
+        """Lines 778-784: _min_meeting_impl prunes removable intermediary nodes."""
+        g = _loaded_graph()
+        # A → X → B, and A → B directly. X is not a seed and not an
+        # articulation point (there's a direct A→B path), so it should be pruned.
+        await g.add_edge("/a.py", "/x.py", "imports", session=_mock_session)
+        await g.add_edge("/x.py", "/b.py", "calls", session=_mock_session)
+        await g.add_edge("/a.py", "/b.py", "uses", session=_mock_session)
+
+        result = await g.min_meeting_subgraph(
+            _result("/a.py", "/b.py"), session=_mock_session,
+        )
+        assert result.success is True
+        paths = {c.path for c in result.candidates}
+        assert "/a.py" in paths
+        assert "/b.py" in paths
+        # X should be pruned since it's not an articulation point
+        assert "/x.py" not in paths
+
+    async def test_error_handling(self):
+        """Lines 739-740: exception returns error result."""
+        from unittest.mock import patch
+
+        g = _loaded_graph()
+        await g.add_edge("/a.py", "/mid.py", "imports", session=_mock_session)
+        await g.add_edge("/mid.py", "/b.py", "calls", session=_mock_session)
+
+        # Patch _min_meeting_impl to raise, simulating an internal error
+        with patch.object(
+            RustworkxGraph, "_min_meeting_impl", side_effect=RuntimeError("boom"),
+        ):
+            result = await g.min_meeting_subgraph(
+                _result("/a.py", "/b.py"), session=_mock_session,
+            )
+        assert result.success is False
+        assert "min_meeting_subgraph failed" in result.errors[0]
+
+
 class TestProtocol:
     def test_exports(self):
         """GraphProvider and RustworkxGraph are importable from grover.graph."""

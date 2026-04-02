@@ -357,3 +357,129 @@ class TestGroverQuery:
     def test_parse_query(self, g: Grover):
         plan = g.parse_query('glob "**/*.py"')
         assert plan is not None
+
+
+# ==================================================================
+# Grover sync wrapper — move, copy, mkconn
+# ==================================================================
+
+
+class TestGroverTransferOps:
+    def test_move_returns_grover_result(self, g: Grover):
+        g.write("/data/src.txt", "content")
+        result = g.move("/data/src.txt", "/data/dst.txt")
+        assert isinstance(result, GroverResult)
+        assert result.success
+        with pytest.raises(NotFoundError):
+            g.read("/data/src.txt")
+
+    def test_copy_returns_grover_result(self, g: Grover):
+        g.write("/data/orig.txt", "content")
+        result = g.copy("/data/orig.txt", "/data/dup.txt")
+        assert isinstance(result, GroverResult)
+        assert result.success
+        assert g.read("/data/orig.txt").content == "content"
+        assert g.read("/data/dup.txt").content == "content"
+
+    def test_mkconn_returns_candidate(self, g: Grover):
+        from grover.results import Candidate
+
+        g.write("/data/a.py", "import b")
+        g.write("/data/b.py", "class B: ...")
+        c = g.mkconn("/data/a.py", "/data/b.py", "imports")
+        assert isinstance(c, Candidate)
+
+
+# ==================================================================
+# Grover sync wrapper — graph operations
+# ==================================================================
+
+
+class TestGroverGraph:
+    @pytest.fixture(autouse=True)
+    def _setup_graph(self, g: Grover):
+        g.write("/data/a.py", "x")
+        g.write("/data/b.py", "y")
+        g.write("/data/c.py", "z")
+        g.mkconn("/data/a.py", "/data/b.py", "imports")
+        g.mkconn("/data/b.py", "/data/c.py", "calls")
+
+    def test_predecessors(self, g: Grover):
+        result = g.predecessors("/data/b.py")
+        assert isinstance(result, GroverResult)
+
+    def test_successors(self, g: Grover):
+        result = g.successors("/data/a.py")
+        assert isinstance(result, GroverResult)
+
+    def test_ancestors(self, g: Grover):
+        result = g.ancestors("/data/c.py")
+        assert isinstance(result, GroverResult)
+
+    def test_descendants(self, g: Grover):
+        result = g.descendants("/data/a.py")
+        assert isinstance(result, GroverResult)
+
+    def test_neighborhood(self, g: Grover):
+        result = g.neighborhood("/data/b.py")
+        assert isinstance(result, GroverResult)
+
+    def test_meeting_subgraph(self, g: Grover):
+        seeds = g.glob("**/*.py")
+        result = g.meeting_subgraph(seeds)
+        assert isinstance(result, GroverResult)
+
+    def test_min_meeting_subgraph(self, g: Grover):
+        seeds = g.glob("**/*.py")
+        result = g.min_meeting_subgraph(seeds)
+        assert isinstance(result, GroverResult)
+
+    def test_pagerank(self, g: Grover):
+        result = g.pagerank()
+        assert isinstance(result, GroverResult)
+
+    def test_betweenness_centrality(self, g: Grover):
+        result = g.betweenness_centrality()
+        assert isinstance(result, GroverResult)
+
+    def test_closeness_centrality(self, g: Grover):
+        result = g.closeness_centrality()
+        assert isinstance(result, GroverResult)
+
+    def test_degree_centrality(self, g: Grover):
+        result = g.degree_centrality()
+        assert isinstance(result, GroverResult)
+
+    def test_in_degree_centrality(self, g: Grover):
+        result = g.in_degree_centrality()
+        assert isinstance(result, GroverResult)
+
+    def test_out_degree_centrality(self, g: Grover):
+        result = g.out_degree_centrality()
+        assert isinstance(result, GroverResult)
+
+    def test_hits(self, g: Grover):
+        result = g.hits()
+        assert isinstance(result, GroverResult)
+
+
+# ==================================================================
+# Grover sync wrapper — search methods (without embedding provider)
+# ==================================================================
+
+
+class TestGroverSearchMethods:
+    def test_lexical_search(self, g: Grover):
+        g.write("/data/test.txt", "the quick brown fox")
+        result = g.lexical_search("quick fox")
+        assert isinstance(result, GroverResult)
+
+    def test_semantic_search_raises_without_provider(self, g: Grover):
+        g.write("/data/test.txt", "content")
+        with pytest.raises(GroverError):
+            g.semantic_search("test query")
+
+    def test_vector_search_raises_without_provider(self, g: Grover):
+        g.write("/data/test.txt", "content")
+        with pytest.raises(GroverError):
+            g.vector_search([0.1, 0.2, 0.3])

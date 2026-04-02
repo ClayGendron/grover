@@ -694,8 +694,6 @@ def _planned_methods(node: QueryNode) -> tuple[str, ...]:
             return ("kinds",)
         case IntersectStage(query=query) | ExceptStage(query=query):
             return _planned_methods(query)
-        case _:
-            raise AssertionError(f"Unhandled query node: {node!r}")
 
 
 def _render_mode(node: QueryNode) -> RenderMode:
@@ -744,5 +742,3 @@ def _render_mode(node: QueryNode) -> RenderMode:
             return "query_list"
         case IntersectStage() | ExceptStage():
             return "query_list"
-        case _:
-            raise AssertionError(f"Unhandled query node: {node!r}")

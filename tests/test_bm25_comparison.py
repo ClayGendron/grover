@@ -398,3 +398,60 @@ class TestCorpusStats:
         for query in QUERIES:
             results = handrolled_bm25_search(flask_corpus, query, k=5)
             assert len(results) > 0, f"No results for query: {query!r}"
+
+
+# ===========================================================================
+# BM25Scorer / BM25Index edge cases
+# ===========================================================================
+
+
+class TestBM25EdgeCases:
+    def test_set_idf_empty_doc_freqs(self):
+        scorer = BM25Scorer(corpus_size=5, avg_doc_length=10.0)
+        scorer.set_idf({})
+        assert scorer._average_idf == 0.0
+
+    def test_score_batch_empty_query_terms(self):
+        """Empty query_terms → prepared_terms is empty → all zeros (line 306)."""
+        scorer = BM25Scorer(corpus_size=1, avg_doc_length=5.0)
+        scorer.set_idf({"hello": 1})
+        scores = scorer.score_batch([], [["hello", "world"]])
+        assert scores == [0.0]
+
+    def test_score_batch_empty_document(self):
+        scorer = BM25Scorer(corpus_size=2, avg_doc_length=3.0)
+        scorer.set_idf({"hello": 1})
+        scores = scorer.score_batch(["hello"], [[], ["hello"]])
+        assert scores[0] == 0.0
+        assert scores[1] > 0.0
+
+    def test_score_batch_term_frequencies_mismatched_lengths(self):
+        scorer = BM25Scorer(corpus_size=1, avg_doc_length=5.0)
+        scorer.set_idf({"a": 1})
+        with pytest.raises(ValueError, match="same length"):
+            scorer.score_batch_term_frequencies(["a"], [{"a": 1}], [])
+
+    def test_score_batch_term_frequencies_empty_query(self):
+        """Empty query → prepared_terms is empty → all zeros (line 344)."""
+        scorer = BM25Scorer(corpus_size=1, avg_doc_length=5.0)
+        scorer.set_idf({"hello": 1})
+        scores = scorer.score_batch_term_frequencies([], [{"hello": 1}], [5])
+        assert scores == [0.0]
+
+    def test_score_term_frequencies_zero_doc_length(self):
+        """doc_length=0 returns 0.0 (line 238)."""
+        scorer = BM25Scorer(corpus_size=1, avg_doc_length=5.0)
+        scorer.set_idf({"hello": 1})
+        prepared, _, _ = scorer._prepare_query_terms(["hello"])
+        score = scorer._score_term_frequencies(prepared, {"hello": 1}, 0)
+        assert score == 0.0
+
+    def test_index_with_empty_document(self):
+        index = BM25Index([[], ["hello", "world"]])
+        assert index.corpus_size == 2
+
+    def test_score_sparse_empty_query(self):
+        """Empty query → prepared_terms is empty → empty dict (line 422)."""
+        index = BM25Index([["hello", "world"]])
+        result = index.score_sparse([])
+        assert result == {}
