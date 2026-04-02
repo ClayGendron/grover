@@ -461,3 +461,18 @@ class TestParserEdgeCases:
         """Lines 595-596: _parse_int with non-integer."""
         with pytest.raises(QuerySyntaxError, match="requires an integer"):
             parse_query("top abc")
+
+
+# ===========================================================================
+# Coverage: line 706 — PipelineNode with no stages
+# ===========================================================================
+
+
+class TestRenderModePipelineNoStages:
+    def test_pipeline_no_stages_uses_source_mode(self):
+        """Line 706: PipelineNode with empty stages recurses to source render mode."""
+        from grover.query.ast import PipelineNode, ReadCommand
+        from grover.query.parser import _render_mode
+
+        node = PipelineNode(source=ReadCommand(paths=("/a.py",)), stages=())
+        assert _render_mode(node) == "content"

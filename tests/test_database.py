@@ -2130,3 +2130,238 @@ class TestLikeWildcardSafety:
         async with db._use_session() as s:
             obj = await db._get_object("/caller.py/.connections/imports/lib/100other/x.py", s)
         assert obj is not None
+
+
+# ------------------------------------------------------------------
+# Part 14: Coverage gap tests
+# ------------------------------------------------------------------
+
+
+class TestRequireUserIdInvalid:
+    async def test_invalid_user_id_raises(self, engine):
+        """database.py:143 — invalid user_id triggers ValueError."""
+        db = DatabaseFileSystem(engine=engine, user_scoped=True)
+        with pytest.raises(ValueError, match="Invalid user_id"):
+            async with db._use_session() as s:
+                await db._read_impl("/a.py", user_id="user/bad", session=s)
+
+
+class TestEstimateAverageIdfEmpty:
+    def test_empty_vocab_returns_none(self):
+        """database.py:219 — empty candidate_vocab_doc_freqs returns None."""
+        result = DatabaseFileSystem._estimate_average_idf({}, corpus_size=100)
+        assert result is None
+
+
+class TestChunkPathsEmpty:
+    async def test_empty_paths_returns_empty(self, db: DatabaseFileSystem):
+        """database.py:188 — empty paths list returns []."""
+        async with db._use_session() as s:
+            result = db._chunk_paths(s, [], binds_per_item=1)
+        assert result == []
+
+
+class TestUpdateContentPath:
+    async def test_overwrite_chunk_uses_update_content(self, db: DatabaseFileSystem):
+        """database.py:628 — overwriting a chunk takes the update_content path."""
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "full content", session=s)
+            await db._write_impl("/src/auth.py/.chunks/login", "def login():", session=s)
+        async with db._use_session() as s:
+            r = await db._write_impl("/src/auth.py/.chunks/login", "def login(): pass", session=s)
+        assert r.success
+        assert r.content == "def login(): pass"
+
+
+class TestReadErrorPaths:
+    async def test_read_no_path_no_candidates(self, db: DatabaseFileSystem):
+        """database.py:705 — read with neither returns error."""
+        async with db._use_session() as s:
+            r = await db._read_impl(session=s)
+        assert not r.success
+
+    async def test_read_both_path_and_candidates(self, db: DatabaseFileSystem):
+        """database.py:708 — read with both returns error."""
+        async with db._use_session() as s:
+            r = await db._read_impl(
+                path="/a.py",
+                candidates=GroverResult(candidates=[Candidate(path="/b.py")]),
+                session=s,
+            )
+        assert not r.success
+
+    async def test_read_empty_candidates(self, db: DatabaseFileSystem):
+        """database.py:713 — read with empty candidates returns empty."""
+        async with db._use_session() as s:
+            r = await db._read_impl(
+                candidates=GroverResult(candidates=[]),
+                session=s,
+            )
+        assert r.success
+        assert len(r.candidates) == 0
+
+
+class TestWriteErrorPaths:
+    async def test_write_both_path_and_objects(self, db: DatabaseFileSystem):
+        """database.py:817 — write with both path and objects returns error."""
+        obj = GroverObjectBase(path="/a.py", content="code")
+        async with db._use_session() as s:
+            r = await db._write_impl(path="/a.py", objects=[obj], session=s)
+        assert not r.success
+
+
+class TestLsErrorPaths:
+    async def test_ls_no_path_no_candidates(self, db: DatabaseFileSystem):
+        """database.py:976 — ls with neither returns error."""
+        async with db._use_session() as s:
+            r = await db._ls_impl(session=s)
+        assert not r.success
+
+    async def test_ls_both_path_and_candidates(self, db: DatabaseFileSystem):
+        """database.py:982 (line 979 branch) — ls with both returns error."""
+        async with db._use_session() as s:
+            r = await db._ls_impl(
+                path="/src",
+                candidates=GroverResult(candidates=[Candidate(path="/other")]),
+                session=s,
+            )
+        assert not r.success
+
+    async def test_ls_empty_candidates(self, db: DatabaseFileSystem):
+        """database.py:982 — ls with empty candidates returns empty."""
+        async with db._use_session() as s:
+            r = await db._ls_impl(
+                candidates=GroverResult(candidates=[]),
+                session=s,
+            )
+        assert r.success
+        assert len(r.candidates) == 0
+
+
+class TestLsFilterMetadataKinds:
+    async def test_ls_skips_non_file_directory_children(self, db: DatabaseFileSystem):
+        """database.py:1024 — ls filters out children with non-file/directory kinds.
+
+        Insert a chunk directly under a directory. Its parent_path matches the
+        directory, but kind='chunk', so the ls filter skips it.
+        """
+        async with db._use_session() as s:
+            await db._write_impl("/src/auth.py", "code", session=s)
+            # Insert a chunk whose parent_path == /src (normally chunks live
+            # under files, but this exercises the filter guard).
+            chunk = GroverObject(path="/src/.chunks/login", content="chunk body")
+            s.add(chunk)
+            await s.flush()
+        async with db._use_session() as s:
+            r = await db._ls_impl("/src", session=s)
+        assert r.success
+        kinds = {c.kind for c in r.candidates}
+        # Only file and directory kinds should be present; chunk filtered out
+        assert kinds <= {"file", "directory"}
+
+
+class TestDeleteErrorPaths:
+    async def test_delete_no_path_no_candidates(self, db: DatabaseFileSystem):
+        """database.py:1053 — delete with neither returns error."""
+        async with db._use_session() as s:
+            r = await db._delete_impl(session=s)
+        assert not r.success
+
+    async def test_delete_both_path_and_candidates(self, db: DatabaseFileSystem):
+        """database.py:1060 (line 1056 branch) — delete with both returns error."""
+        async with db._use_session() as s:
+            r = await db._delete_impl(
+                path="/a.py",
+                candidates=GroverResult(candidates=[Candidate(path="/b.py")]),
+                session=s,
+            )
+        assert not r.success
+
+    async def test_delete_empty_candidates(self, db: DatabaseFileSystem):
+        """database.py:1060 — delete with empty candidates returns empty."""
+        async with db._use_session() as s:
+            r = await db._delete_impl(
+                candidates=GroverResult(candidates=[]),
+                session=s,
+            )
+        assert r.success
+        assert len(r.candidates) == 0
+
+
+class TestEditImplErrors:
+    async def test_edit_empty_edits(self, db: DatabaseFileSystem):
+        """database.py:1232 — edit with no edits returns error."""
+        async with db._use_session() as s:
+            await db._write_impl("/a.py", "hello", session=s)
+        async with db._use_session() as s:
+            r = await db._edit_impl(path="/a.py", edits=[], session=s)
+        assert not r.success
+        assert "at least one" in r.error_message
+
+    async def test_edit_file_with_no_content(self, db: DatabaseFileSystem):
+        """database.py:1244-1245 — editing a directory (no content) reports error."""
+        async with db._use_session() as s:
+            await db._mkdir_impl("/src", session=s)
+        async with db._use_session() as s:
+            r = await db._edit_impl(
+                path="/src",
+                edits=[EditOperation(old="x", new="y")],
+                session=s,
+            )
+        # Directory has no content — should error
+        assert not r.success or any("No content" in e or "Not found" in e for e in r.errors)
+
+
+class TestCopyImplErrors:
+    async def test_copy_empty_ops(self, db: DatabaseFileSystem):
+        """database.py:1293 — copy with no ops returns error."""
+        async with db._use_session() as s:
+            r = await db._copy_impl(ops=[], session=s)
+        assert not r.success
+        assert "at least one" in r.error_message
+
+
+class TestMoveImplErrors:
+    async def test_move_empty_ops(self, db: DatabaseFileSystem):
+        """database.py:1352 — move with no ops returns error."""
+        async with db._use_session() as s:
+            r = await db._move_impl(ops=[], session=s)
+        assert not r.success
+        assert "at least one" in r.error_message
+
+
+class TestVectorSearchNoVector:
+    async def test_no_vector_returns_error(self, engine):
+        """database.py:1650 — vector_search with vector=None returns error.
+
+        A mock vector store is required so we pass the 'requires a vector store'
+        guard and reach the 'requires a vector' guard at line 1650.
+        """
+        from unittest.mock import AsyncMock
+
+        mock_store = AsyncMock()
+        db = DatabaseFileSystem(engine=engine, vector_store=mock_store)
+        async with db._use_session() as s:
+            r = await db._vector_search_impl(vector=None, session=s)
+        assert not r.success
+        assert "requires a vector" in r.error_message
+
+
+class TestTreeEmptyPath:
+    async def test_empty_path_defaults_to_root(self, db: DatabaseFileSystem):
+        """database.py:1772 — empty string path defaults to root."""
+        async with db._use_session() as s:
+            await db._write_impl("/top.py", "code", session=s)
+        async with db._use_session() as s:
+            r = await db._tree_impl("", session=s)
+        assert r.success
+        assert "/top.py" in r.paths
+
+
+class TestGlobEmptyPattern:
+    async def test_empty_pattern_returns_error(self, db: DatabaseFileSystem):
+        """database.py:1474 — glob with empty pattern returns error."""
+        async with db._use_session() as s:
+            r = await db._glob_impl("", session=s)
+        assert not r.success
+        assert "glob requires a pattern" in r.error_message

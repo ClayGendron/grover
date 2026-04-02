@@ -1511,6 +1511,73 @@ class TestMinMeetingSubgraphPruning:
         assert "min_meeting_subgraph failed" in result.errors[0]
 
 
+class TestStripLeavesDirect:
+    """Direct tests for _strip_leaves static method (line 687)."""
+
+    def test_duplicate_node_in_queue_skips(self):
+        """Line 687: node already in removed set is skipped on second pop.
+
+        Graph: F→E, with protected={A}. E and F are both leaves:
+        - E has no succs → queued initially
+        - F has no preds → queued initially
+        When F is removed, E loses its only pred and gets re-queued.
+        E is then popped for the second time and hits the 'already removed'
+        continue on line 687.
+        """
+        kept = {"A", "E", "F"}
+        edges_out: dict[str, frozenset[str]] = {
+            "F": frozenset({"E"}),
+        }
+        edges_in: dict[str, frozenset[str]] = {
+            "E": frozenset({"F"}),
+        }
+        protected = {"A"}
+        result = RustworkxGraph._strip_leaves(kept, edges_out, edges_in, protected)
+        # Only A should survive — E and F are stripped
+        assert result == {"A"}
+
+    def test_strip_leaves_all_protected(self):
+        """All nodes are protected — nothing removed."""
+        kept = {"A", "B"}
+        edges_out: dict[str, frozenset[str]] = {"A": frozenset({"B"})}
+        edges_in: dict[str, frozenset[str]] = {"B": frozenset({"A"})}
+        protected = {"A", "B"}
+        result = RustworkxGraph._strip_leaves(kept, edges_out, edges_in, protected)
+        assert result == {"A", "B"}
+
+
+class TestMinMeetingImplDirect:
+    """Direct tests for _min_meeting_impl static method (lines 781-787)."""
+
+    def test_prunes_non_seed_non_articulation(self):
+        """Lines 781-787: removes a non-seed, non-articulation-point node.
+
+        A → X → B, A → B — X is removable.
+        """
+        node_set = {"/a.py", "/x.py", "/b.py"}
+        edges_out: dict[str, set[str]] = {
+            "/a.py": {"/x.py", "/b.py"},
+            "/x.py": {"/b.py"},
+        }
+        candidate_paths = {"/a.py", "/b.py"}
+        edge_types: dict[tuple[str, str], str] = {
+            ("/a.py", "/x.py"): "imports",
+            ("/x.py", "/b.py"): "calls",
+            ("/a.py", "/b.py"): "uses",
+        }
+        result = RustworkxGraph._min_meeting_impl(
+            node_set,
+            edges_out,
+            candidate_paths,
+            edge_types,
+        )
+        assert result.success
+        node_paths = {c.path for c in result.candidates if "/.connections/" not in c.path}
+        assert "/a.py" in node_paths
+        assert "/b.py" in node_paths
+        assert "/x.py" not in node_paths
+
+
 class TestProtocol:
     def test_exports(self):
         """GraphProvider and RustworkxGraph are importable from grover.graph."""

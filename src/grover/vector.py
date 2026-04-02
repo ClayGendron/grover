@@ -52,7 +52,7 @@ class Vector(list[float]):
     _dimension: int | None = None
     _model_name: str | None = None
 
-    def __class_getitem__(cls, params: int | str | tuple[int, str]) -> type[Vector]:  # type: ignore[override]
+    def __class_getitem__(cls, params: int | str | tuple[int, str]) -> type[Vector]:  # ty: ignore[invalid-method-override]
         """Create a dimension/model-specific Vector subclass."""
         if isinstance(params, int):
             name, attrs = f"Vector[{params}]", {"_dimension": params, "_model_name": None}
@@ -111,7 +111,7 @@ class Vector(list[float]):
         if isinstance(value, Vector):
             return cls(list(value))
         if isinstance(value, list):
-            return cls(value)  # type: ignore[arg-type]
+            return cls(value)  # ty: ignore[invalid-argument-type]
         msg = f"Expected list or Vector, got {type(value)}"
         raise ValueError(msg)
 

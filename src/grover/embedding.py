@@ -25,7 +25,7 @@ try:
 
     _HAS_LANGCHAIN = True
 except ImportError:  # pragma: no cover
-    _LCEmbeddings = None  # type: ignore[assignment,misc]
+    _LCEmbeddings = None  # ty: ignore[invalid-assignment]
     _HAS_LANGCHAIN = False
 
 

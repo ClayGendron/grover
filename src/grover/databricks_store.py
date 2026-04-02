@@ -21,7 +21,7 @@ try:
 
     _HAS_DATABRICKS = True
 except ImportError:  # pragma: no cover
-    VectorSearchClient = None  # type: ignore[assignment,misc]
+    VectorSearchClient = None  # ty: ignore[invalid-assignment]
     _HAS_DATABRICKS = False
 
 _UPSERT_BATCH_SIZE = 1000

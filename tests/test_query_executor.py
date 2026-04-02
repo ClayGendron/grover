@@ -34,7 +34,7 @@ from grover.query.ast import (
     Visibility,
     WriteCommand,
 )
-from grover.query.executor import _apply_visibility, execute_query
+from grover.query.executor import _apply_visibility, _preserve_under_root, execute_query
 from grover.results import Candidate, GroverResult
 
 # ===========================================================================
@@ -752,3 +752,30 @@ class TestGrepNonFileRead:
         )
         await execute_query(fs, _plan(node))
         fs.read.assert_called_once()
+
+
+# ===========================================================================
+# Coverage: line 111 — edit with explicit paths (no pipe)
+# ===========================================================================
+
+
+class TestEditExplicitPaths:
+    async def test_edit_with_explicit_paths_no_pipe(self):
+        """Line 111: edit command with paths and no piped input calls edit."""
+        fs = _fs()
+        fs.edit.return_value = GroverResult(candidates=[Candidate(path="/a.py")])
+        node = EditCommand(old="x", new="y", paths=("/a.py",), replace_all=False)
+        await execute_query(fs, _plan(node))
+        fs.edit.assert_called_once()
+
+
+# ===========================================================================
+# Coverage: line 461 — _preserve_under_root with root path
+# ===========================================================================
+
+
+class TestPreserveUnderRoot:
+    def test_root_path_raises(self):
+        """Line 461: passing root '/' as source raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot preserve the root path"):
+            _preserve_under_root("/dest", "/")

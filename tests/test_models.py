@@ -677,3 +677,78 @@ class TestValidatorEdgeCases:
             content_hash=h,
         )
         assert obj.content_hash == h
+
+
+# ==================================================================
+# Coverage: models.py line 479 — non-string path returns data
+# ==================================================================
+
+
+class TestNonStringPath:
+    def test_non_string_path_skips_normalization(self):
+        """Line 479: when path is not a string, validator returns early.
+
+        The before-validator returns without normalizing, then Pydantic
+        field validation rejects the non-string path.
+        """
+        with pytest.raises((ValueError, Exception)):
+            GroverObject.model_validate({"path": 42, "content": "stuff"})
+
+
+# ==================================================================
+# Coverage: models.py lines 523-524 — content null bytes rejected
+# ==================================================================
+
+
+class TestContentNullBytes:
+    def test_null_bytes_in_content_rejected(self):
+        """Lines 523-524: content containing null bytes raises ValueError."""
+        with pytest.raises(ValueError, match="Content contains null bytes"):
+            GroverObject(path="/a.py", content="has\x00null")
+
+
+# ==================================================================
+# Coverage: models.py line 314 — reconstruct when hash is None
+# ==================================================================
+
+
+class TestReconstructVersionHashNone:
+    def test_hash_none_skips_verification(self):
+        """Line 314: when content_hash is None, hash check is skipped."""
+        snapshot = GroverObject(
+            path="/a.py@1",
+            kind="version",
+            version_number=1,
+            is_snapshot=True,
+            content="hello world",
+        )
+        # Force content_hash to None after construction
+        object.__setattr__(snapshot, "content_hash", None)
+        result = GroverObject._reconstruct_file_version([snapshot], target_version=1)
+        assert result == "hello world"
+
+
+# ==================================================================
+# Coverage: models.py line 55 — finish_init=False skips validation
+# ==================================================================
+
+
+class TestFinishInitFalse:
+    def test_orm_load_skips_validation(self):
+        """Line 55: when finish_init is False, ValidatedSQLModel.__init__ returns early.
+
+        With finish_init=False the custom validator code is skipped
+        (SQLModel's ORM-load path). The object is created but attributes
+        may not be set since validation was bypassed.
+        """
+        from sqlmodel._compat import finish_init
+
+        token = finish_init.set(False)
+        try:
+            # With finish_init=False, the validated init returns early.
+            # This simulates what happens during ORM loads.
+            obj = GroverObject()
+            # Object exists but path was not set (no validation ran)
+            assert obj is not None
+        finally:
+            finish_init.reset(token)

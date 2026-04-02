@@ -140,7 +140,7 @@ class GroverObjectBase(ValidatedSQLModel):
 
     # --- Embedding ----------------------------------------------------------
 
-    embedding: Vector | None = Field(default=None, sa_type=VectorType())  # type: ignore[call-overload]
+    embedding: Vector | None = Field(default=None, sa_type=VectorType())  # ty: ignore[invalid-argument-type]
 
     # --- Ownership ----------------------------------------------------------
 
@@ -151,15 +151,15 @@ class GroverObjectBase(ValidatedSQLModel):
 
     created_at: datetime | None = Field(
         default=None,
-        sa_type=DateTime(timezone=True),  # type: ignore[call-overload]
+        sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
     )
     updated_at: datetime | None = Field(
         default=None,
-        sa_type=DateTime(timezone=True),  # type: ignore[call-overload]
+        sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
     )
     deleted_at: datetime | None = Field(
         default=None,
-        sa_type=DateTime(timezone=True),  # type: ignore[call-overload]
+        sa_type=DateTime(timezone=True),  # ty: ignore[invalid-argument-type]
     )
 
     # --- Path manipulation ----------------------------------------------------

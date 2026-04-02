@@ -63,7 +63,7 @@ class GroverAsync(GroverFileSystem):
     # Mount lifecycle
     # ------------------------------------------------------------------
 
-    async def add_mount(  # type: ignore[override]
+    async def add_mount(  # ty: ignore[invalid-method-override]
         self,
         name: str,
         *,
@@ -140,7 +140,7 @@ class GroverAsync(GroverFileSystem):
         path = normalize_path(f"/{name}")
         await super().add_mount(path, fs)
 
-    async def remove_mount(self, name: str) -> None:  # type: ignore[override]
+    async def remove_mount(self, name: str) -> None:  # ty: ignore[invalid-method-override]
         """Unmount ``/<name>`` and dispose its engine if present."""
         path = normalize_path(f"/{name}")
         fs = self._mounts.get(path)

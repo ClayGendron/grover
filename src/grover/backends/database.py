@@ -155,7 +155,7 @@ class DatabaseFileSystem(GroverFileSystem):
         """Fetch a single object by exact path."""
         stmt = select(self._model).where(self._model.path == path)
         if not include_deleted:
-            stmt = stmt.where(self._model.deleted_at.is_(None))  # type: ignore[union-attr]
+            stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -295,13 +295,13 @@ class DatabaseFileSystem(GroverFileSystem):
                     stmt = _unchecked_select(
                         *doc_columns,
                     ).where(
-                        self._model.path.in_(batch),  # type: ignore[union-attr]
+                        self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                         self._model.kind != "version",
-                        self._model.deleted_at.is_(None),  # type: ignore[union-attr]
-                        self._model.content.isnot(None),  # type: ignore[union-attr]
+                        self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+                        self._model.content.isnot(None),  # ty: ignore[unresolved-attribute]
                     )
                     if self._user_scoped and user_id:
-                        stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
+                        stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # ty: ignore[unresolved-attribute]
                     result = await session.execute(stmt)
                     for obj_path, kind, content, lexical_tokens in result.all():
                         append_doc(obj_path, kind, content, lexical_tokens or 0)
@@ -312,7 +312,7 @@ class DatabaseFileSystem(GroverFileSystem):
         term_score_expr = None
         for term in unique_terms:
             escaped = _escape_like(term)
-            like_expr = self._model.content.ilike(  # type: ignore[union-attr]
+            like_expr = self._model.content.ilike(  # ty: ignore[unresolved-attribute]
                 f"%{escaped}%",
                 escape="\\",
             )
@@ -331,8 +331,8 @@ class DatabaseFileSystem(GroverFileSystem):
             _unchecked_select(*doc_columns)
             .where(
                 self._model.kind != "version",
-                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
-                self._model.content.isnot(None),  # type: ignore[union-attr]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+                self._model.content.isnot(None),  # ty: ignore[unresolved-attribute]
                 or_(*like_filters),
             )
             .order_by(
@@ -342,7 +342,7 @@ class DatabaseFileSystem(GroverFileSystem):
             .limit(self.BM25_PRE_FILTER_LIMIT + 1)
         )
         if self._user_scoped and user_id:
-            stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
+            stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # ty: ignore[unresolved-attribute]
 
         result = await session.execute(stmt)
         rows = result.all()
@@ -368,11 +368,11 @@ class DatabaseFileSystem(GroverFileSystem):
         """Fetch corpus_size, avgdl, and authoritative query-term DF counts."""
         base_where: list[Any] = [
             self._model.kind != "version",
-            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
-            self._model.content.isnot(None),  # type: ignore[union-attr]
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+            self._model.content.isnot(None),  # ty: ignore[unresolved-attribute]
         ]
         if self._user_scoped and user_id:
-            base_where.append(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
+            base_where.append(self._model.path.like(f"/{user_id}/%"))  # ty: ignore[unresolved-attribute]
 
         aggregate_columns: list[Any] = [
             func.count(),
@@ -381,7 +381,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         if prefilter_truncated:
             for term in unique_terms:
-                like_expr = self._model.content.ilike(  # type: ignore[union-attr]
+                like_expr = self._model.content.ilike(  # ty: ignore[unresolved-attribute]
                     f"%{_escape_like(term)}%",
                     escape="\\",
                 )
@@ -425,11 +425,11 @@ class DatabaseFileSystem(GroverFileSystem):
         resolved: dict[str, GroverObjectBase] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.path.in_(batch),  # type: ignore[union-attr]
+                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                 self._model.kind == required_kind,
             )
             if not include_deleted:
-                stmt = stmt.where(self._model.deleted_at.is_(None))  # type: ignore[union-attr]
+                stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
             result = await session.execute(stmt)
             resolved.update({obj.path: obj for obj in result.scalars().all()})
         return resolved
@@ -470,7 +470,7 @@ class DatabaseFileSystem(GroverFileSystem):
         # soft-deleted) so we can detect non-directory ancestors.
         existing: dict[str, GroverObjectBase] = {}
         for batch in self._chunk_paths(session, sorted(all_ancestors), binds_per_item=1):
-            stmt = select(self._model).where(self._model.path.in_(batch))  # type: ignore[union-attr]
+            stmt = select(self._model).where(self._model.path.in_(batch))  # ty: ignore[unresolved-attribute]
             result = await session.execute(stmt)
             existing.update({obj.path: obj for obj in result.scalars().all()})
 
@@ -546,12 +546,12 @@ class DatabaseFileSystem(GroverFileSystem):
             dir_paths = list(dirs.keys())
             for batch in self._chunk_paths(session, dir_paths, binds_per_item=1):
                 conditions = [
-                    self._model.path.like(_escape_like(p) + "/%", escape="\\")  # type: ignore[union-attr]
+                    self._model.path.like(_escape_like(p) + "/%", escape="\\")  # ty: ignore[unresolved-attribute]
                     for p in batch
                 ]
                 stmt = select(self._model).where(or_(*conditions))
                 if not include_deleted:
-                    stmt = stmt.where(self._model.deleted_at.is_(None))  # type: ignore[union-attr]
+                    stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
                 rows = await session.execute(stmt)
                 for child in rows.scalars().all():
                     # Match child to its owning directory (longest prefix)
@@ -565,10 +565,10 @@ class DatabaseFileSystem(GroverFileSystem):
             file_paths = list(files.keys())
             for batch in self._chunk_paths(session, file_paths, binds_per_item=1):
                 stmt = select(self._model).where(
-                    self._model.parent_path.in_(batch),  # type: ignore[union-attr]
+                    self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
                 )
                 if not include_deleted:
-                    stmt = stmt.where(self._model.deleted_at.is_(None))  # type: ignore[union-attr]
+                    stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
                 rows = await session.execute(stmt)
                 for child in rows.scalars().all():
                     if child.parent_path in result_map:
@@ -625,7 +625,7 @@ class DatabaseFileSystem(GroverFileSystem):
             for version_row in plan.version_rows:
                 session.add(version_row)
         else:
-            existing.update_content(new_content)
+            existing.update_content(new_content)  # pragma: no cover — defensive: files always have content
 
         return existing.to_candidate(operation="write", include_content=True)
 
@@ -645,7 +645,7 @@ class DatabaseFileSystem(GroverFileSystem):
         rows: list[GroverObjectBase] = []
         for batch in self._chunk_paths(session, version_paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.path.in_(batch),  # type: ignore[union-attr]
+                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
             rows.extend(result.scalars().all())
@@ -716,8 +716,8 @@ class DatabaseFileSystem(GroverFileSystem):
         errors: list[str] = []
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.path.in_(batch),  # type: ignore[union-attr]
-                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
             objs = {obj.path: obj for obj in result.scalars().all()}
@@ -855,7 +855,7 @@ class DatabaseFileSystem(GroverFileSystem):
 
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.path.in_(batch),  # type: ignore[union-attr]
+                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
             for row in result.scalars().all():
@@ -874,8 +874,8 @@ class DatabaseFileSystem(GroverFileSystem):
         if version_path_to_file:
             vp_list = list(version_path_to_file.keys())
             for batch in self._chunk_paths(session, vp_list, binds_per_item=1):
-                stmt = select(self._model.path, self._model.content_hash).where(  # type: ignore[arg-type]
-                    self._model.path.in_(batch),  # type: ignore[union-attr]
+                stmt = select(self._model.path, self._model.content_hash).where(  # ty: ignore[no-matching-overload]
+                    self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
                 for vp, content_hash in result.all():
@@ -996,8 +996,8 @@ class DatabaseFileSystem(GroverFileSystem):
         if unknown_paths:
             for batch in self._chunk_paths(session, unknown_paths, binds_per_item=1):
                 stmt = select(self._model).where(
-                    self._model.path.in_(batch),  # type: ignore[union-attr]
-                    self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                    self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
                 for obj in result.scalars().all():
@@ -1015,8 +1015,8 @@ class DatabaseFileSystem(GroverFileSystem):
         out: list[Candidate] = []
         for batch in self._chunk_paths(session, all_paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.parent_path.in_(batch),  # type: ignore[union-attr]
-                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                self._model.parent_path.in_(batch),  # ty: ignore[unresolved-attribute]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
             )
             result = await session.execute(stmt)
             for child in result.scalars().all():
@@ -1066,10 +1066,10 @@ class DatabaseFileSystem(GroverFileSystem):
         objs: dict[str, GroverObjectBase] = {}
         for batch in self._chunk_paths(session, paths, binds_per_item=1):
             stmt = select(self._model).where(
-                self._model.path.in_(batch),  # type: ignore[union-attr]
+                self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
             )
             if not permanent:
-                stmt = stmt.where(self._model.deleted_at.is_(None))  # type: ignore[union-attr]
+                stmt = stmt.where(self._model.deleted_at.is_(None))  # ty: ignore[unresolved-attribute]
             result = await session.execute(stmt)
             objs.update({obj.path: obj for obj in result.scalars().all()})
 
@@ -1195,9 +1195,9 @@ class DatabaseFileSystem(GroverFileSystem):
             scoped_sources = [self._scope_path(p, user_id) or p for p in unscoped_sources]
             existing_sources: set[str] = set()
             for batch in self._chunk_paths(session, scoped_sources, binds_per_item=1):
-                stmt = select(self._model.path).where(  # type: ignore[arg-type]
-                    self._model.path.in_(batch),  # type: ignore[union-attr]
-                    self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                stmt = select(self._model.path).where(  # ty: ignore[no-matching-overload]
+                    self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
                 existing_sources.update(row[0] for row in result.all())
@@ -1379,15 +1379,15 @@ class DatabaseFileSystem(GroverFileSystem):
             descendants: list[GroverObjectBase] = []
             if src_obj.kind == "directory":
                 stmt = select(self._model).where(
-                    self._model.path.like(_escape_like(op.src) + "/%", escape="\\"),  # type: ignore[union-attr]
-                    self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                    self._model.path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
                 descendants = list(result.scalars().all())
             else:
                 stmt = select(self._model).where(
                     self._model.parent_path == op.src,
-                    self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                    self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 )
                 result = await session.execute(stmt)
                 descendants = list(result.scalars().all())
@@ -1421,10 +1421,10 @@ class DatabaseFileSystem(GroverFileSystem):
             # whose target_path points into the moved subtree.
             conn_stmt = select(self._model).where(
                 self._model.kind == "connection",
-                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                 or_(
-                    self._model.target_path == op.src,  # type: ignore[invalid-argument-type]
-                    self._model.target_path.like(_escape_like(op.src) + "/%", escape="\\"),  # type: ignore[union-attr]
+                    self._model.target_path == op.src,  # ty: ignore[invalid-argument-type]
+                    self._model.target_path.like(_escape_like(op.src) + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
                 ),
             )
             conn_result = await session.execute(conn_stmt)
@@ -1490,13 +1490,13 @@ class DatabaseFileSystem(GroverFileSystem):
         like_pattern = glob_to_sql_like(pattern)
 
         stmt = select(self._model).where(
-            self._model.kind.in_(["file", "directory"]),  # type: ignore[union-attr]
-            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+            self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
 
         if like_pattern is not None:
             stmt = stmt.where(
-                self._model.path.like(like_pattern, escape="\\"),  # type: ignore[union-attr]
+                self._model.path.like(like_pattern, escape="\\"),  # ty: ignore[unresolved-attribute]
             )
 
         result = await session.execute(stmt)
@@ -1549,9 +1549,9 @@ class DatabaseFileSystem(GroverFileSystem):
             if need_hydration:
                 for batch in self._chunk_paths(session, need_hydration, binds_per_item=1):
                     stmt = select(self._model).where(
-                        self._model.path.in_(batch),  # type: ignore[union-attr]
+                        self._model.path.in_(batch),  # ty: ignore[unresolved-attribute]
                         self._model.kind == "file",
-                        self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+                        self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
                     )
                     result = await session.execute(stmt)
                     for obj in result.scalars().all():
@@ -1560,11 +1560,11 @@ class DatabaseFileSystem(GroverFileSystem):
         else:
             stmt = select(self._model).where(
                 self._model.kind == "file",
-                self._model.deleted_at.is_(None),  # type: ignore[union-attr]
-                self._model.content.isnot(None),  # type: ignore[union-attr]
+                self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
+                self._model.content.isnot(None),  # ty: ignore[unresolved-attribute]
             )
             if self._user_scoped and user_id:
-                stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # type: ignore[union-attr]
+                stmt = stmt.where(self._model.path.like(f"/{user_id}/%"))  # ty: ignore[unresolved-attribute]
             result = await session.execute(stmt)
             for obj in result.scalars().all():
                 if obj.content:
@@ -1784,15 +1784,15 @@ class DatabaseFileSystem(GroverFileSystem):
 
         # ── Query descendants ─────────────────────────────────────────
         stmt = select(self._model).where(
-            self._model.kind.in_(["file", "directory"]),  # type: ignore[union-attr]
-            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+            self._model.kind.in_(["file", "directory"]),  # ty: ignore[unresolved-attribute]
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
 
         if path == "/":
             stmt = stmt.where(self._model.path != "/")
         else:
             stmt = stmt.where(
-                self._model.path.like(path + "/%", escape="\\"),  # type: ignore[union-attr]
+                self._model.path.like(path + "/%", escape="\\"),  # ty: ignore[unresolved-attribute]
             )
 
         # Depth limiting via slash counting

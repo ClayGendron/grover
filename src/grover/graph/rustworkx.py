@@ -258,7 +258,7 @@ class RustworkxGraph:
 
         stmt = select(self._model).where(
             self._model.kind == "connection",
-            self._model.deleted_at.is_(None),  # type: ignore[union-attr]
+            self._model.deleted_at.is_(None),  # ty: ignore[unresolved-attribute]
         )
         result = await session.execute(stmt)
         rows: list[GroverObjectBase] = list(result.scalars().all())
