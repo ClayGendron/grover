@@ -62,40 +62,40 @@ class TestAddMount:
         assert "/data" in root._mounts
         assert root._mounts["/data"] is child
 
-    async def test_root_mount_forbidden(self):
+    async def test_empty_mount_rejected(self):
         root = _make_fs()
         child = _make_fs()
-        with pytest.raises(ValueError, match="owns its own root"):
+        with pytest.raises(ValueError, match="must not be empty"):
             await root.add_mount("/", child)
 
-    async def test_unnormalized_path_rejected(self):
+    async def test_trailing_slash_normalized(self):
         root = _make_fs()
         child = _make_fs()
-        with pytest.raises(ValueError, match="must be normalized"):
-            await root.add_mount("/data/", child)
+        await root.add_mount("/data/", child)
+        assert "/data" in root._mounts
 
-    async def test_unnormalized_path_hint(self):
+    async def test_relative_path_accepted(self):
         root = _make_fs()
         child = _make_fs()
-        with pytest.raises(ValueError, match="did you mean '/data'"):
-            await root.add_mount("/data/", child)
+        await root.add_mount("data", child)
+        assert "/data" in root._mounts
 
-    async def test_double_slash_rejected(self):
+    async def test_nested_path_rejected(self):
         root = _make_fs()
         child = _make_fs()
-        with pytest.raises(ValueError, match="must be normalized"):
+        with pytest.raises(ValueError, match="single segment"):
+            await root.add_mount("/data/deep", child)
+
+    async def test_double_slash_nested_rejected(self):
+        root = _make_fs()
+        child = _make_fs()
+        with pytest.raises(ValueError, match="single segment"):
             await root.add_mount("/data//deep", child)
-
-    async def test_relative_path_rejected(self):
-        root = _make_fs()
-        child = _make_fs()
-        with pytest.raises(ValueError, match="must be normalized"):
-            await root.add_mount("data", child)
 
     async def test_dot_segments_rejected(self):
         root = _make_fs()
         child = _make_fs()
-        with pytest.raises(ValueError, match="must be normalized"):
+        with pytest.raises(ValueError, match="single segment"):
             await root.add_mount("/data/../other", child)
 
     async def test_duplicate_mount_forbidden(self):
@@ -104,12 +104,11 @@ class TestAddMount:
         with pytest.raises(ValueError, match="already exists"):
             await root.add_mount("/data", _make_fs())
 
-    async def test_nested_mounts_allowed(self):
+    async def test_duplicate_via_normalization_forbidden(self):
         root = _make_fs()
-        await root.add_mount("/data", _make_fs("shallow"))
-        await root.add_mount("/data/archive", _make_fs("deep"))
-        assert "/data" in root._mounts
-        assert "/data/archive" in root._mounts
+        await root.add_mount("/data", _make_fs())
+        with pytest.raises(ValueError, match="already exists"):
+            await root.add_mount("data", _make_fs())
 
 
 # =========================================================================
@@ -124,24 +123,22 @@ class TestRemoveMount:
         await root.remove_mount("/data")
         assert "/data" not in root._mounts
 
+    async def test_remove_with_bare_name(self):
+        root = _make_fs()
+        await root.add_mount("/data", _make_fs())
+        await root.remove_mount("data")
+        assert "/data" not in root._mounts
+
     async def test_remove_nonexistent_raises(self):
         root = _make_fs()
         with pytest.raises(ValueError, match="No mount at"):
             await root.remove_mount("/data")
 
-    async def test_remove_unnormalized_no_false_hint(self):
-        """Hint should NOT appear when the normalized form also doesn't exist."""
-        root = _make_fs()
-        with pytest.raises(ValueError, match="No mount at") as exc_info:
-            await root.remove_mount("/data/")
-        assert "did you mean" not in str(exc_info.value)
-
-    async def test_remove_unnormalized_with_hint(self):
-        """Hint SHOULD appear when the normalized form exists as a mount."""
+    async def test_remove_trailing_slash_normalized(self):
         root = _make_fs()
         await root.add_mount("/data", _make_fs())
-        with pytest.raises(ValueError, match="did you mean '/data'"):
-            await root.remove_mount("/data/")
+        await root.remove_mount("/data/")
+        assert "/data" not in root._mounts
 
 
 # =========================================================================
@@ -173,23 +170,6 @@ class TestMatchMount:
         root = _make_fs()
         await root.add_mount("/web", _make_fs())
         assert root._match_mount("/") is None
-
-    async def test_longest_prefix_wins(self):
-        root = _make_fs()
-        shallow = _make_fs("shallow")
-        deep = _make_fs("deep")
-        await root.add_mount("/data", shallow)
-        await root.add_mount("/data/deep", deep)
-        result = root._match_mount("/data/deep/file.txt")
-        assert result == ("/data/deep", deep)
-
-    async def test_shorter_prefix_for_non_deep_path(self):
-        root = _make_fs()
-        shallow = _make_fs("shallow")
-        await root.add_mount("/data", shallow)
-        await root.add_mount("/data/deep", _make_fs())
-        result = root._match_mount("/data/other.txt")
-        assert result == ("/data", shallow)
 
     async def test_prefix_boundary_not_substring(self):
         """``/webinar`` must NOT match mount ``/web``."""

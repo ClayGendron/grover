@@ -28,6 +28,12 @@ async def _sqlite_engine():
     return engine
 
 
+async def _make_db():
+    """Create a DatabaseFileSystem backed by in-memory SQLite."""
+    engine = await _sqlite_engine()
+    return DatabaseFileSystem(engine=engine)
+
+
 # ==================================================================
 # GroverFileSystem storage flag
 # ==================================================================
@@ -113,11 +119,12 @@ class TestGroverAsyncConstruction:
 
 
 class TestGroverAsyncAddMount:
-    """Tests for GroverAsync.add_mount with different config paths."""
+    """Tests for GroverAsync.add_mount."""
 
-    async def test_add_mount_with_engine_url(self):
+    async def test_add_mount_with_filesystem(self):
         g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        fs = await _make_db()
+        await g.add_mount("data", fs)
         try:
             w = await g.write("/data/hello.txt", "hello")
             assert w.success
@@ -128,10 +135,21 @@ class TestGroverAsyncAddMount:
         finally:
             await g.close()
 
+    async def test_add_mount_with_leading_slash(self):
+        g = GroverAsync()
+        fs = await _make_db()
+        await g.add_mount("/data", fs)
+        try:
+            w = await g.write("/data/test.txt", "content")
+            assert w.success
+            assert "/data" in g._mounts
+        finally:
+            await g.close()
+
     async def test_add_mount_with_engine(self):
         engine = await _sqlite_engine()
         g = GroverAsync()
-        await g.add_mount("data", engine=engine)
+        await g.add_mount("data", DatabaseFileSystem(engine=engine))
         try:
             w = await g.write("/data/test.txt", "content")
             assert w.success
@@ -147,7 +165,7 @@ class TestGroverAsyncAddMount:
 
         sf = async_sessionmaker(engine, expire_on_commit=False)
         g = GroverAsync()
-        await g.add_mount("data", session_factory=sf)
+        await g.add_mount("data", DatabaseFileSystem(session_factory=sf))
         try:
             w = await g.write("/data/test.txt", "via sf")
             assert w.success
@@ -157,38 +175,10 @@ class TestGroverAsyncAddMount:
         finally:
             await g.close()
 
-    async def test_add_mount_with_filesystem(self):
-        engine = await _sqlite_engine()
-        fs = DatabaseFileSystem(engine=engine)
-        g = GroverAsync()
-        await g.add_mount("data", filesystem=fs)
-        try:
-            w = await g.write("/data/test.txt", "direct fs")
-            assert w.success
-
-            r = await g.read("/data/test.txt")
-            assert r.content == "direct fs"
-        finally:
-            await g.close()
-
-    async def test_add_mount_no_args_raises(self):
-        g = GroverAsync()
-        with pytest.raises(ValueError, match="requires one of"):
-            await g.add_mount("data")
-
-    async def test_add_mount_creates_tables(self):
-        g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://")
-        try:
-            # If tables weren't created, this would fail
-            w = await g.write("/data/test.txt", "tables exist")
-            assert w.success
-        finally:
-            await g.close()
-
     async def test_add_mount_user_scoped(self):
+        engine = await _sqlite_engine()
         g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://", user_scoped=True)
+        await g.add_mount("data", DatabaseFileSystem(engine=engine, user_scoped=True))
         try:
             w = await g.write("/data/hello.txt", "user content", user_id="alice")
             assert w.success
@@ -204,68 +194,29 @@ class TestGroverAsyncAddMount:
 
 
 class TestGroverAsyncProviderInjection:
-    """Tests for embedding/vector store provider injection."""
+    """Tests for embedding/vector store provider injection on DatabaseFileSystem."""
 
-    async def test_providers_injected_on_new_filesystem(self):
+    async def test_providers_set_on_construction(self):
         from unittest.mock import MagicMock
 
         engine = await _sqlite_engine()
         ep = MagicMock()
         vs = MagicMock()
+        fs = DatabaseFileSystem(engine=engine, embedding_provider=ep, vector_store=vs)
         g = GroverAsync()
-        await g.add_mount("data", engine=engine, embedding_provider=ep, vector_store=vs)
+        await g.add_mount("data", fs)
         try:
-            fs = g._mounts["/data"]
-            assert isinstance(fs, DatabaseFileSystem)
             assert fs._embedding_provider is ep
             assert fs._vector_store is vs
         finally:
             await g.close()
 
-    async def test_providers_injected_on_existing_filesystem(self):
-        from unittest.mock import MagicMock
-
+    async def test_providers_default_to_none(self):
         engine = await _sqlite_engine()
         fs = DatabaseFileSystem(engine=engine)
         assert fs._embedding_provider is None
-
-        ep = MagicMock()
-        g = GroverAsync()
-        await g.add_mount("data", filesystem=fs, embedding_provider=ep)
-        try:
-            assert fs._embedding_provider is ep
-        finally:
-            await g.close()
-
-    async def test_vector_store_injected_on_existing_filesystem(self):
-        from unittest.mock import MagicMock
-
-        engine = await _sqlite_engine()
-        fs = DatabaseFileSystem(engine=engine)
         assert fs._vector_store is None
-
-        vs = MagicMock()
-        g = GroverAsync()
-        await g.add_mount("data", filesystem=fs, vector_store=vs)
-        try:
-            assert fs._vector_store is vs
-        finally:
-            await g.close()
-
-    async def test_existing_providers_not_overwritten(self):
-        from unittest.mock import MagicMock
-
-        engine = await _sqlite_engine()
-        original_ep = MagicMock()
-        fs = DatabaseFileSystem(engine=engine, embedding_provider=original_ep)
-
-        new_ep = MagicMock()
-        g = GroverAsync()
-        await g.add_mount("data", filesystem=fs, embedding_provider=new_ep)
-        try:
-            assert fs._embedding_provider is original_ep
-        finally:
-            await g.close()
+        await engine.dispose()
 
 
 class TestGroverAsyncRouting:
@@ -279,8 +230,8 @@ class TestGroverAsyncRouting:
 
     async def test_multi_mount_routing(self):
         g = GroverAsync()
-        await g.add_mount("alpha", engine_url="sqlite+aiosqlite://")
-        await g.add_mount("beta", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("alpha", await _make_db())
+        await g.add_mount("beta", await _make_db())
         try:
             await g.write("/alpha/a.txt", "alpha content")
             await g.write("/beta/b.txt", "beta content")
@@ -299,8 +250,8 @@ class TestGroverAsyncRouting:
 
     async def test_glob_fans_out_across_mounts(self):
         g = GroverAsync()
-        await g.add_mount("one", engine_url="sqlite+aiosqlite://")
-        await g.add_mount("two", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("one", await _make_db())
+        await g.add_mount("two", await _make_db())
         try:
             await g.write("/one/file.py", "one")
             await g.write("/two/file.py", "two")
@@ -315,8 +266,8 @@ class TestGroverAsyncRouting:
 
     async def test_grep_fans_out_across_mounts(self):
         g = GroverAsync()
-        await g.add_mount("a", engine_url="sqlite+aiosqlite://")
-        await g.add_mount("b", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("a", await _make_db())
+        await g.add_mount("b", await _make_db())
         try:
             await g.write("/a/file.txt", "needle in a haystack")
             await g.write("/b/file.txt", "another needle here")
@@ -341,7 +292,7 @@ class TestGroverAsyncQueryEngine:
 
     async def test_run_query(self):
         g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("data", await _make_db())
         try:
             await g.write("/data/hello.py", "print('hi')")
             result = await g.run_query('glob "**/*.py"')
@@ -352,7 +303,7 @@ class TestGroverAsyncQueryEngine:
 
     async def test_cli(self):
         g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("data", await _make_db())
         try:
             await g.write("/data/hello.py", "print('hi')")
             output = await g.cli('glob "**/*.py"')
@@ -367,14 +318,15 @@ class TestGroverAsyncLifecycle:
 
     async def test_remove_mount(self):
         g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("data", await _make_db())
         assert "/data" in g._mounts
         await g.remove_mount("data")
         assert "/data" not in g._mounts
 
-    async def test_remove_mount_removes_and_disposes(self):
+    async def test_remove_mount_disposes_engine(self):
         g = GroverAsync()
-        await g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        fs = await _make_db()
+        await g.add_mount("data", fs)
         assert "/data" in g._mounts
         # Should not raise — engine.dispose() is called internally
         await g.remove_mount("data")
@@ -382,8 +334,8 @@ class TestGroverAsyncLifecycle:
 
     async def test_close_clears_mounts(self):
         g = GroverAsync()
-        await g.add_mount("a", engine_url="sqlite+aiosqlite://")
-        await g.add_mount("b", engine_url="sqlite+aiosqlite://")
+        await g.add_mount("a", await _make_db())
+        await g.add_mount("b", await _make_db())
         assert len(g._mounts) == 2
         await g.close()
         assert len(g._mounts) == 0

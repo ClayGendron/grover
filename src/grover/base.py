@@ -63,23 +63,28 @@ class GroverFileSystem:
     # mounts and routing
     # -------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_mount_path(path: str) -> str:
+        """Normalize a mount path.
+
+        Accepts ``"data"`` or ``"/data"``.  Rejects empty, root, and
+        nested paths like ``"/data/archive"``.
+        """
+        stripped = path.strip("/")
+        if not stripped:
+            msg = "Mount path must not be empty or root"
+            raise ValueError(msg)
+        if "/" in stripped:
+            msg = f"Mount path must be a single segment, not a nested path: {path!r}"
+            raise ValueError(msg)
+        return f"/{stripped}"
+
     async def add_mount(self, path: str, filesystem: GroverFileSystem) -> None:
         """Mount a child filesystem at *path*.
 
-        Validation:
-        - Path must be absolute (starts with ``/``)
-        - Path must not be ``"/"`` (the root is owned by the filesystem itself)
-        - Path must already be normalized
-        - Exact path collision is forbidden
-        - Nested mounts are allowed (``/data`` and ``/data/archive``)
+        Accepts ``"data"`` or ``"/data"``.  Rejects nested paths.
         """
-        normalized = normalize_path(path)
-        if path != normalized:
-            msg = f"Mount path must be normalized: {path!r} (did you mean {normalized!r}?)"
-            raise ValueError(msg)
-        if path == "/":
-            msg = "Cannot mount at '/': the filesystem owns its own root"
-            raise ValueError(msg)
+        path = self._normalize_mount_path(path)
         if path in self._mounts:
             msg = f"Mount already exists at: {path}"
             raise ValueError(msg)
@@ -88,14 +93,23 @@ class GroverFileSystem:
         self._rebuild_sorted_mounts()
 
     async def remove_mount(self, path: str) -> None:
-        """Unmount the filesystem at *path*."""
+        """Unmount the filesystem at *path* and dispose its engine."""
+        path = self._normalize_mount_path(path)
         if path not in self._mounts:
-            normalized = normalize_path(path)
-            hint = f" (did you mean {normalized!r}?)" if normalized in self._mounts else ""
-            msg = f"No mount at: {path!r}{hint}"
+            msg = f"No mount at: {path!r}"
             raise ValueError(msg)
-        del self._mounts[path]
+        fs = self._mounts.pop(path)
         self._rebuild_sorted_mounts()
+        if fs._engine is not None:
+            await fs._engine.dispose()
+
+    async def close(self) -> None:
+        """Dispose all engines and clear mounts."""
+        for fs in self._mounts.values():
+            if fs._engine is not None:
+                await fs._engine.dispose()
+        self._mounts.clear()
+        self._sorted_mount_paths.clear()
 
     def _rebuild_sorted_mounts(self) -> None:
         """Rebuild the pre-sorted mount path list (longest first)."""

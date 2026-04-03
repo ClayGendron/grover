@@ -106,30 +106,18 @@ class TestPathEdgeCases:
             GroverObject(path=long_path, content="x")
 
     async def test_path_at_exact_limit(self, db: DatabaseFileSystem):
-        """A path of exactly 4096 chars should be accepted.
+        """A long path should be accepted if it and its version suffix fit.
 
-        Segments are capped at 255, so we need many short segments.
+        Writes create a version record at ``{path}/.versions/1`` (13 extra
+        chars), so the file path must leave room within the 4096-char
+        column limit.
         """
-        # Build path: /aaa.../aaa.../file.txt
-        # Each segment is at most 255 chars. Use 16-char segments.
-        # We need total path length = 4096.
-        # /seg1/seg2/.../file.txt
-        segments = []
-        current_len = 0
-        while current_len < 4080:
-            seg = "a" * 16
-            segments.append(seg)
-            current_len += 17  # 16 chars + "/"
-        # Add final filename to hit exactly 4096
-        remaining = 4096 - current_len - 1  # -1 for the "/"
-        if remaining < 5:
-            segments.pop()
-            current_len -= 17
-            remaining = 4096 - current_len - 1
-        final_name = "a" * (remaining - 4) + ".txt"
-        segments.append(final_name)
-        path = "/" + "/".join(segments)
-        assert len(path) == 4096
+        # Target: 4096 - len("/.versions/1") == 4084
+        target = 4096 - len("/.versions/1")
+        # Build with 16-char segments: "/aaaa.../aaaa.../file.txt"
+        prefix = "/a" * (target // 2)  # each "/a" is 2 chars
+        path = prefix[: target - 4] + ".txt"
+        assert len(path) <= target
         r = await db.write(path, "hi")
         assert r.success
 

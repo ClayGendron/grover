@@ -838,11 +838,49 @@ Each is just a path. `read` returns the schema. `write` triggers the action. The
 | Compose results across mounts | Handle service-specific error recovery |
 | Provide uniform read/search/graph interface | Provide `.api/` schemas and API translation |
 
-### 9.5 Cross-Mount Connections
+### 9.5 Mount-Scoped Connections and Path Isolation
 
-Connections can span mounts. `/jira/PROJ-4521/.connections/references/src/auth.py` creates an edge from a Jira ticket to a source file. The graph is global — `predecessors("/src/auth.py")` returns results from any mount.
+Connections are scoped to a single mount. `mkconn` rejects source and target paths that resolve to different filesystems. Each mount has its own `RustworkxGraph` instance backed by its own database — files with identical relative paths in different mounts never collide because they live in completely separate graph and storage instances.
 
-This is how enterprise knowledge becomes navigable. The agent doesn't need separate tools for "search Jira", "search Slack", "search code". It searches one namespace. Connections between systems — which today exist only in people's heads — become explicit, queryable edges in the graph.
+#### How mount prefixes flow through the system
+
+The mount prefix is a **routing-layer concern only**. It is stripped on the way into the filesystem and re-added on the way out. The database and graph never see mount prefixes.
+
+```python
+g = Grover()
+g.add_mount("alpha", engine_url="sqlite+aiosqlite://")
+g.add_mount("beta", engine_url="sqlite+aiosqlite://")
+
+# Both mounts have identically-named files — no collision
+g.write("/alpha/one.py", "def helper(): ...")
+g.write("/alpha/two.py", "import one")
+g.write("/beta/one.py", "def other(): ...")
+g.write("/beta/two.py", "import one")
+
+# Same relative paths, stored in separate databases and graphs
+g.mkconn("/alpha/two.py", "/alpha/one.py", "imports")
+g.mkconn("/beta/two.py", "/beta/one.py", "imports")
+
+# Queries route to the correct graph — no cross-mount bleed
+g.predecessors("/alpha/one.py")  # → ["/alpha/two.py"]
+g.predecessors("/beta/one.py")   # → ["/beta/two.py"]
+```
+
+The path lifecycle for a connection:
+
+| Layer | Source | Target | Connection path |
+|-------|--------|--------|----------------|
+| **User calls** | `/alpha/two.py` | `/alpha/one.py` | — |
+| **After routing** (prefix stripped) | `/two.py` | `/one.py` | — |
+| **Database** | `/two.py` | `/one.py` | `/two.py/.connections/imports/one.py` |
+| **Graph nodes** | `/two.py` | `/one.py` | — |
+| **Facade result** (prefix re-added) | `/alpha/two.py` | `/alpha/one.py` | `/alpha/two.py/.connections/imports/one.py` |
+
+The embedded target in a connection path (e.g., `one.py` in `/alpha/two.py/.connections/imports/one.py`) is always mount-relative. Since connections cannot cross mounts, the target is unambiguous within its mount.
+
+#### Cross-mount search without cross-mount edges
+
+Enterprise knowledge navigation does not require cross-mount connections. Fanout operations — `glob`, `grep`, `search`, `semantic_search` — already broadcast across all mounts and return unified results. An agent searching for "authentication timeout" gets results from `/jira/`, `/slack/`, and `/src/` in a single query. The agent can then follow connections within each mount to explore related entities. The namespace is global; the graphs are per-mount.
 
 ### 9.6 End-to-End Agent Workflow
 

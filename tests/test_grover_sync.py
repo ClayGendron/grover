@@ -36,10 +36,20 @@ async def _sqlite_engine():
     return engine
 
 
+def _make_db_sync(grover: Grover) -> DatabaseFileSystem:
+    """Create a DatabaseFileSystem using the sync Grover's event loop."""
+
+    async def _setup():
+        engine = await _sqlite_engine()
+        return DatabaseFileSystem(engine=engine)
+
+    return grover._run(_setup())
+
+
 @pytest.fixture
 def g():
     grover = Grover()
-    grover.add_mount("data", engine_url="sqlite+aiosqlite://")
+    grover.add_mount("data", _make_db_sync(grover))
     yield grover
     grover.close()
 
@@ -206,23 +216,21 @@ class TestGroverConstruction:
 
 
 class TestGroverMount:
-    def test_add_mount_with_engine_url(self):
+    def test_add_mount(self):
         g = Grover()
-        g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        g.add_mount("data", _make_db_sync(g))
         assert "/data" in g._async._mounts
         g.close()
 
-    def test_add_mount_no_args_raises(self):
+    def test_add_mount_with_leading_slash(self):
         g = Grover()
-        try:
-            with pytest.raises(ValueError, match="requires one of"):
-                g.add_mount("data")
-        finally:
-            g.close()
+        g.add_mount("/data", _make_db_sync(g))
+        assert "/data" in g._async._mounts
+        g.close()
 
     def test_remove_mount(self):
         g = Grover()
-        g.add_mount("data", engine_url="sqlite+aiosqlite://")
+        g.add_mount("data", _make_db_sync(g))
         g.remove_mount("data")
         assert "/data" not in g._async._mounts
         g.close()
@@ -235,24 +243,20 @@ class TestGroverMount:
 
 class TestGroverCRUD:
     def test_write_and_read_roundtrip(self, g: Grover):
-        c = g.write("/data/hello.txt", "hello world")
-        assert c.path == "/data/hello.txt"
+        result = g.write("/data/hello.txt", "hello world")
+        assert result.file.path == "/data/hello.txt"
 
-        c = g.read("/data/hello.txt")
-        assert c.content == "hello world"
+        result = g.read("/data/hello.txt")
+        assert result.content == "hello world"
 
-    def test_read_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
-
+    def test_read_returns_grover_result(self, g: Grover):
         g.write("/data/test.txt", "x")
-        c = g.read("/data/test.txt")
-        assert isinstance(c, Candidate)
+        result = g.read("/data/test.txt")
+        assert isinstance(result, GroverResult)
 
-    def test_write_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
-
-        c = g.write("/data/test.txt", "x")
-        assert isinstance(c, Candidate)
+    def test_write_returns_grover_result(self, g: Grover):
+        result = g.write("/data/test.txt", "x")
+        assert isinstance(result, GroverResult)
 
     def test_read_not_found_raises(self, g: Grover):
         with pytest.raises(NotFoundError, match="Not found"):
@@ -267,32 +271,24 @@ class TestGroverCRUD:
         with pytest.raises(WriteConflictError, match="Already exists"):
             g.write("/data/exists.txt", "second", overwrite=False)
 
-    def test_edit_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
-
+    def test_edit_returns_grover_result(self, g: Grover):
         g.write("/data/test.txt", "old text")
-        c = g.edit("/data/test.txt", "old", "new")
-        assert isinstance(c, Candidate)
+        result = g.edit("/data/test.txt", "old", "new")
+        assert isinstance(result, GroverResult)
 
-    def test_delete_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
-
+    def test_delete_returns_grover_result(self, g: Grover):
         g.write("/data/test.txt", "x")
-        c = g.delete("/data/test.txt")
-        assert isinstance(c, Candidate)
+        result = g.delete("/data/test.txt")
+        assert isinstance(result, GroverResult)
 
-    def test_mkdir_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
+    def test_mkdir_returns_grover_result(self, g: Grover):
+        result = g.mkdir("/data/subdir")
+        assert isinstance(result, GroverResult)
 
-        c = g.mkdir("/data/subdir")
-        assert isinstance(c, Candidate)
-
-    def test_stat_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
-
+    def test_stat_returns_grover_result(self, g: Grover):
         g.write("/data/test.txt", "x")
-        c = g.stat("/data/test.txt")
-        assert isinstance(c, Candidate)
+        result = g.stat("/data/test.txt")
+        assert isinstance(result, GroverResult)
 
 
 # ==================================================================
@@ -381,13 +377,11 @@ class TestGroverTransferOps:
         assert g.read("/data/orig.txt").content == "content"
         assert g.read("/data/dup.txt").content == "content"
 
-    def test_mkconn_returns_candidate(self, g: Grover):
-        from grover.results import Candidate
-
+    def test_mkconn_returns_grover_result(self, g: Grover):
         g.write("/data/a.py", "import b")
         g.write("/data/b.py", "class B: ...")
-        c = g.mkconn("/data/a.py", "/data/b.py", "imports")
-        assert isinstance(c, Candidate)
+        result = g.mkconn("/data/a.py", "/data/b.py", "imports")
+        assert isinstance(result, GroverResult)
 
 
 # ==================================================================
