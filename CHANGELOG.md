@@ -4,6 +4,19 @@ All notable changes to Grover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.12] — 2026-04-03
+
+### Changed
+
+- **Unified client API** — All `Grover` sync methods now return `GroverResult`, matching `GroverFileSystem` exactly. Single-path CRUD methods (`read`, `write`, `edit`, `delete`, `stat`, `mkdir`, `mkconn`) no longer unwrap to `Candidate`.
+- **`add_mount` simplified** — Accepts both `"data"` and `"/data"`, rejects nested paths. No more factory kwargs (`engine_url`, `session_factory`, etc.) — construct `DatabaseFileSystem` explicitly and pass it in.
+- **No overrides in facades** — Mount normalization, engine disposal, and `close()` live on `GroverFileSystem`. `GroverAsync` is now a one-liner subclass. `Grover` sync wrapper is a pure delegation layer.
+- **Batch parameters added to sync `Grover`** — `candidates` param on `read`, `stat`, `edit`, `delete`, `ls`; `edits` list on `edit`; `moves`/`copies` batch lists on `move`/`copy`; `objects` on `write`.
+
+### Fixed
+
+- **Path length limit test** — Account for `/.versions/1` suffix when testing max path length against the 4096-char column limit.
+
 ## [0.0.11] — 2026-04-02
 
 ### Added

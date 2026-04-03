@@ -1,4 +1,4 @@
-__version__ = "0.0.11"
+__version__ = "0.0.12"
 
 from grover.client import Grover, GroverAsync
 from grover.exceptions import (
